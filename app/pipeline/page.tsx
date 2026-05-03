@@ -1,0 +1,400 @@
+import Link from "next/link";
+import { SCOTSMAN_FIELDS, type Stage } from "@/lib/scotsman";
+import {
+  ALL_DEALS,
+  assessDeal,
+  getStageForDeal,
+  type Deal,
+  type DealRipeAssessment,
+} from "@/lib/seed-data";
+
+type HealthStatus = "at_risk" | "stalled" | "healthy";
+
+type Row = {
+  deal: Deal;
+  stage: Stage;
+  assessment: DealRipeAssessment;
+  yesCount: number;
+  status: HealthStatus;
+};
+
+const LATE_STAGES = new Set(["proposal", "negotiation", "signing", "closed"]);
+const AT_RISK_MISSING_THRESHOLD = 2;
+const AT_RISK_DIVERGENCE_THRESHOLD = 20;
+const AT_RISK_COMPLETION_THRESHOLD = 30;
+const STALLED_DAYS_THRESHOLD = 21;
+const STALLED_DIVERGENCE_THRESHOLD = 20;
+
+export default function PipelinePage() {
+  const rows: Row[] = ALL_DEALS.map((deal) => {
+    const stage = getStageForDeal(deal);
+    if (!stage) throw new Error(`Stage not found for ${deal.id}`);
+    const assessment = assessDeal(deal);
+    const yesCount = SCOTSMAN_FIELDS.filter(
+      (f) => deal.extraction[f.id]?.status === "Yes",
+    ).length;
+    const status = classifyDeal(deal, stage, assessment, yesCount);
+    return { deal, stage, assessment, yesCount, status };
+  });
+
+  rows.sort((a, b) => {
+    const statusOrder = { at_risk: 0, stalled: 1, healthy: 2 };
+    const diff = statusOrder[a.status] - statusOrder[b.status];
+    if (diff !== 0) return diff;
+    return b.deal.arr - a.deal.arr;
+  });
+
+  const totalArr = rows.reduce((s, r) => s + r.deal.arr, 0);
+  const repWeighted = rows.reduce(
+    (s, r) => s + r.deal.arr * r.deal.repForecastProbability,
+    0,
+  );
+  const drWeighted = rows.reduce(
+    (s, r) => s + r.deal.arr * r.assessment.adjustedProbability,
+    0,
+  );
+  const gap = repWeighted - drWeighted;
+
+  const atRiskCount = rows.filter((r) => r.status === "at_risk").length;
+  const stalledCount = rows.filter((r) => r.status === "stalled").length;
+
+  return (
+    <div className="min-h-screen bg-bg">
+      <main className="max-w-[1200px] mx-auto px-6 py-7">
+        <div className="flex items-baseline justify-between gap-4 mb-5">
+          <h1 className="text-[24px] font-semibold tracking-tight text-ink">
+            Pipeline
+          </h1>
+          <div className="text-[12px] text-muted">
+            {rows.length} deals · {atRiskCount} at risk · {stalledCount} stalled
+          </div>
+        </div>
+
+        <SummaryBar
+          totalArr={totalArr}
+          repWeighted={repWeighted}
+          drWeighted={drWeighted}
+          gap={gap}
+        />
+
+        <div className="mt-5 bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-line">
+                <Th className="pl-5">Account</Th>
+                <Th>Status</Th>
+                <Th>Stage</Th>
+                <Th className="text-right">ARR</Th>
+                <Th>Rep forecast</Th>
+                <Th>DealRipe forecast</Th>
+                <Th className="text-right pr-5">Qualification</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr
+                  key={row.deal.id}
+                  className={
+                    i < rows.length - 1 ? "border-b border-line" : undefined
+                  }
+                >
+                  <td className="pl-5 py-3.5">
+                    <AccountCell row={row} />
+                  </td>
+                  <td className="py-3.5">
+                    <StatusBadge status={row.status} />
+                  </td>
+                  <td className="py-3.5">
+                    <StageCell row={row} />
+                  </td>
+                  <td className="py-3.5 text-right pr-3 font-semibold text-ink text-[13px]">
+                    {formatMoney(row.deal.arr)}
+                  </td>
+                  <td className="py-3.5 text-[12px] text-muted">
+                    <div>
+                      {formatPct(row.deal.repForecastProbability)} ·{" "}
+                      {quarterOf(row.deal.repForecastCloseDate)} ·{" "}
+                      {formatDate(row.deal.repForecastCloseDate)}
+                    </div>
+                  </td>
+                  <td className="py-3.5 text-[12px]">
+                    <ForecastCompareCell row={row} />
+                  </td>
+                  <td className="py-3.5 text-right pr-5">
+                    <QualCell row={row} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="text-[11px] text-muted mt-3 pl-1">
+          Only Lumora Marketplace is wired to a live deal page in this
+          build. The other rows reflect static pipeline context.
+        </p>
+      </main>
+    </div>
+  );
+}
+
+function SummaryBar({
+  totalArr,
+  repWeighted,
+  drWeighted,
+  gap,
+}: {
+  totalArr: number;
+  repWeighted: number;
+  drWeighted: number;
+  gap: number;
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-4 gap-5 bg-white rounded-xl2 shadow-card border border-line p-6">
+      <MetricBlock label="Pipeline total ARR" value={formatMoney(totalArr)} tone="neutral" />
+      <MetricBlock
+        label="Rep forecast (weighted)"
+        value={formatMoney(repWeighted)}
+        tone="muted"
+      />
+      <MetricBlock
+        label="DealRipe forecast (weighted)"
+        value={formatMoney(drWeighted)}
+        tone="ink"
+      />
+      <MetricBlock
+        label="Gap"
+        value={formatMoney(gap)}
+        tone="danger"
+        sub="Rep forecast above DealRipe"
+      />
+    </div>
+  );
+}
+
+function MetricBlock({
+  label,
+  value,
+  tone,
+  sub,
+}: {
+  label: string;
+  value: string;
+  tone: "neutral" | "muted" | "ink" | "danger";
+  sub?: string;
+}) {
+  const valueClass =
+    tone === "danger"
+      ? "text-danger"
+      : tone === "ink"
+        ? "text-ink"
+        : tone === "muted"
+          ? "text-muted"
+          : "text-ink";
+  const weight = tone === "ink" || tone === "danger" ? "font-bold" : "font-semibold";
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1.5">
+        {label}
+      </div>
+      <div className={`text-[24px] ${weight} tracking-tight ${valueClass} leading-none`}>
+        {value}
+      </div>
+      {sub && <div className="text-[11px] text-muted mt-1">{sub}</div>}
+    </div>
+  );
+}
+
+function Th({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`text-[10px] uppercase tracking-wider font-semibold text-muted py-2.5 ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function AccountCell({ row }: { row: Row }) {
+  const isClickable = row.deal.id === "lumora-2026-q2";
+  return (
+    <div>
+      {isClickable ? (
+        <Link
+          href={`/deals/${row.deal.id}`}
+          className="text-[14px] font-semibold text-ink hover:text-accent transition"
+        >
+          {row.deal.account}
+        </Link>
+      ) : (
+        <span
+          className="text-[14px] font-semibold text-ink cursor-default"
+          title="Demo data. Not wired to a live deal page."
+        >
+          {row.deal.account}
+        </span>
+      )}
+      <div className="text-[11px] text-muted mt-0.5">{row.deal.industry}</div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: HealthStatus }) {
+  if (status === "at_risk") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-danger">
+        <span className="w-1.5 h-1.5 rounded-full bg-danger" />
+        At risk
+      </span>
+    );
+  }
+  if (status === "stalled") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-warn">
+        <span className="w-1.5 h-1.5 rounded-full bg-warn" />
+        Stalled
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent">
+      <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+      Healthy
+    </span>
+  );
+}
+
+function StageCell({ row }: { row: Row }) {
+  const stuck = row.deal.daysInStage > 21;
+  return (
+    <div className="text-[12px]">
+      <div className="text-ink font-medium">
+        {row.stage.label} · {row.stage.pct}
+      </div>
+      <div
+        className={`text-[11px] mt-0.5 ${stuck ? "text-danger font-semibold" : "text-muted"}`}
+      >
+        {row.deal.daysInStage} days in stage
+      </div>
+    </div>
+  );
+}
+
+function ForecastCompareCell({ row }: { row: Row }) {
+  const dr = row.assessment.adjustedProbability;
+  const drDiff =
+    row.deal.repForecastProbability - row.assessment.adjustedProbability;
+  const diverges = Math.abs(drDiff * 100) > 15;
+  return (
+    <div>
+      <div
+        className={`font-semibold ${diverges ? "text-danger" : "text-ink"}`}
+      >
+        {formatPct(dr)} · {quarterOf(row.assessment.adjustedCloseDate)} ·{" "}
+        {formatDate(row.assessment.adjustedCloseDate)}
+      </div>
+      {diverges && (
+        <div className="text-[11px] text-danger mt-0.5">
+          {drDiff > 0
+            ? `${Math.round(drDiff * 100)}pt below rep`
+            : `${Math.round(-drDiff * 100)}pt above rep`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QualCell({ row }: { row: Row }) {
+  const missing = row.assessment.unfilledFieldIds.length;
+  const tone =
+    missing === 0
+      ? "text-accent"
+      : missing > AT_RISK_MISSING_THRESHOLD
+        ? "text-danger"
+        : "text-warn";
+  return (
+    <div>
+      <div className="text-[13px] font-semibold text-ink">
+        {row.yesCount} of 18
+      </div>
+      <div className={`text-[11px] ${tone} mt-0.5`}>
+        {missing === 0
+          ? `${row.stage.label} gate met`
+          : `${missing} missing for ${row.stage.label}`}
+      </div>
+    </div>
+  );
+}
+
+function classifyDeal(
+  deal: Deal,
+  stage: Stage,
+  assessment: DealRipeAssessment,
+  yesCount: number,
+): HealthStatus {
+  const isLateStage = LATE_STAGES.has(stage.key);
+  const divergencePts =
+    Math.abs(deal.repForecastProbability - assessment.adjustedProbability) *
+    100;
+  const completionPct = (yesCount / SCOTSMAN_FIELDS.length) * 100;
+
+  if (
+    isLateStage &&
+    assessment.unfilledFieldIds.length > AT_RISK_MISSING_THRESHOLD
+  ) {
+    return "at_risk";
+  }
+  if (
+    divergencePts > AT_RISK_DIVERGENCE_THRESHOLD &&
+    completionPct < AT_RISK_COMPLETION_THRESHOLD
+  ) {
+    return "at_risk";
+  }
+  if (
+    deal.daysInStage > STALLED_DAYS_THRESHOLD &&
+    divergencePts > STALLED_DIVERGENCE_THRESHOLD
+  ) {
+    return "stalled";
+  }
+  return "healthy";
+}
+
+function formatMoney(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 1000) return `$${Math.round(v / 1000)}K`;
+  return `$${v}`;
+}
+
+function formatPct(p: number): string {
+  return `${Math.round(p * 100)}%`;
+}
+
+function quarterOf(iso: string): string {
+  const d = new Date(iso);
+  return `Q${Math.floor(d.getUTCMonth() / 3) + 1}`;
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}

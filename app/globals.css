@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+html, body {
+  background: #f8fafc;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes flash-yes {
+  0%   { background-color: rgba(34, 197, 94, 0.22); }
+  100% { background-color: rgba(34, 197, 94, 0); }
+}
+@keyframes flash-no {
+  0%   { background-color: rgba(239, 68, 68, 0.22); }
+  100% { background-color: rgba(239, 68, 68, 0); }
+}
+.flash-yes { animation: flash-yes 1500ms ease-out; }
+.flash-no  { animation: flash-no 1500ms ease-out; }

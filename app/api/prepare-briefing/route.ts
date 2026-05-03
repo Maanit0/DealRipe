@@ -1,0 +1,172 @@
+import { NextRequest, NextResponse } from "next/server";
+import { anthropic, MODEL } from "@/lib/anthropic";
+import {
+  buildBriefingSystemPrompt,
+  buildBriefingUserMessage,
+  computeTopQuestionIds,
+} from "@/lib/briefing-prompt";
+import { SPIN_FOLLOWUPS, STAGES, type ExtractionResult } from "@/lib/scotsman";
+import { getDealById, getStageForDeal } from "@/lib/seed-data";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+const REQUEST_TIMEOUT_MS = 45_000;
+
+export async function POST(req: NextRequest) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      { error: "ANTHROPIC_API_KEY is not set. Add it to .env.local and restart the dev server." },
+      { status: 500 },
+    );
+  }
+
+  let body: { dealId?: string; extraction?: ExtractionResult };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const { dealId, extraction } = body;
+  if (!dealId || !extraction) {
+    return NextResponse.json(
+      { error: "Missing dealId or extraction" },
+      { status: 400 },
+    );
+  }
+
+  const deal = getDealById(dealId);
+  if (!deal) {
+    return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+  }
+  const stage = getStageForDeal(deal);
+  if (!stage) {
+    return NextResponse.json({ error: "Stage not found" }, { status: 404 });
+  }
+
+  const stageIndex = STAGES.findIndex((s) => s.key === stage.key);
+  const nextStage =
+    stageIndex >= 0 && stageIndex < STAGES.length - 1
+      ? STAGES[stageIndex + 1]
+      : null;
+
+  const topQuestionIds = computeTopQuestionIds(extraction, stage, nextStage);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const start = Date.now();
+
+  try {
+    const response = await anthropic.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 1500,
+        temperature: 0.3,
+        system: buildBriefingSystemPrompt(),
+        messages: [
+          {
+            role: "user",
+            content: buildBriefingUserMessage(
+              deal,
+              stage,
+              nextStage,
+              extraction,
+              topQuestionIds,
+            ),
+          },
+        ],
+      },
+      { signal: controller.signal },
+    );
+
+    clearTimeout(timeout);
+
+    const text = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("");
+
+    const parsed = parseBriefing(text);
+    if (!parsed) {
+      console.error(
+        `[prepare-briefing] dealId=${dealId} parse_failed raw_length=${text.length}`,
+      );
+      return NextResponse.json(
+        { error: "Could not parse briefing output" },
+        { status: 502 },
+      );
+    }
+
+    const topQuestions = topQuestionIds.map((id) => ({
+      fieldId: id,
+      question: SPIN_FOLLOWUPS[id] ?? "",
+    }));
+
+    const duration = Date.now() - start;
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+    console.log(
+      `[prepare-briefing] dealId=${dealId} ok duration=${duration}ms in=${inputTokens} out=${outputTokens}`,
+    );
+
+    return NextResponse.json({
+      callObjective: parsed.callObjective,
+      topQuestions,
+      nextStepCommitment: parsed.nextStepCommitment,
+      whatsAtRisk: parsed.whatsAtRisk,
+    });
+  } catch (err: any) {
+    clearTimeout(timeout);
+    const duration = Date.now() - start;
+    if (controller.signal.aborted || err?.name === "AbortError") {
+      console.error(
+        `[prepare-briefing] dealId=${dealId} timeout duration=${duration}ms`,
+      );
+      return NextResponse.json({ error: "Briefing timed out" }, { status: 504 });
+    }
+    console.error(
+      `[prepare-briefing] dealId=${dealId} api_error duration=${duration}ms`,
+      err?.message ?? err,
+    );
+    return NextResponse.json(
+      { error: "Briefing service unavailable" },
+      { status: 502 },
+    );
+  }
+}
+
+function parseBriefing(
+  raw: string,
+): {
+  callObjective: string;
+  nextStepCommitment: string;
+  whatsAtRisk: string;
+} | null {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1) return null;
+  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (
+      typeof parsed?.callObjective === "string" &&
+      typeof parsed?.nextStepCommitment === "string" &&
+      typeof parsed?.whatsAtRisk === "string"
+    ) {
+      return {
+        callObjective: parsed.callObjective,
+        nextStepCommitment: parsed.nextStepCommitment,
+        whatsAtRisk: parsed.whatsAtRisk,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
