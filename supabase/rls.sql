@@ -1,0 +1,242 @@
+-- =====================================================================
+-- DealRipe RLS posture.
+--
+-- Layered defense:
+--   1. Triggers in schema.sql (enforce_tenant_alignment +
+--      prevent_tenant_id_change) reject mismatched/changed tenant_id at
+--      write time. They fire on every connection, including service role.
+--   2. RLS policies (this file) filter every read and write to the
+--      caller's tenant, based on the JWT's tenant_id claim.
+--
+-- Service role bypasses RLS (Supabase default). Server-side audit writes
+-- run as service role and need full access; that bypass is correct.
+--
+-- See supabase/RLS-POLICIES.md for the human-readable summary handed to
+-- Magaya's IT review on May 11.
+--
+-- Idempotent: drop-if-exists guards on every policy so this file can be
+-- re-applied without error after edits.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- TEMPORARY: helper for the no-auth demo fallback.
+-- SECURITY DEFINER so the anon fallback can resolve without giving the
+-- anon client SELECT on the tenants table itself.
+-- Remove this function and any reference to it when real auth lands.
+-- ---------------------------------------------------------------------
+create or replace function public.demo_topsort_tenant_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select id from public.tenants where slug = 'topsort' limit 1;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Enable RLS on every table.
+-- ---------------------------------------------------------------------
+alter table public.tenants            enable row level security;
+alter table public.deals              enable row level security;
+alter table public.contacts           enable row level security;
+alter table public.calls              enable row level security;
+alter table public.transcripts        enable row level security;
+alter table public.field_extractions  enable row level security;
+alter table public.extraction_runs    enable row level security;
+alter table public.briefing_runs      enable row level security;
+
+-- ---------------------------------------------------------------------
+-- tenants: any authenticated user can SELECT (to look up their own
+-- tenant). No INSERT/UPDATE/DELETE policies => only service role writes.
+-- ---------------------------------------------------------------------
+drop policy if exists tenants_select_authenticated on public.tenants;
+
+create policy tenants_select_authenticated on public.tenants
+  for select
+  using (auth.role() = 'authenticated');
+
+-- ---------------------------------------------------------------------
+-- The standard pattern, repeated for every tenant_id-bearing table:
+--
+--   SELECT: row.tenant_id matches JWT claim
+--           OR (TEMPORARY) JWT has no tenant_id and row is in topsort
+--   INSERT: NEW.tenant_id matches JWT claim
+--   UPDATE: tenant_id matches on USING (old) and WITH CHECK (new)
+--   DELETE: no policy => denied for all non-service-role connections
+-- ---------------------------------------------------------------------
+
+-- ----- deals
+drop policy if exists deals_select on public.deals;
+drop policy if exists deals_insert on public.deals;
+drop policy if exists deals_update on public.deals;
+
+create policy deals_select on public.deals
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy deals_insert on public.deals
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy deals_update on public.deals
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- contacts
+drop policy if exists contacts_select on public.contacts;
+drop policy if exists contacts_insert on public.contacts;
+drop policy if exists contacts_update on public.contacts;
+
+create policy contacts_select on public.contacts
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy contacts_insert on public.contacts
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy contacts_update on public.contacts
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- calls
+drop policy if exists calls_select on public.calls;
+drop policy if exists calls_insert on public.calls;
+drop policy if exists calls_update on public.calls;
+
+create policy calls_select on public.calls
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy calls_insert on public.calls
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy calls_update on public.calls
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- transcripts
+drop policy if exists transcripts_select on public.transcripts;
+drop policy if exists transcripts_insert on public.transcripts;
+drop policy if exists transcripts_update on public.transcripts;
+
+create policy transcripts_select on public.transcripts
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy transcripts_insert on public.transcripts
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy transcripts_update on public.transcripts
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- field_extractions
+drop policy if exists field_extractions_select on public.field_extractions;
+drop policy if exists field_extractions_insert on public.field_extractions;
+drop policy if exists field_extractions_update on public.field_extractions;
+
+create policy field_extractions_select on public.field_extractions
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy field_extractions_insert on public.field_extractions
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy field_extractions_update on public.field_extractions
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- extraction_runs
+drop policy if exists extraction_runs_select on public.extraction_runs;
+drop policy if exists extraction_runs_insert on public.extraction_runs;
+drop policy if exists extraction_runs_update on public.extraction_runs;
+
+create policy extraction_runs_select on public.extraction_runs
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy extraction_runs_insert on public.extraction_runs
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy extraction_runs_update on public.extraction_runs
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- briefing_runs
+drop policy if exists briefing_runs_select on public.briefing_runs;
+drop policy if exists briefing_runs_insert on public.briefing_runs;
+drop policy if exists briefing_runs_update on public.briefing_runs;
+
+create policy briefing_runs_select on public.briefing_runs
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy briefing_runs_insert on public.briefing_runs
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy briefing_runs_update on public.briefing_runs
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);

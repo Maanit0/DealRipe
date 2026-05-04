@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "migrate:extractions": "tsx scripts/migrate-extractions-to-supabase.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@supabase/supabase-js": "^2.105.3",
     "next": "14.2.15",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -18,8 +20,10 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.4.2",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
+    "tsx": "^4.21.0",
     "typescript": "^5.6.3"
   }
 }

@@ -5,8 +5,14 @@ import {
   buildBriefingUserMessage,
   computeTopQuestionIds,
 } from "@/lib/briefing-prompt";
+import type { Json } from "@/lib/database.types";
 import { SPIN_FOLLOWUPS, STAGES, type ExtractionResult } from "@/lib/scotsman";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
+import { supabaseAdmin } from "@/lib/supabase";
+import { resolveDealId, resolveTenantId } from "@/lib/tenant-deal-lookup";
+
+const TENANT_SLUG = "topsort";
+const PROMPT_VERSION = "v1";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -110,6 +116,16 @@ export async function POST(req: NextRequest) {
       `[prepare-briefing] dealId=${dealId} ok duration=${duration}ms in=${inputTokens} out=${outputTokens}`,
     );
 
+    // Audit trail: best-effort write. Failures are logged and swallowed.
+    await writeBriefingAudit({
+      dealExternalId: dealId,
+      parsedBriefing: parsed,
+      modelName: MODEL,
+      duration,
+      inputTokens,
+      outputTokens,
+    });
+
     return NextResponse.json({
       callObjective: parsed.callObjective,
       topQuestions,
@@ -133,6 +149,58 @@ export async function POST(req: NextRequest) {
       { error: "Briefing service unavailable" },
       { status: 502 },
     );
+  }
+}
+
+async function writeBriefingAudit(args: {
+  dealExternalId: string;
+  parsedBriefing: {
+    callObjective: string;
+    nextStepCommitment: string;
+    whatsAtRisk: string;
+  };
+  modelName: string;
+  duration: number;
+  inputTokens: number;
+  outputTokens: number;
+}): Promise<void> {
+  const {
+    dealExternalId,
+    parsedBriefing,
+    modelName,
+    duration,
+    inputTokens,
+    outputTokens,
+  } = args;
+
+  try {
+    const tenantId = await resolveTenantId(TENANT_SLUG);
+    const dealUuid = await resolveDealId(dealExternalId, TENANT_SLUG);
+
+    const ins = await supabaseAdmin().from("briefing_runs").insert({
+      tenant_id: tenantId,
+      deal_id: dealUuid,
+      model_name: modelName,
+      prompt_version: PROMPT_VERSION,
+      raw_response: parsedBriefing as unknown as Json,
+      token_input: inputTokens,
+      token_output: outputTokens,
+      duration_ms: duration,
+    });
+
+    if (ins.error) {
+      console.error(
+        `[prepare-briefing] briefing_runs insert failed:`,
+        ins.error,
+      );
+      return;
+    }
+
+    console.log(
+      `[prepare-briefing] audit ok dealId=${dealExternalId} run_inserted=1`,
+    );
+  } catch (err) {
+    console.error("[prepare-briefing] audit write failed:", err);
   }
 }
 
