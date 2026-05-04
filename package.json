@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "migrate:extractions": "tsx scripts/migrate-extractions-to-supabase.ts"
+    "migrate:extractions": "tsx scripts/migrate-extractions-to-supabase.ts",
+    "delete:tenant": "tsx scripts/delete-tenant-data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

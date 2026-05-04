@@ -1,0 +1,21 @@
+DealRipe tenant data deletion DRY RUN confirmation
+
+Tenant slug:   topsort
+Tenant UUID:   9ff0800e-273e-44e8-ad05-1e8535a8734b
+Tenant name:   TopSort
+Timestamp:     2026-05-04T20:54:32.709Z
+Mode:          DRY RUN (no rows deleted)
+
+Rows that would be deleted per table:
+  extraction_runs      5
+  briefing_runs        3
+  field_extractions    18
+  transcripts          0
+  calls                0
+  contacts             0
+  deals                1
+  tenants              1
+  ----------------------------
+  total                28
+
+SHA-256 of summary: 1a32586c3c7360592c19de33d39a81f1f3f8ae34761461891048fc1ebf580dce
