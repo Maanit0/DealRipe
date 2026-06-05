@@ -1,0 +1,213 @@
+import type { ForecastTenant } from "../types";
+
+export const TOPSORT: ForecastTenant = {
+  slug: "topsort",
+  name: "TopSort",
+  product: "Retail media platform for marketplaces",
+  framework: "Scotsman",
+  weekOf: "May 18, 2026",
+  lastUpdatedAgo: "12 minutes ago",
+  changedCount: 3,
+  numbers: {
+    quarterTargetUsd: 2_500_000,
+    quarterLabel: "Q2 2026",
+    ripeForecastUsd: 1_330_000,
+    repCommitUsd: 1_750_000,
+  },
+  movements: [
+    {
+      id: "kestrel",
+      account: "Kestrel Apparel",
+      arr: 680_000,
+      rep: "Erica Klein",
+      status: "at_risk",
+      repProb: 85,
+      repQuarter: "Q2 2026",
+      repDate: "Apr 30, 2026",
+      lastProb: 65,
+      lastQuarter: "Q3 2026",
+      lastDate: "Jul 16",
+      thisProb: 57,
+      thisQuarter: "Q3 2026",
+      thisDate: "Jul 23",
+      delta: -8,
+      reason:
+        "CFO David Kowalski declined the meeting invite for Tuesday. Economic buyer now 21 days untouched.",
+      convinceMe: 57,
+    },
+    {
+      id: "northwind",
+      account: "Northwind Grocers",
+      arr: 520_000,
+      rep: "Jimmy Park",
+      status: "at_risk",
+      repProb: 60,
+      repQuarter: "Q2 2026",
+      repDate: "May 31, 2026",
+      lastProb: 54,
+      lastQuarter: "Q3 2026",
+      lastDate: "Jun 28",
+      thisProb: 49,
+      thisQuarter: "Q3 2026",
+      thisDate: "Jul 12",
+      delta: -5,
+      reason:
+        "Champion changed roles internally. Procurement still not engaged at typical day 60.",
+      convinceMe: 49,
+    },
+    {
+      id: "meridian",
+      account: "Meridian Home",
+      arr: 275_000,
+      rep: "Sarah Chen",
+      status: "at_risk",
+      repProb: 30,
+      repQuarter: "Q3 2026",
+      repDate: "Jul 15, 2026",
+      lastProb: 12,
+      lastQuarter: "Q3 2026",
+      lastDate: "Aug 25",
+      thisProb: 0,
+      thisQuarter: "Q3 2026",
+      thisDate: "Sep 9",
+      delta: -12,
+      reason:
+        "Two no shows on discovery this week. No qualified champion identified. Stalled before stage 2.",
+      convinceMe: 0,
+    },
+    {
+      id: "lumora",
+      account: "Lumora Marketplace",
+      arr: 340_000,
+      rep: "Erica Klein",
+      status: "stalled",
+      repProb: 70,
+      repQuarter: "Q2 2026",
+      repDate: "Jun 15, 2026",
+      lastProb: 47,
+      lastQuarter: "Q3 2026",
+      lastDate: "Jul 24",
+      thisProb: 44,
+      thisQuarter: "Q3 2026",
+      thisDate: "Jul 27",
+      delta: -3,
+      reason:
+        "No new calls. Marcus has not responded to outreach for 6 days. Stage clock running.",
+      convinceMe: 44,
+    },
+    {
+      id: "harbor",
+      account: "Harbor Outdoor",
+      arr: 410_000,
+      rep: "Marcus Webb",
+      status: "healthy",
+      repProb: 95,
+      repQuarter: "Q2 2026",
+      repDate: "Apr 25, 2026",
+      lastProb: 92,
+      lastQuarter: "Q2 2026",
+      lastDate: "Apr 25",
+      thisProb: 95,
+      thisQuarter: "Q2 2026",
+      thisDate: "Apr 25",
+      delta: 3,
+      reason:
+        "Signing gate met. Procurement aligned. DealRipe now flags this as a clean commit.",
+      convinceMe: 95,
+    },
+    {
+      id: "atlas",
+      account: "Atlas Pet Supply",
+      arr: 180_000,
+      rep: "Marcus Webb",
+      status: "healthy",
+      repProb: 85,
+      repQuarter: "Q2 2026",
+      repDate: "Apr 30, 2026",
+      lastProb: 76,
+      lastQuarter: "Q2 2026",
+      lastDate: "May 14",
+      thisProb: 80,
+      thisQuarter: "Q2 2026",
+      thisDate: "May 14",
+      delta: 4,
+      reason:
+        "Decision maker confirmed in last call. Last open gate now closeable.",
+      convinceMe: 80,
+    },
+  ],
+  leverage: [
+    {
+      account: "Kestrel Apparel",
+      action:
+        "Get CFO David Kowalski into a working session this week. Marcus has the relationship. Ask him to broker the meeting before Friday.",
+      impacts: [
+        { label: "Close probability", value: "+18 points" },
+        { label: "Close date pulled in", value: "14 days" },
+        { label: "Weighted forecast", value: "+$61K", bold: true },
+      ],
+      confidence: "High",
+      confidenceNote:
+        "Similar Kestrel stage deals required EB engagement within 30 days to close on time.",
+    },
+    {
+      account: "Northwind Grocers",
+      action:
+        "Engage procurement now. This deal size always routes through procurement by day 60. We are at day 41 with no contact.",
+      impacts: [
+        { label: "Close probability", value: "+12 points" },
+        { label: "Weighted forecast", value: "+$38K", bold: true },
+      ],
+      confidence: "High",
+      confidenceNote:
+        "8 of 8 deals at this ACV in last 6 quarters went through procurement.",
+    },
+    {
+      account: "Lumora Marketplace",
+      action:
+        "Confirm Q3 budget allocation with David Kowalski in writing. Marcus said “mid June feels doable” but the contract size exceeds his approval threshold.",
+      impacts: [
+        { label: "Close probability", value: "+15 points" },
+        { label: "Weighted forecast", value: "+$24K", bold: true },
+      ],
+      confidence: "Medium",
+      confidenceNote:
+        "Budget confirmation in writing historically lifts close probability for Money gated deals.",
+    },
+    {
+      account: "Meridian Home",
+      action:
+        "Identify and qualify the economic buyer before next call, or disqualify. Currently zero stakeholders verified as decision authority.",
+      impacts: [
+        { label: "Close probability", value: "+22 points" },
+        { label: "Weighted forecast", value: "+$30K", bold: true },
+      ],
+      confidence: "Medium",
+      confidenceNote:
+        "Open stage deals without an EB by day 30 close at 8 percent.",
+    },
+    {
+      account: "Lumora Marketplace",
+      action:
+        "Get Sarah, CEO, into the Validation call within 7 days. She has not been formally looped in and is required for any contract above $300K per Topsort patterns.",
+      impacts: [
+        { label: "Close probability", value: "+10 points" },
+        { label: "Close date pulled in", value: "7 days" },
+        { label: "Weighted forecast", value: "+$16K", bold: true },
+      ],
+      confidence: "Medium",
+      confidenceNote:
+        "Patterns from prior $300K+ TopSort deals indicate CEO engagement before Validation close.",
+    },
+  ],
+  leverageSummary:
+    "If all five actions are completed in the next 7 days, DealRipe projects forecast lifts to $1.50M, closing 60% of the gap to target.",
+  calibration: {
+    ripeAccuracyPct: 91,
+    ripeDeviationUsd: 34_000,
+    ripeDeviationFloorUsd: 200_000,
+    repAccuracyPct: 64,
+    repOvercommitUsd: 312_000,
+    dealsTrainedOn: 247,
+  },
+};

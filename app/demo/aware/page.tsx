@@ -106,12 +106,6 @@ function Footer() {
         <span className="text-[11px] text-muted">
           Demo build for Aware, Inc. Configured by DealRipe.
         </span>
-        <Link
-          href="/pipeline"
-          className="text-[11px] font-semibold text-muted hover:text-ink transition"
-        >
-          Switch to TopSort demo
-        </Link>
       </div>
     </footer>
   );

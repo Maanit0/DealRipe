@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-bg font-sans text-ink antialiased">
@@ -8,12 +6,12 @@ export default function LandingPage() {
           <span className="text-[14px] font-semibold tracking-tight text-ink">
             DealRipe
           </span>
-          <Link
-            href="/forecast"
+          <a
+            href="mailto:maanit@dealripe.com"
             className="text-[13px] font-semibold text-muted hover:text-ink transition"
           >
-            Try the demo →
-          </Link>
+            Book a demo →
+          </a>
         </div>
       </header>
 
@@ -29,19 +27,12 @@ export default function LandingPage() {
             and writes the customer&rsquo;s verbatim answers back to your CRM.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
-            <Link
-              href="/forecast"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl2 bg-ink text-white text-[14px] font-semibold hover:bg-ink/90 transition"
-            >
-              Try the live demo
-              <span aria-hidden>→</span>
-            </Link>
-            {/* TODO: confirm contact email */}
             <a
               href="mailto:maanit@dealripe.com"
-              className="inline-flex items-center px-5 py-3 rounded-xl2 border border-line bg-white text-ink text-[14px] font-semibold hover:bg-bg transition"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl2 bg-ink text-white text-[14px] font-semibold hover:bg-ink/90 transition"
             >
               Book a demo
+              <span aria-hidden>→</span>
             </a>
           </div>
         </section>
@@ -87,16 +78,16 @@ export default function LandingPage() {
             See it run on a real deal.
           </h2>
           <p className="mt-4 text-[15px] text-muted leading-relaxed max-w-[520px] mx-auto">
-            The product is live and runs end-to-end. Ingest a transcript, see
-            the audit, see the briefing.
+            The product is live and runs end-to-end. Book a walkthrough and
+            we&rsquo;ll run it on a deal from your world.
           </p>
-          <Link
-            href="/forecast"
+          <a
+            href="mailto:maanit@dealripe.com"
             className="mt-8 inline-flex items-center gap-2 px-6 py-3.5 rounded-xl2 bg-accent text-white text-[15px] font-semibold hover:bg-accent/90 transition"
           >
-            Try the live demo
+            Book a demo
             <span aria-hidden>→</span>
-          </Link>
+          </a>
         </section>
       </main>
 
