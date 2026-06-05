@@ -7,7 +7,14 @@
     "build": "next build",
     "start": "next start",
     "migrate:extractions": "tsx scripts/migrate-extractions-to-supabase.ts",
-    "delete:tenant": "tsx scripts/delete-tenant-data.ts"
+    "delete:tenant": "tsx scripts/delete-tenant-data.ts",
+    "test:crm-scope": "tsx scripts/test-crm-scope.ts",
+    "seed:magaya": "tsx scripts/seed-magaya-tenant.ts",
+    "seed:frameworks": "tsx scripts/seed-frameworks.ts",
+    "demo:crm-audit": "tsx scripts/demo-crm-audit.ts",
+    "test:recall-bot": "tsx scripts/test-recall-bot.ts",
+    "test:graph": "tsx scripts/test-graph-calendar.ts",
+    "test:pilot-sync": "tsx scripts/test-pilot-sync.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

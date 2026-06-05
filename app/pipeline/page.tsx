@@ -65,8 +65,22 @@ export default function PipelinePage() {
           <h1 className="text-[24px] font-semibold tracking-tight text-ink">
             Pipeline
           </h1>
-          <div className="text-[12px] text-muted">
-            {rows.length} deals · {atRiskCount} at risk · {stalledCount} stalled
+          <div className="flex items-center gap-4">
+            <Link
+              href="/forecast"
+              className="text-[12px] font-semibold text-ink bg-bg border border-line hover:border-ink/30 rounded-md px-2.5 py-1 transition"
+            >
+              Open Forecast Room →
+            </Link>
+            <Link
+              href="/onboarding"
+              className="text-[12px] font-semibold text-muted hover:text-ink transition"
+            >
+              Setup
+            </Link>
+            <div className="text-[12px] text-muted">
+              {rows.length} deals · {atRiskCount} at risk · {stalledCount} stalled
+            </div>
           </div>
         </div>
 

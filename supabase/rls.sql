@@ -240,3 +240,174 @@ create policy briefing_runs_update on public.briefing_runs
   for update
   using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
   with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ---------------------------------------------------------------------
+-- crm_access_log (Magaya pilot)
+--
+-- Append-only audit. SELECT and INSERT are tenant-scoped. There are no
+-- UPDATE or DELETE policies, so the table cannot be tampered with through
+-- the public API; only the service role (used by server-side audit
+-- writes) can issue any modification.
+-- ---------------------------------------------------------------------
+alter table public.crm_access_log enable row level security;
+
+drop policy if exists crm_access_log_select on public.crm_access_log;
+drop policy if exists crm_access_log_insert on public.crm_access_log;
+
+create policy crm_access_log_select on public.crm_access_log
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy crm_access_log_insert on public.crm_access_log
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- No UPDATE policy: log entries are immutable.
+-- No DELETE policy: log entries are append-only.
+
+-- ---------------------------------------------------------------------
+-- microsoft_connections (Magaya pilot)
+--
+-- Tenant-scoped SELECT/INSERT/UPDATE via the standard JWT pattern. No
+-- DELETE policy: connection removal is operator-run via the service
+-- role (a future revoke script will also call /me/revokeSignInSessions
+-- on Graph before deleting the row).
+-- ---------------------------------------------------------------------
+alter table public.microsoft_connections enable row level security;
+
+drop policy if exists microsoft_connections_select on public.microsoft_connections;
+drop policy if exists microsoft_connections_insert on public.microsoft_connections;
+drop policy if exists microsoft_connections_update on public.microsoft_connections;
+
+create policy microsoft_connections_select on public.microsoft_connections
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    -- TEMPORARY: anon fallback for the demo. Remove when auth is wired.
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy microsoft_connections_insert on public.microsoft_connections
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy microsoft_connections_update on public.microsoft_connections
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- No DELETE policy: row removal is operator-run via service role.
+
+-- ---------------------------------------------------------------------
+-- Framework configuration tables (multi-tenant, standard pattern)
+-- ---------------------------------------------------------------------
+alter table public.qualification_frameworks enable row level security;
+alter table public.framework_fields         enable row level security;
+alter table public.deal_signal_snapshots    enable row level security;
+alter table public.prescribed_actions       enable row level security;
+
+-- ----- qualification_frameworks
+drop policy if exists qualification_frameworks_select on public.qualification_frameworks;
+drop policy if exists qualification_frameworks_insert on public.qualification_frameworks;
+drop policy if exists qualification_frameworks_update on public.qualification_frameworks;
+
+create policy qualification_frameworks_select on public.qualification_frameworks
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy qualification_frameworks_insert on public.qualification_frameworks
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy qualification_frameworks_update on public.qualification_frameworks
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- framework_fields
+drop policy if exists framework_fields_select on public.framework_fields;
+drop policy if exists framework_fields_insert on public.framework_fields;
+drop policy if exists framework_fields_update on public.framework_fields;
+
+create policy framework_fields_select on public.framework_fields
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy framework_fields_insert on public.framework_fields
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy framework_fields_update on public.framework_fields
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- deal_signal_snapshots
+drop policy if exists deal_signal_snapshots_select on public.deal_signal_snapshots;
+drop policy if exists deal_signal_snapshots_insert on public.deal_signal_snapshots;
+drop policy if exists deal_signal_snapshots_update on public.deal_signal_snapshots;
+
+create policy deal_signal_snapshots_select on public.deal_signal_snapshots
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy deal_signal_snapshots_insert on public.deal_signal_snapshots
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy deal_signal_snapshots_update on public.deal_signal_snapshots
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ----- prescribed_actions
+drop policy if exists prescribed_actions_select on public.prescribed_actions;
+drop policy if exists prescribed_actions_insert on public.prescribed_actions;
+drop policy if exists prescribed_actions_update on public.prescribed_actions;
+
+create policy prescribed_actions_select on public.prescribed_actions
+  for select
+  using (
+    (auth.jwt() ->> 'tenant_id') = tenant_id::text
+    or (
+      (auth.jwt() ->> 'tenant_id') is null
+      and tenant_id = demo_topsort_tenant_id()
+    )
+  );
+
+create policy prescribed_actions_insert on public.prescribed_actions
+  for insert
+  with check ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+create policy prescribed_actions_update on public.prescribed_actions
+  for update
+  using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
+  with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);

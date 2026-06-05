@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lumoraDiscoveryTranscript } from "@/lib/seed-transcript";
 
-// DEBUG ONLY. Delete before commit.
+// DEBUG ONLY. Gated by ENABLE_DEBUG_ROUTES=true. Otherwise returns 404
+// so the route is not callable in any environment where the env var is
+// not explicitly set (production, preview, anywhere except a developer
+// box that opted in).
 // Posts the seeded Lumora transcript to /api/extract-scotsman and
 // returns the raw extraction result for eyeballing.
 
@@ -9,6 +12,10 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
+  if (process.env.ENABLE_DEBUG_ROUTES !== "true") {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
   const origin = req.nextUrl.origin;
   const start = Date.now();
 

@@ -9,7 +9,7 @@ export default function LandingPage() {
             DealRipe
           </span>
           <Link
-            href="/pipeline"
+            href="/forecast"
             className="text-[13px] font-semibold text-muted hover:text-ink transition"
           >
             Try the demo →
@@ -30,7 +30,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <Link
-              href="/pipeline"
+              href="/forecast"
               className="inline-flex items-center gap-2 px-5 py-3 rounded-xl2 bg-ink text-white text-[14px] font-semibold hover:bg-ink/90 transition"
             >
               Try the live demo
@@ -91,7 +91,7 @@ export default function LandingPage() {
             the audit, see the briefing.
           </p>
           <Link
-            href="/pipeline"
+            href="/forecast"
             className="mt-8 inline-flex items-center gap-2 px-6 py-3.5 rounded-xl2 bg-accent text-white text-[15px] font-semibold hover:bg-accent/90 transition"
           >
             Try the live demo

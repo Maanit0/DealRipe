@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { mergeExtraction } from "@/lib/extraction-merge";
+import { SCOTSMAN_AS_FRAMEWORK } from "@/lib/scotsman";
 import {
   extractionToStatus,
   gateStatus,
@@ -80,6 +81,7 @@ export function ExtractView({ deal, call, initialTranscript, stage }: Props) {
 
       const data = (await response.json()) as { extraction: ExtractionResult };
       const { merged, changedIds } = mergeExtraction(
+        SCOTSMAN_AS_FRAMEWORK,
         extraction,
         data.extraction,
         call.id,

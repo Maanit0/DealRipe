@@ -123,7 +123,7 @@ async function main() {
     const base: FieldExtractionInsert = {
       tenant_id: tenantId,
       deal_id: dealId,
-      scotsman_field_id: field.id,
+      framework_field_key: field.id,
       status: entry.status,
     };
     if (entry.status === "Yes") {
@@ -138,10 +138,10 @@ async function main() {
   const upsert = await db
     .from("field_extractions")
     .upsert(rows, {
-      onConflict: "deal_id,scotsman_field_id",
+      onConflict: "deal_id,framework_field_key",
       ignoreDuplicates: true,
     })
-    .select("scotsman_field_id");
+    .select("framework_field_key");
 
   if (upsert.error) {
     throw new Error(`field_extractions upsert failed: ${upsert.error.message}`);

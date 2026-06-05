@@ -1,21 +1,41 @@
-import { SCOTSMAN_FIELDS } from "./scotsman";
+import type { Framework } from "./framework";
 
-export function buildExtractionSystemPrompt(): string {
+/**
+ * Assemble the system prompt for transcript extraction from a framework.
+ *
+ * Was previously hardcoded around the SCOTSMAN 18-field list. The
+ * field definitions are now sourced from framework.fields so the same
+ * function serves SCOTSMAN (topsort) and Rolldog Stage Gates (magaya).
+ *
+ * The output contract is unchanged: per-field
+ *   { status: "Yes", answer, evidence, confidence } | { status: "No" } | { status: "Unknown" }
+ * and the customer-words evidence rule (rule 2) plus the verbatim quote
+ * rule (rule 3) are framework-agnostic.
+ */
+export function buildExtractionSystemPrompt(framework: Framework): string {
   const fieldDefinitions = JSON.stringify(
-    SCOTSMAN_FIELDS.map((f) => ({
-      id: f.id,
-      category: f.category,
-      question: f.question,
-    })),
+    framework.fields.map((f) => {
+      const base: Record<string, string> = {
+        id: f.fieldKey,
+        label: f.label,
+        question: f.question,
+      };
+      if (f.stageKey) base.stage = f.stageKey;
+      return base;
+    }),
     null,
     2,
   );
 
-  return `You extract structured qualification answers from B2B sales discovery call transcripts using the Scotsman framework.
+  const fieldIds = framework.fields.map((f) => f.fieldKey);
+  const fieldCount = fieldIds.length;
+  const fieldIdsList = fieldIds.join(", ");
 
-You will receive a transcript of a sales call between a rep (the seller) and a prospect (the customer). Your job is to determine, for each of 18 Scotsman sub-questions listed below, whether the transcript contains evidence that the question is answered.
+  return `You extract structured qualification answers from B2B sales discovery call transcripts using the ${framework.name} framework.
 
-## The 18 Scotsman fields
+You will receive a transcript of a sales call between a rep (the seller) and a prospect (the customer). Your job is to determine, for each of ${fieldCount} ${framework.name} fields listed below, whether the transcript contains evidence that the question is answered.
+
+## The ${fieldCount} ${framework.name} fields
 
 ${fieldDefinitions}
 
@@ -39,15 +59,13 @@ ${fieldDefinitions}
 
 6. Do not infer, extrapolate, or assume beyond what the customer actually said. If the customer did not address the question, mark Unknown.
 
-7. Return all 18 field IDs. Do not skip any.
+7. Return all ${fieldCount} field IDs. Do not skip any.
 
 8. Customer deflection counts as No, not Unknown. If the topic of a sub-question is raised in the conversation and the customer responds with a non-committal answer, a procedural deflection ("we have a procurement process"), an unnamed group ("our finance team"), or any answer that does not directly address the substance of the sub-question, mark the field No, not Unknown. Unknown is reserved for topics that genuinely never came up in the conversation.
 
-   Worked example: if the rep asks about who signs the contract and the customer responds "it'll go through our normal procurement process, we've got a finance team obviously," this is deflection. The topic of authority and budget process was directly raised by the rep, the customer did not name a specific decision maker, did not confirm budget exists, and did not commit to a process. Mark M1, M2, and A2 as No, not Unknown. The customer was given the opportunity to address these substantively and did not.
-
-9. For Authority fields (A1, A2, A3, A4), distinguish between the customer naming a person who exists and the customer confirming meaningful engagement with that person. Knowing that a CFO or CEO exists at the company is not the same as having access to them or having engaged them. A2 (do we know who has authority to decide) requires the customer to actually identify the named decision maker, not gesture at a department ("finance team", "procurement"). A3 (do we have access to the decision maker) requires confirmation of access to the actual economic buyer, not to other stakeholders like the CTO. A customer statement that they have not yet looped in the CEO is direct evidence for No on A3, not evidence for Yes on A4.
+9. For fields that ask whether a named decision-maker, economic buyer, or signer has been engaged, distinguish between the customer naming a person who exists at the company and the customer confirming meaningful access to that person. Knowing a CFO or CEO exists is not the same as having engaged them. A customer statement that they have not yet looped in the named role is direct evidence for No on the access field, not evidence for Yes on a separate "other stakeholders" field.
 
 ## Output format
 
-Return a single JSON object where keys are the 18 field IDs (Sc1, Sc2, C1, O1, T1, T2, T3, S1, S2, M1, M2, M3, A1, A2, A3, A4, N1, N2) and values match the shapes above. Return only the JSON object, with no prose, no markdown fences, and no commentary before or after.`;
+Return a single JSON object where keys are the ${fieldCount} field IDs (${fieldIdsList}) and values match the shapes above. Return only the JSON object, with no prose, no markdown fences, and no commentary before or after.`;
 }

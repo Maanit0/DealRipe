@@ -1,5 +1,5 @@
+import type { Framework } from "./framework";
 import {
-  SCOTSMAN_FIELDS,
   SPIN_FOLLOWUPS,
   extractionToStatus,
   gateStatus,
@@ -8,8 +8,13 @@ import {
 } from "./scotsman";
 import type { Deal } from "./seed-data";
 
-export function buildBriefingSystemPrompt(): string {
-  return `You write pre-call briefings for B2B SaaS sales reps. Your briefings are concise, scannable, and actionable. Each section is a single sentence. Every briefing uses extracted call data to surface the highest-leverage next move for the rep.
+/**
+ * System prompt for pre-call briefing generation. Framework-agnostic in
+ * tone (the rules apply to any qualification framework); the framework
+ * name is interpolated for context.
+ */
+export function buildBriefingSystemPrompt(framework: Framework): string {
+  return `You write pre-call briefings for B2B SaaS sales reps. Your briefings are concise, scannable, and actionable. Each section is a single sentence. Every briefing uses extracted ${framework.name} call data to surface the highest-leverage next move for the rep.
 
 Strictness rules:
 1. No em-dashes (—) or en-dashes (–) anywhere in the output. Use commas, periods, or rephrase. This is a hard formatting rule with no exceptions.
@@ -30,6 +35,7 @@ Output format: a single JSON object, no prose, no markdown fences, no commentary
 
 export function buildBriefingUserMessage(
   deal: Deal,
+  framework: Framework,
   stage: Stage,
   nextStage: Stage | null,
   extraction: ExtractionResult,
@@ -45,21 +51,35 @@ export function buildBriefingUserMessage(
     })
     .join("\n");
 
-  const extractionLines = SCOTSMAN_FIELDS.map((f) => {
-    const entry = extraction[f.id];
-    if (entry && entry.status === "Yes") {
-      return `- ${f.id} (${f.category}): Yes. Answer: ${entry.answer}. Evidence: "${entry.evidence}"`;
-    }
-    const label = entry?.status === "No" ? "No" : "Unknown";
-    return `- ${f.id} (${f.category}): ${label}. Q: ${f.question}`;
-  }).join("\n");
+  const extractionLines = framework.fields
+    .map((f) => {
+      const entry = extraction[f.fieldKey];
+      if (entry && entry.status === "Yes") {
+        return `- ${f.fieldKey} (${f.label}): Yes. Answer: ${entry.answer}. Evidence: "${entry.evidence}"`;
+      }
+      const label = entry?.status === "No" ? "No" : "Unknown";
+      return `- ${f.fieldKey} (${f.label}): ${label}. Q: ${f.question}`;
+    })
+    .join("\n");
 
   const status = extractionToStatus(extraction);
   const currentGate = gateStatus(stage, status);
   const nextGateInfo = nextStage ? gateStatus(nextStage, status) : null;
 
+  // Per-field follow-up resolution. For SCOTSMAN fields we have hardcoded
+  // SPIN prompts; for any other framework, fall back to the field's
+  // declared question (which IS the question to ask, e.g. a Rolldog
+  // stage-gate item text).
+  const followUpFor = (fieldKey: string): string => {
+    return (
+      SPIN_FOLLOWUPS[fieldKey] ??
+      framework.fields.find((f) => f.fieldKey === fieldKey)?.question ??
+      ""
+    );
+  };
+
   const topGapsLines = topQuestionIds
-    .map((id, i) => `${i + 1}. ${id}: ${SPIN_FOLLOWUPS[id] ?? ""}`)
+    .map((id, i) => `${i + 1}. ${id}: ${followUpFor(id)}`)
     .join("\n");
 
   const lines = [
@@ -72,7 +92,7 @@ export function buildBriefingUserMessage(
     `CONTACTS:`,
     contactsLines,
     ``,
-    `CURRENT SCOTSMAN STATE:`,
+    `CURRENT ${framework.name} STATE:`,
     extractionLines,
     ``,
     `GATE STATUS:`,
@@ -96,18 +116,16 @@ export function buildBriefingUserMessage(
   return lines.join("\n");
 }
 
-const CATEGORY_PRIORITY: Record<string, number> = {
-  Authority: 0,
-  Money: 1,
-  Need: 2,
-  Timescale: 3,
-  Size: 4,
-  Competition: 5,
-  Originality: 6,
-  Scope: 7,
-};
-
+/**
+ * Compute the top-3 question IDs from the current gap state.
+ *
+ * Was previously SCOTSMAN-specific (CATEGORY_PRIORITY constant). Now
+ * sorts by framework field sort_order so each framework controls its
+ * own priority. Current-stage blockers come first, then next-stage
+ * blockers; both lists are independently sorted by sort_order.
+ */
 export function computeTopQuestionIds(
+  framework: Framework,
   extraction: ExtractionResult,
   stage: Stage,
   nextStage: Stage | null,
@@ -117,17 +135,18 @@ export function computeTopQuestionIds(
   const nextBlockers = nextStage ? gateStatus(nextStage, status).missing : [];
   const nextOnly = nextBlockers.filter((id) => !currentBlockers.includes(id));
 
-  const byPriority = (a: string, b: string) => {
-    const fa = SCOTSMAN_FIELDS.find((f) => f.id === a);
-    const fb = SCOTSMAN_FIELDS.find((f) => f.id === b);
-    const pa = fa ? (CATEGORY_PRIORITY[fa.category] ?? 99) : 99;
-    const pb = fb ? (CATEGORY_PRIORITY[fb.category] ?? 99) : 99;
-    if (pa !== pb) return pa - pb;
+  const orderIndex = new Map<string, number>();
+  framework.fields.forEach((f, i) => orderIndex.set(f.fieldKey, i));
+
+  const byOrder = (a: string, b: string) => {
+    const oa = orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER;
+    const ob = orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER;
+    if (oa !== ob) return oa - ob;
     return a.localeCompare(b);
   };
 
-  const sortedCurrent = [...currentBlockers].sort(byPriority);
-  const sortedNext = nextOnly.sort(byPriority);
+  const sortedCurrent = [...currentBlockers].sort(byOrder);
+  const sortedNext = nextOnly.sort(byOrder);
 
   return [...sortedCurrent, ...sortedNext].slice(0, 3);
 }

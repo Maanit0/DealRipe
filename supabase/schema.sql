@@ -320,6 +320,271 @@ create trigger briefing_runs_prevent_tenant_change
   before update on public.briefing_runs
   for each row execute function public.prevent_tenant_id_change();
 
+-- =====================================================================
+-- CRM access enforcement (added for Magaya pilot)
+--
+-- Append-only audit of every CRM call that passed through assertScopedRead
+-- or assertScopedWrite in lib/crm-scope.ts. Both passes and failures are
+-- logged. The table is intentionally write-once at the RLS layer (no
+-- UPDATE or DELETE policies).
+-- =====================================================================
+
+create table public.crm_access_log (
+  id                          uuid          primary key default gen_random_uuid(),
+  tenant_id                   uuid          not null references public.tenants(id) on delete cascade,
+  operation                   text          not null check (operation in ('read', 'write')),
+  opportunity_external_id     text          not null,
+  fields                      jsonb         not null,
+  allowed                     boolean       not null,
+  violation_reason            text,
+  created_at                  timestamptz   not null default now()
+);
+
+create index crm_access_log_tenant_id_idx          on public.crm_access_log (tenant_id);
+create index crm_access_log_opportunity_id_idx     on public.crm_access_log (tenant_id, opportunity_external_id);
+create index crm_access_log_created_at_idx         on public.crm_access_log (tenant_id, created_at desc);
+
+-- tenant_id immutability for the log. There is no enforce_tenant_alignment
+-- trigger here because crm_access_log has no parent in the deals/calls
+-- hierarchy; it points only at tenants.
+create trigger crm_access_log_prevent_tenant_change
+  before update on public.crm_access_log
+  for each row execute function public.prevent_tenant_id_change();
+
+-- =====================================================================
+-- Recall.ai integration (delta to the calls table)
+--
+-- 1. Extends the calls.source allowlist with 'recall_ai'.
+-- 2. Adds calls.recall_bot_id: the external bot id returned by
+--    POST /api/v1/bot/. Unique because each bot maps to at most one
+--    call row; nullable because manual_paste and gong-sourced calls
+--    have no bot id.
+--
+-- The unique index on (deal_id, external_id) is unchanged; recall_bot_id
+-- is a separate identifier that uniquely identifies the upstream bot.
+-- =====================================================================
+
+alter table public.calls
+  drop constraint calls_source_check;
+
+alter table public.calls
+  add constraint calls_source_check
+    check (source in ('gong','manual_paste','recall_ai'));
+
+alter table public.calls
+  add column recall_bot_id text;
+
+alter table public.calls
+  add constraint calls_recall_bot_id_unique unique (recall_bot_id);
+
+create index calls_recall_bot_id_idx
+  on public.calls (recall_bot_id)
+  where recall_bot_id is not null;
+
+-- =====================================================================
+-- Microsoft Graph connection (Magaya pilot)
+--
+-- One row per (tenant, Microsoft user) OAuth connection. Stores the
+-- encrypted refresh token; access tokens are minted from it at request
+-- time and never persisted (see lib/microsoft-graph.ts).
+--
+-- The refresh_token_encrypted column holds the output of lib/token-crypto.ts
+-- (AES-256-GCM, format `${iv_b64}.${ct_b64}.${tag_b64}`). The encryption
+-- key is TOKEN_ENCRYPTION_KEY in env, never in the database.
+-- =====================================================================
+
+create table public.microsoft_connections (
+  id                          uuid          primary key default gen_random_uuid(),
+  tenant_id                   uuid          not null references public.tenants(id) on delete cascade,
+  user_principal_name         text,
+  microsoft_user_id           text,
+  refresh_token_encrypted     text          not null,
+  scopes                      text,
+  connected_at                timestamptz   not null default now(),
+  last_synced_at              timestamptz,
+  unique (tenant_id, microsoft_user_id)
+);
+
+create index microsoft_connections_tenant_id_idx
+  on public.microsoft_connections (tenant_id);
+
+create index microsoft_connections_last_synced_idx
+  on public.microsoft_connections (tenant_id, last_synced_at desc nulls last);
+
+create trigger microsoft_connections_prevent_tenant_change
+  before update on public.microsoft_connections
+  for each row execute function public.prevent_tenant_id_change();
+
+-- =====================================================================
+-- Calendar -> Recall ingest glue (delta to the calls table)
+--
+-- ingest_error: free-text reason set by lib/transcript-sync.ts when a
+-- bot reaches a terminal state but the extract/persist/delete pipeline
+-- fails. Null on healthy rows. Never reset to null by the sync code:
+-- once flagged, an operator inspects and resolves manually.
+-- =====================================================================
+
+alter table public.calls
+  add column ingest_error text;
+
+-- =====================================================================
+-- Qualification framework configuration (multi-tenant)
+--
+-- Replaces the hardcoded SCOTSMAN list with a per-tenant table of
+-- framework + fields. topsort uses the seeded 'SCOTSMAN' builtin;
+-- magaya will use a 'Rolldog Stage Gates' framework (MEDDIC variant)
+-- ingested at kickoff.
+--
+-- The extraction prompt is assembled at runtime from framework_fields,
+-- so adding/removing fields is a data change, not a code change.
+-- =====================================================================
+
+create table public.qualification_frameworks (
+  id          uuid        primary key default gen_random_uuid(),
+  tenant_id   uuid        not null references public.tenants(id) on delete cascade,
+  name        text        not null,
+  source      text        not null check (source in ('builtin', 'rolldog', 'manual')),
+  created_at  timestamptz not null default now(),
+  unique (tenant_id, name)
+);
+
+create index qualification_frameworks_tenant_id_idx
+  on public.qualification_frameworks (tenant_id);
+
+create table public.framework_fields (
+  id            uuid        primary key default gen_random_uuid(),
+  tenant_id     uuid        not null references public.tenants(id) on delete cascade,
+  framework_id  uuid        not null references public.qualification_frameworks(id) on delete cascade,
+  field_key     text        not null,
+  label         text        not null,
+  question      text        not null,
+  stage_key     text,
+  write_target  jsonb,
+  sort_order    integer     not null default 0,
+  created_at    timestamptz not null default now(),
+  unique (framework_id, field_key)
+);
+
+create index framework_fields_tenant_id_idx     on public.framework_fields (tenant_id);
+create index framework_fields_framework_id_idx  on public.framework_fields (framework_id, sort_order);
+
+-- Tenant alignment for framework_fields (tenant must match parent framework).
+create trigger framework_fields_enforce_framework_tenant
+  before insert or update on public.framework_fields
+  for each row
+  execute function public.enforce_tenant_alignment('qualification_frameworks', 'framework_id');
+
+-- tenant_id immutability triggers for both new tables.
+create trigger qualification_frameworks_prevent_tenant_change
+  before update on public.qualification_frameworks
+  for each row execute function public.prevent_tenant_id_change();
+
+create trigger framework_fields_prevent_tenant_change
+  before update on public.framework_fields
+  for each row execute function public.prevent_tenant_id_change();
+
+-- deals: optional framework reference. Existing rows have null until the
+-- seed:frameworks script backfills them.
+alter table public.deals
+  add column framework_id uuid references public.qualification_frameworks(id) on delete set null;
+
+create index deals_framework_id_idx
+  on public.deals (framework_id)
+  where framework_id is not null;
+
+-- deals.framework_id must point at a framework in the same tenant. The
+-- enforce_tenant_alignment trigger fires for null fk_value as a no-op,
+-- so existing rows with framework_id=null are unaffected.
+create trigger deals_enforce_framework_tenant
+  before insert or update on public.deals
+  for each row
+  execute function public.enforce_tenant_alignment('qualification_frameworks', 'framework_id');
+
+-- field_extractions: rename scotsman_field_id -> framework_field_key.
+-- Existing rows survive: the column is renamed in place. The implicit
+-- unique constraint (deal_id, scotsman_field_id) auto-updates its column
+-- reference; we rename the constraint name for clarity.
+alter table public.field_extractions
+  rename column scotsman_field_id to framework_field_key;
+
+alter table public.field_extractions
+  rename constraint field_extractions_deal_id_scotsman_field_id_key
+  to field_extractions_deal_id_framework_field_key_key;
+
+-- field_extractions: add framework_id (nullable; legacy rows have null).
+alter table public.field_extractions
+  add column framework_id uuid references public.qualification_frameworks(id) on delete set null;
+
+create index field_extractions_framework_id_idx
+  on public.field_extractions (framework_id)
+  where framework_id is not null;
+
+create trigger field_extractions_enforce_framework_tenant
+  before insert or update on public.field_extractions
+  for each row
+  execute function public.enforce_tenant_alignment('qualification_frameworks', 'framework_id');
+
+-- =====================================================================
+-- Closed-loop forward-compat tables (no logic yet; lib/closed-loop.ts
+-- exposes typed inserters so briefing + future sync code can call them).
+-- =====================================================================
+
+create table public.deal_signal_snapshots (
+  id                  uuid        primary key default gen_random_uuid(),
+  tenant_id           uuid        not null references public.tenants(id) on delete cascade,
+  deal_id             uuid        not null references public.deals(id) on delete cascade,
+  snapshot_date       date        not null,
+  signals             jsonb       not null,
+  dealripe_forecast   jsonb,
+  rep_commit          text,
+  outcome_label       text,
+  created_at          timestamptz not null default now(),
+  unique (deal_id, snapshot_date)
+);
+
+create index deal_signal_snapshots_tenant_id_idx
+  on public.deal_signal_snapshots (tenant_id);
+create index deal_signal_snapshots_deal_date_idx
+  on public.deal_signal_snapshots (deal_id, snapshot_date desc);
+
+create trigger deal_signal_snapshots_enforce_deal_tenant
+  before insert or update on public.deal_signal_snapshots
+  for each row
+  execute function public.enforce_tenant_alignment('deals', 'deal_id');
+
+create trigger deal_signal_snapshots_prevent_tenant_change
+  before update on public.deal_signal_snapshots
+  for each row execute function public.prevent_tenant_id_change();
+
+create table public.prescribed_actions (
+  id                    uuid        primary key default gen_random_uuid(),
+  tenant_id             uuid        not null references public.tenants(id) on delete cascade,
+  deal_id               uuid        not null references public.deals(id) on delete cascade,
+  call_external_id      text,
+  framework_field_key   text        not null,
+  prescription          text        not null,
+  created_at            timestamptz not null default now(),
+  asked_on_next_call    boolean,
+  outcome_label         text
+);
+
+create index prescribed_actions_tenant_id_idx
+  on public.prescribed_actions (tenant_id);
+create index prescribed_actions_deal_idx
+  on public.prescribed_actions (deal_id, created_at desc);
+create index prescribed_actions_call_idx
+  on public.prescribed_actions (call_external_id)
+  where call_external_id is not null;
+
+create trigger prescribed_actions_enforce_deal_tenant
+  before insert or update on public.prescribed_actions
+  for each row
+  execute function public.enforce_tenant_alignment('deals', 'deal_id');
+
+create trigger prescribed_actions_prevent_tenant_change
+  before update on public.prescribed_actions
+  for each row execute function public.prevent_tenant_id_change();
+
 -- ---------------------------------------------------------------------
 -- Role grants. Required after a `drop schema public cascade; create
 -- schema public;` cleanup, which wipes Supabase's default ACLs.

@@ -1,8 +1,12 @@
-import {
-  SCOTSMAN_FIELDS,
-  type ExtractionResult,
-  type FieldExtraction,
-} from "./scotsman";
+import type { ExtractionResult, FieldExtraction } from "./scotsman";
+
+/**
+ * Minimal framework shape this module needs. Compatible with both
+ * lib/framework.ts (server-side, DB-loaded) and the
+ * SCOTSMAN_AS_FRAMEWORK constant in scotsman.ts (client-side).
+ */
+type MergeFrameworkField = { fieldKey: string };
+type MergeFramework = { fields: ReadonlyArray<MergeFrameworkField> };
 
 /**
  * Merge a new extraction into a prior extraction.
@@ -14,10 +18,13 @@ import {
  *   - Newly-promoted Yes entries are tagged with `lastUpdatedFromCallId`
  *     when callId is non-empty.
  *
- * Used both client-side (UI render + flash animation) and server-side
- * (audit-trail upsert into field_extractions).
+ * Iterates the supplied framework's field list, not a hardcoded SCOTSMAN
+ * list. Callers pass:
+ *   - server: Framework loaded via lib/framework.ts (matches the deal)
+ *   - client: SCOTSMAN_AS_FRAMEWORK from lib/scotsman.ts (topsort demo)
  */
 export function mergeExtraction(
+  framework: MergeFramework,
   prior: ExtractionResult,
   incoming: ExtractionResult,
   callId: string,
@@ -32,33 +39,34 @@ export function mergeExtraction(
     return entry;
   }
 
-  for (const f of SCOTSMAN_FIELDS) {
-    const p: FieldExtraction = prior[f.id] ?? { status: "Unknown" };
-    const n: FieldExtraction = incoming[f.id] ?? { status: "Unknown" };
+  for (const f of framework.fields) {
+    const key = f.fieldKey;
+    const p: FieldExtraction = prior[key] ?? { status: "Unknown" };
+    const n: FieldExtraction = incoming[key] ?? { status: "Unknown" };
 
     if (p.status === "Yes") {
-      merged[f.id] = p;
+      merged[key] = p;
       continue;
     }
 
     if (p.status === "No") {
       if (n.status === "Yes") {
-        merged[f.id] = tagIfYes(n);
-        changedIds.push(f.id);
+        merged[key] = tagIfYes(n);
+        changedIds.push(key);
       } else {
-        merged[f.id] = p;
+        merged[key] = p;
       }
       continue;
     }
 
     if (n.status === "Yes") {
-      merged[f.id] = tagIfYes(n);
-      changedIds.push(f.id);
+      merged[key] = tagIfYes(n);
+      changedIds.push(key);
     } else if (n.status === "No") {
-      merged[f.id] = n;
-      changedIds.push(f.id);
+      merged[key] = n;
+      changedIds.push(key);
     } else {
-      merged[f.id] = p;
+      merged[key] = p;
     }
   }
 

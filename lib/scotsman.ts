@@ -128,3 +128,40 @@ export function extractionToStatus(extraction: ExtractionResult): DealStatus {
 export function getSpinFor(fieldId: string): string | undefined {
   return SPIN_FOLLOWUPS[fieldId];
 }
+
+// ---------- Framework adapter (for client-side mergeExtraction) ----------
+//
+// lib/framework.ts loads Framework objects from Supabase. The browser
+// doesn't have Supabase admin access (or want a round-trip to render the
+// extraction sheet), so the topsort demo UI uses this hardcoded mirror
+// of the SCOTSMAN framework. Keep it in sync with the SCOTSMAN_FIELDS
+// constant above. The id is the placeholder "scotsman-builtin" because
+// client-side merge doesn't touch the database.
+//
+// Production server-side code (lib/transcript-ingest.ts, the briefing
+// route) always loads through lib/framework.ts.
+export type FrameworkFieldLite = {
+  fieldKey: string;
+  label: string;
+  question: string;
+  stageKey: string | null;
+  sortOrder: number;
+};
+
+export type FrameworkLite = {
+  id: string;
+  name: string;
+  fields: FrameworkFieldLite[];
+};
+
+export const SCOTSMAN_AS_FRAMEWORK: FrameworkLite = {
+  id: "scotsman-builtin",
+  name: "SCOTSMAN",
+  fields: SCOTSMAN_FIELDS.map((f, i) => ({
+    fieldKey: f.id,
+    label: f.label,
+    question: f.question,
+    stageKey: null,
+    sortOrder: i,
+  })),
+};

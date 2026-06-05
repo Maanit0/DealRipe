@@ -47,6 +47,7 @@ export type Database = {
           rep_forecast_probability: number | null;
           rep_forecast_close_date: string | null;
           rep_notes: string | null;
+          framework_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -62,6 +63,7 @@ export type Database = {
           rep_forecast_probability?: number | null;
           rep_forecast_close_date?: string | null;
           rep_notes?: string | null;
+          framework_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -77,6 +79,7 @@ export type Database = {
           rep_forecast_probability?: number | null;
           rep_forecast_close_date?: string | null;
           rep_notes?: string | null;
+          framework_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -142,9 +145,11 @@ export type Database = {
           call_date: string | null;
           duration_minutes: number | null;
           participants: Json | null;
-          source: "gong" | "manual_paste" | null;
+          source: "gong" | "manual_paste" | "recall_ai" | null;
           transcript_id: string | null;
           has_been_extracted: boolean;
+          recall_bot_id: string | null;
+          ingest_error: string | null;
           created_at: string;
         };
         Insert: {
@@ -155,9 +160,11 @@ export type Database = {
           call_date?: string | null;
           duration_minutes?: number | null;
           participants?: Json | null;
-          source?: "gong" | "manual_paste" | null;
+          source?: "gong" | "manual_paste" | "recall_ai" | null;
           transcript_id?: string | null;
           has_been_extracted?: boolean;
+          recall_bot_id?: string | null;
+          ingest_error?: string | null;
           created_at?: string;
         };
         Update: {
@@ -168,9 +175,11 @@ export type Database = {
           call_date?: string | null;
           duration_minutes?: number | null;
           participants?: Json | null;
-          source?: "gong" | "manual_paste" | null;
+          source?: "gong" | "manual_paste" | "recall_ai" | null;
           transcript_id?: string | null;
           has_been_extracted?: boolean;
+          recall_bot_id?: string | null;
+          ingest_error?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -204,7 +213,8 @@ export type Database = {
           id: string;
           tenant_id: string;
           deal_id: string;
-          scotsman_field_id: string;
+          framework_field_key: string;
+          framework_id: string | null;
           status: "Yes" | "No" | "Unknown";
           answer: string | null;
           evidence: string | null;
@@ -217,7 +227,8 @@ export type Database = {
           id?: string;
           tenant_id: string;
           deal_id: string;
-          scotsman_field_id: string;
+          framework_field_key: string;
+          framework_id?: string | null;
           status: "Yes" | "No" | "Unknown";
           answer?: string | null;
           evidence?: string | null;
@@ -230,7 +241,8 @@ export type Database = {
           id?: string;
           tenant_id?: string;
           deal_id?: string;
-          scotsman_field_id?: string;
+          framework_field_key?: string;
+          framework_id?: string | null;
           status?: "Yes" | "No" | "Unknown";
           answer?: string | null;
           evidence?: string | null;
@@ -319,6 +331,207 @@ export type Database = {
           token_output?: number | null;
           duration_ms?: number | null;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      crm_access_log: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          operation: "read" | "write";
+          opportunity_external_id: string;
+          fields: Json;
+          allowed: boolean;
+          violation_reason: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          operation: "read" | "write";
+          opportunity_external_id: string;
+          fields: Json;
+          allowed: boolean;
+          violation_reason?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          operation?: "read" | "write";
+          opportunity_external_id?: string;
+          fields?: Json;
+          allowed?: boolean;
+          violation_reason?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      qualification_frameworks: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          name: string;
+          source: "builtin" | "rolldog" | "manual";
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          name: string;
+          source: "builtin" | "rolldog" | "manual";
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          name?: string;
+          source?: "builtin" | "rolldog" | "manual";
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      framework_fields: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          framework_id: string;
+          field_key: string;
+          label: string;
+          question: string;
+          stage_key: string | null;
+          write_target: Json | null;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          framework_id: string;
+          field_key: string;
+          label: string;
+          question: string;
+          stage_key?: string | null;
+          write_target?: Json | null;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          framework_id?: string;
+          field_key?: string;
+          label?: string;
+          question?: string;
+          stage_key?: string | null;
+          write_target?: Json | null;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      deal_signal_snapshots: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          snapshot_date: string;
+          signals: Json;
+          dealripe_forecast: Json | null;
+          rep_commit: string | null;
+          outcome_label: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          snapshot_date: string;
+          signals: Json;
+          dealripe_forecast?: Json | null;
+          rep_commit?: string | null;
+          outcome_label?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          snapshot_date?: string;
+          signals?: Json;
+          dealripe_forecast?: Json | null;
+          rep_commit?: string | null;
+          outcome_label?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      prescribed_actions: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          call_external_id: string | null;
+          framework_field_key: string;
+          prescription: string;
+          created_at: string;
+          asked_on_next_call: boolean | null;
+          outcome_label: string | null;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          call_external_id?: string | null;
+          framework_field_key: string;
+          prescription: string;
+          created_at?: string;
+          asked_on_next_call?: boolean | null;
+          outcome_label?: string | null;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          call_external_id?: string | null;
+          framework_field_key?: string;
+          prescription?: string;
+          created_at?: string;
+          asked_on_next_call?: boolean | null;
+          outcome_label?: string | null;
+        };
+        Relationships: [];
+      };
+      microsoft_connections: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          user_principal_name: string | null;
+          microsoft_user_id: string | null;
+          refresh_token_encrypted: string;
+          scopes: string | null;
+          connected_at: string;
+          last_synced_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          user_principal_name?: string | null;
+          microsoft_user_id?: string | null;
+          refresh_token_encrypted: string;
+          scopes?: string | null;
+          connected_at?: string;
+          last_synced_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          user_principal_name?: string | null;
+          microsoft_user_id?: string | null;
+          refresh_token_encrypted?: string;
+          scopes?: string | null;
+          connected_at?: string;
+          last_synced_at?: string | null;
         };
         Relationships: [];
       };

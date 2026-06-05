@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, MODEL } from "@/lib/anthropic";
+import { getAnthropicClient, getAnthropicModel } from "@/lib/anthropic";
 import {
   buildBriefingSystemPrompt,
   buildBriefingUserMessage,
   computeTopQuestionIds,
 } from "@/lib/briefing-prompt";
 import type { Json } from "@/lib/database.types";
+import { loadFramework, type Framework } from "@/lib/framework";
 import { SPIN_FOLLOWUPS, STAGES, type ExtractionResult } from "@/lib/scotsman";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -57,24 +58,58 @@ export async function POST(req: NextRequest) {
       ? STAGES[stageIndex + 1]
       : null;
 
-  const topQuestionIds = computeTopQuestionIds(extraction, stage, nextStage);
+  // Load the framework for this deal's tenant. Briefing assembly is now
+  // framework-driven; gate/stage logic still uses SCOTSMAN STAGES because
+  // this route is reached only via seed-data deals (topsort).
+  let framework: Framework | null;
+  try {
+    const topsortTenantId = await resolveTenantId(TENANT_SLUG);
+    framework = await loadFramework(topsortTenantId);
+  } catch (err) {
+    console.error(
+      `[prepare-briefing] dealId=${dealId} framework lookup failed:`,
+      err instanceof Error ? err.message : err,
+    );
+    return NextResponse.json(
+      { error: "Briefing service misconfigured" },
+      { status: 500 },
+    );
+  }
+  if (!framework) {
+    return NextResponse.json(
+      {
+        error:
+          "No qualification framework registered for tenant topsort. Run `npm run seed:frameworks`.",
+      },
+      { status: 500 },
+    );
+  }
+
+  const topQuestionIds = computeTopQuestionIds(
+    framework,
+    extraction,
+    stage,
+    nextStage,
+  );
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const start = Date.now();
+  const modelName = getAnthropicModel();
 
   try {
-    const response = await anthropic.messages.create(
+    const response = await getAnthropicClient().messages.create(
       {
-        model: MODEL,
+        model: modelName,
         max_tokens: 1500,
         temperature: 0.3,
-        system: buildBriefingSystemPrompt(),
+        system: buildBriefingSystemPrompt(framework),
         messages: [
           {
             role: "user",
             content: buildBriefingUserMessage(
               deal,
+              framework,
               stage,
               nextStage,
               extraction,
@@ -120,7 +155,7 @@ export async function POST(req: NextRequest) {
     await writeBriefingAudit({
       dealExternalId: dealId,
       parsedBriefing: parsed,
-      modelName: MODEL,
+      modelName,
       duration,
       inputTokens,
       outputTokens,

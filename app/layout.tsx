@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { DemoStateProvider } from "@/components/DemoStateProvider";
 
 export const metadata: Metadata = {
-  title: "DealRipe — Opportunity Control",
+  title: "DealRipe. Opportunity Control.",
   description: "System interrogation, data interrogation, activity basis.",
 };
 
