@@ -84,22 +84,27 @@ async function main(): Promise<void> {
       label: "read allowed opportunity with allowed fields",
       expectation: "pass",
       run: () =>
-        assertScopedRead(ALLOWED_OPP, ["stage", "amount", "owner", "next_step"]),
+        assertScopedRead(
+          "magaya",
+          ALLOWED_OPP,
+          ["stage", "amount", "owner", "next_step"],
+        ),
     },
     {
       label: "read unknown opportunity id",
       expectation: "throw",
-      run: () => assertScopedRead("UNKNOWN_OPP_999", ["stage"]),
+      run: () => assertScopedRead("magaya", "UNKNOWN_OPP_999", ["stage"]),
     },
     {
       label: "read off-allowlist field (email_body)",
       expectation: "throw",
-      run: () => assertScopedRead(ALLOWED_OPP, ["stage", "email_body"]),
+      run: () =>
+        assertScopedRead("magaya", ALLOWED_OPP, ["stage", "email_body"]),
     },
     {
       label: "write to a read-only field (stage)",
       expectation: "throw",
-      run: () => assertScopedWrite(ALLOWED_OPP, ["stage"]),
+      run: () => assertScopedWrite("magaya", ALLOWED_OPP, ["stage"]),
     },
   ];
 

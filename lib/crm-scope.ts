@@ -32,6 +32,18 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
   // intentionally empty until kickoff
 ]);
 
+/**
+ * Parallel allowlist of Salesforce opportunity IDs (18-char Salesforce
+ * record ids). Disjoint from PILOT_OPPORTUNITY_IDS because Salesforce
+ * and Rolldog identify the same opportunity with different ids.
+ *
+ * Populated at kickoff when Fernando's admin provides the three pilot
+ * deals' Salesforce ids; until then every Salesforce read fails closed.
+ */
+export const SALESFORCE_PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
+  // intentionally empty until kickoff
+]);
+
 // ---------------------------------------------------------------------
 // Allowlist: which Rolldog fields may be read.
 // Mirrors the integration spec verbatim. No additions without redeploy.
@@ -127,6 +139,8 @@ export class ScopeViolationError extends Error {
  * are appended.
  */
 export type CrmAccessAuditEntry = {
+  tenantSlug: string;
+  system: "rolldog" | "salesforce";
   operation: "read" | "write";
   opportunityId: string;
   fields: readonly string[];
@@ -180,7 +194,7 @@ function defaultAuditHook(entry: CrmAccessAuditEntry): void {
   // safe.
   const p = writeCrmAccessLogToSupabase(entry).catch((err) => {
     console.error(
-      `[crm-scope] audit write failed for ${entry.operation} ${entry.opportunityId}:`,
+      `[crm-scope] audit write failed for ${entry.system} ${entry.operation} ${entry.opportunityId}:`,
       err instanceof Error ? err.message : err,
     );
   });
@@ -210,10 +224,10 @@ async function writeCrmAccessLogToSupabase(
   const { supabaseAdmin } = await import("./supabase");
   const { resolveTenantId } = await import("./tenant-deal-lookup");
 
-  // Pilot is Magaya. When this system goes multi-tenant for CRM pilots,
-  // the tenant slug becomes a function of the authenticated session and
-  // is passed in by the caller. Until then the constant is correct.
-  const tenantId = await resolveTenantId(MAGAYA_TENANT_SLUG);
+  // Resolve the caller-supplied tenant slug to the Supabase tenant uuid.
+  // This used to hardcode "magaya"; now every assert names its tenant
+  // explicitly so the audit row lands under the right tenant_id.
+  const tenantId = await resolveTenantId(entry.tenantSlug);
 
   const { error } = await supabaseAdmin().from("crm_access_log").insert({
     tenant_id: tenantId,
@@ -228,13 +242,12 @@ async function writeCrmAccessLogToSupabase(
   }
 }
 
-const MAGAYA_TENANT_SLUG = "magaya";
-
 // ---------------------------------------------------------------------
 // Test-only override
 // ---------------------------------------------------------------------
 
 let _testOverridePilotIds: readonly string[] | null = null;
+let _testOverrideSalesforcePilotIds: readonly string[] | null = null;
 
 /**
  * Test-only. Lets scripts/test-crm-scope.ts exercise the happy path
@@ -256,7 +269,25 @@ export function __setPilotOpportunityIdsForTesting(
   _testOverridePilotIds = ids;
 }
 
-function effectivePilotIds(): readonly string[] {
+/**
+ * Test-only. Parallel of __setPilotOpportunityIdsForTesting for the
+ * Salesforce path. Same production guard, same audit contract.
+ */
+export function __setSalesforcePilotIdsForTesting(
+  ids: readonly string[] | null,
+): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "__setSalesforcePilotIdsForTesting cannot be called in production",
+    );
+  }
+  _testOverrideSalesforcePilotIds = ids;
+}
+
+function effectivePilotIds(system: "rolldog" | "salesforce"): readonly string[] {
+  if (system === "salesforce") {
+    return _testOverrideSalesforcePilotIds ?? SALESFORCE_PILOT_OPPORTUNITY_IDS;
+  }
   return _testOverridePilotIds ?? PILOT_OPPORTUNITY_IDS;
 }
 
@@ -266,22 +297,39 @@ function effectivePilotIds(): readonly string[] {
 
 /**
  * Throws ScopeViolationError unless:
- *   1. opportunityId is in PILOT_OPPORTUNITY_IDS, AND
- *   2. every field in fields is in ROLLDOG_READ_FIELDS.
+ *   1. opportunityId is in the system-appropriate pilot id allowlist, AND
+ *   2. every field in fields is in the system-appropriate read allowlist.
  *
- * Always appends an audit entry to crm_access_log (pass or fail).
+ * The "system" (rolldog vs salesforce) is auto-detected from the fields:
+ *   - If ANY field is in SALESFORCE_READ_FIELDS, the call is treated as
+ *     a Salesforce read and validated against SALESFORCE_READ_FIELDS +
+ *     SALESFORCE_PILOT_OPPORTUNITY_IDS.
+ *   - Otherwise, the call is treated as a Rolldog read and validated
+ *     against ROLLDOG_READ_FIELDS + PILOT_OPPORTUNITY_IDS.
+ *
+ * The two field allowlists are intentionally disjoint (Salesforce uses
+ * PascalCase, Rolldog uses snake_case), so the detection is unambiguous.
+ *
+ * Always appends an audit entry to crm_access_log (pass or fail) tagged
+ * with the resolved tenant + system.
  */
 export function assertScopedRead(
+  tenantSlug: string,
   opportunityId: string,
   fields: readonly string[],
 ): void {
-  const violation = computeViolation(
-    opportunityId,
-    fields,
-    ROLLDOG_READ_FIELDS,
-    "read",
-  );
+  const system: "rolldog" | "salesforce" = fields.some((f) =>
+    SALESFORCE_READ_FIELDS.includes(f),
+  )
+    ? "salesforce"
+    : "rolldog";
+  const allowlist =
+    system === "salesforce" ? SALESFORCE_READ_FIELDS : ROLLDOG_READ_FIELDS;
+
+  const violation = computeViolation(opportunityId, fields, allowlist, system, "read");
   emitAudit({
+    tenantSlug,
+    system,
     operation: "read",
     opportunityId,
     fields,
@@ -304,9 +352,16 @@ export function assertScopedRead(
  *   1. opportunityId is in PILOT_OPPORTUNITY_IDS, AND
  *   2. every field in fields is in ROLLDOG_WRITE_FIELDS.
  *
+ * Writes are Rolldog-only by hard architectural constraint (Magaya
+ * security review): no Salesforce write path is permitted anywhere in
+ * the codebase, including this assert. Calling assertScopedWrite with
+ * a Salesforce field will fail closed because that field is not in
+ * ROLLDOG_WRITE_FIELDS.
+ *
  * Always appends an audit entry to crm_access_log (pass or fail).
  */
 export function assertScopedWrite(
+  tenantSlug: string,
   opportunityId: string,
   fields: readonly string[],
 ): void {
@@ -314,9 +369,12 @@ export function assertScopedWrite(
     opportunityId,
     fields,
     ROLLDOG_WRITE_FIELDS,
+    "rolldog",
     "write",
   );
   emitAudit({
+    tenantSlug,
+    system: "rolldog",
     operation: "write",
     opportunityId,
     fields,
@@ -344,21 +402,30 @@ function computeViolation(
   opportunityId: string,
   fields: readonly string[],
   allowlist: readonly string[],
+  system: "rolldog" | "salesforce",
   operation: "read" | "write",
 ): Violation | null {
-  const allowedIds = effectivePilotIds();
+  const allowedIds = effectivePilotIds(system);
+  const idListName =
+    system === "salesforce"
+      ? "SALESFORCE_PILOT_OPPORTUNITY_IDS"
+      : "PILOT_OPPORTUNITY_IDS";
   if (!allowedIds.includes(opportunityId)) {
     return {
       reason:
-        `opportunity_id '${opportunityId}' is not in PILOT_OPPORTUNITY_IDS ` +
+        `opportunity_id '${opportunityId}' is not in ${idListName} ` +
         `(pilot set has ${allowedIds.length} entries)`,
       offendingField: null,
     };
   }
+  const listName =
+    system === "salesforce"
+      ? "SALESFORCE_READ_FIELDS"
+      : operation === "read"
+        ? "ROLLDOG_READ_FIELDS"
+        : "ROLLDOG_WRITE_FIELDS";
   for (const f of fields) {
     if (!allowlist.includes(f)) {
-      const listName =
-        operation === "read" ? "ROLLDOG_READ_FIELDS" : "ROLLDOG_WRITE_FIELDS";
       return {
         reason: `field '${f}' is not in ${listName}`,
         offendingField: f,

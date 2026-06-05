@@ -23,9 +23,11 @@ import {
   PILOT_OPPORTUNITY_IDS,
   ROLLDOG_READ_FIELDS,
   ROLLDOG_WRITE_FIELDS,
+  SALESFORCE_PILOT_OPPORTUNITY_IDS,
   SALESFORCE_READ_FIELDS,
   ScopeViolationError,
   __setPilotOpportunityIdsForTesting,
+  __setSalesforcePilotIdsForTesting,
   assertScopedRead,
   assertScopedWrite,
   setAuditHook,
@@ -109,13 +111,22 @@ function runCase(
 
 const results: { label: string; result: CaseResult }[] = [];
 
+// Salesforce pilot id override mirrors the Rolldog one. The Salesforce
+// allowlist (SALESFORCE_PILOT_OPPORTUNITY_IDS) is also empty by default.
+const ALLOWED_SF_OPP = "006XX0000abcDEF456";
+__setSalesforcePilotIdsForTesting([ALLOWED_SF_OPP]);
+
 results.push({
   label: "read allowed opportunity with allowed fields",
   result: runCase(
     "read allowed opportunity with allowed fields",
     "pass",
     () => {
-      assertScopedRead(ALLOWED_OPP, ["stage", "amount", "owner", "next_step"]);
+      assertScopedRead(
+        "magaya",
+        ALLOWED_OPP,
+        ["stage", "amount", "owner", "next_step"],
+      );
     },
   ),
 });
@@ -123,7 +134,7 @@ results.push({
 results.push({
   label: "read unknown opportunity id",
   result: runCase("read unknown opportunity id", "throw", () => {
-    assertScopedRead("UNKNOWN_OPP_999", ["stage"]);
+    assertScopedRead("magaya", "UNKNOWN_OPP_999", ["stage"]);
   }),
 });
 
@@ -132,7 +143,7 @@ results.push({
   result: runCase("read off-allowlist field", "throw", () => {
     // 'email_body' is not in ROLLDOG_READ_FIELDS. The first field is
     // allowed, the second is not. The assert must catch the second.
-    assertScopedRead(ALLOWED_OPP, ["stage", "email_body"]);
+    assertScopedRead("magaya", ALLOWED_OPP, ["stage", "email_body"]);
   }),
 });
 
@@ -143,7 +154,38 @@ results.push({
     "throw",
     () => {
       // 'stage' is in ROLLDOG_READ_FIELDS but NOT in ROLLDOG_WRITE_FIELDS.
-      assertScopedWrite(ALLOWED_OPP, ["stage"]);
+      assertScopedWrite("magaya", ALLOWED_OPP, ["stage"]);
+    },
+  ),
+});
+
+// ---- Salesforce read path (new) ----
+
+results.push({
+  label: "salesforce read with three outcome fields (StageName, IsClosed, IsWon)",
+  result: runCase(
+    "salesforce read with three outcome fields (StageName, IsClosed, IsWon)",
+    "pass",
+    () => {
+      assertScopedRead("magaya", ALLOWED_SF_OPP, [
+        "StageName",
+        "IsClosed",
+        "IsWon",
+      ]);
+    },
+  ),
+});
+
+results.push({
+  label: "salesforce read with a disallowed field (Amount)",
+  result: runCase(
+    "salesforce read with a disallowed field (Amount)",
+    "throw",
+    () => {
+      // 'Amount' is NOT in SALESFORCE_READ_FIELDS. The auto-detect picks
+      // the Salesforce path because StageName matches; Amount then fails
+      // the field allowlist check, and the audit entry records allowed=false.
+      assertScopedRead("magaya", ALLOWED_SF_OPP, ["StageName", "Amount"]);
     },
   ),
 });

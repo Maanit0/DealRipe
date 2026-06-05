@@ -48,6 +48,8 @@ export type Database = {
           rep_forecast_close_date: string | null;
           rep_notes: string | null;
           framework_id: string | null;
+          outcome_label: "won" | "lost" | null;
+          outcome_recorded_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -64,6 +66,8 @@ export type Database = {
           rep_forecast_close_date?: string | null;
           rep_notes?: string | null;
           framework_id?: string | null;
+          outcome_label?: "won" | "lost" | null;
+          outcome_recorded_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -80,6 +84,8 @@ export type Database = {
           rep_forecast_close_date?: string | null;
           rep_notes?: string | null;
           framework_id?: string | null;
+          outcome_label?: "won" | "lost" | null;
+          outcome_recorded_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };

@@ -14,6 +14,7 @@
     "demo:crm-audit": "tsx scripts/demo-crm-audit.ts",
     "test:recall-bot": "tsx scripts/test-recall-bot.ts",
     "test:graph": "tsx scripts/test-graph-calendar.ts",
+    "test:salesforce": "tsx scripts/test-salesforce.ts",
     "test:pilot-sync": "tsx scripts/test-pilot-sync.ts"
   },
   "dependencies": {

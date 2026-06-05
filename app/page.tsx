@@ -7,7 +7,9 @@ export default function LandingPage() {
             DealRipe
           </span>
           <a
-            href="mailto:maanit@dealripe.com"
+            href="https://calendly.com/maanitsharma21/dealripe-demo-with-maanit"
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-[13px] font-semibold text-muted hover:text-ink transition"
           >
             Book a demo →
@@ -28,7 +30,9 @@ export default function LandingPage() {
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <a
-              href="mailto:maanit@dealripe.com"
+              href="https://calendly.com/maanitsharma21/dealripe-demo-with-maanit"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-5 py-3 rounded-xl2 bg-ink text-white text-[14px] font-semibold hover:bg-ink/90 transition"
             >
               Book a demo
@@ -82,7 +86,9 @@ export default function LandingPage() {
             we&rsquo;ll run it on a deal from your world.
           </p>
           <a
-            href="mailto:maanit@dealripe.com"
+            href="https://calendly.com/maanitsharma21/dealripe-demo-with-maanit"
+            target="_blank"
+            rel="noopener noreferrer"
             className="mt-8 inline-flex items-center gap-2 px-6 py-3.5 rounded-xl2 bg-accent text-white text-[15px] font-semibold hover:bg-accent/90 transition"
           >
             Book a demo

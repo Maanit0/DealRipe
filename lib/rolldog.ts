@@ -20,6 +20,8 @@
 
 import { assertScopedRead, assertScopedWrite } from "./crm-scope";
 
+const PILOT_TENANT_SLUG = "magaya";
+
 const PENDING_MESSAGE =
   "Rolldog credentials pending (Swagger docs expected from Jeff, June 9 call)";
 
@@ -38,7 +40,7 @@ export async function readOpportunity(
 ): Promise<Record<string, unknown>> {
   // STEP 1. Enforce scope. Throws ScopeViolationError on violation. Also
   // appends an entry to crm_access_log via the audit hook.
-  assertScopedRead(opportunityId, fields);
+  assertScopedRead(PILOT_TENANT_SLUG, opportunityId, fields);
 
   // STEP 2. Credential path. Reading these here documents which env vars
   // the production call will use. They are intentionally not logged.
@@ -75,7 +77,7 @@ export async function writeOpportunity(
   updates: Record<string, unknown>,
 ): Promise<void> {
   // STEP 1. Enforce scope.
-  assertScopedWrite(opportunityId, Object.keys(updates));
+  assertScopedWrite(PILOT_TENANT_SLUG, opportunityId, Object.keys(updates));
 
   // STEP 2. Credential path.
   const config = readRolldogConfig();

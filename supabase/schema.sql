@@ -585,6 +585,33 @@ create trigger prescribed_actions_prevent_tenant_change
   before update on public.prescribed_actions
   for each row execute function public.prevent_tenant_id_change();
 
+-- =====================================================================
+-- Outcome labeling (Salesforce read-only sync)
+--
+-- Two columns on deals stamped by the outcome-sync job once Salesforce
+-- reports IsClosed=true on the linked opportunity:
+--   outcome_label        'won' | 'lost' (matches IsWon)
+--   outcome_recorded_at  when the label was first set
+--
+-- The label is also backfilled onto every existing
+-- deal_signal_snapshots and prescribed_actions row for the same deal so
+-- the calibration job can pair signals + prescriptions to outcomes.
+--
+-- Read-only is a hard line per the Magaya security review: lib/salesforce.ts
+-- exposes no write path, and assertScopedWrite in lib/crm-scope.ts has
+-- no Salesforce branch.
+-- =====================================================================
+
+alter table public.deals
+  add column outcome_label text check (outcome_label in ('won', 'lost'));
+
+alter table public.deals
+  add column outcome_recorded_at timestamptz;
+
+create index deals_outcome_label_idx
+  on public.deals (tenant_id, outcome_label)
+  where outcome_label is not null;
+
 -- ---------------------------------------------------------------------
 -- Role grants. Required after a `drop schema public cascade; create
 -- schema public;` cleanup, which wipes Supabase's default ACLs.
