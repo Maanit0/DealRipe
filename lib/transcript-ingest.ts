@@ -205,6 +205,27 @@ export class DealNotResolvedError extends TranscriptIngestError {
   }
 }
 
+/**
+ * Thrown when the post-extraction audit write fails:
+ *   - extraction_runs INSERT errored, OR
+ *   - field_extractions UPSERT errored, OR
+ *   - field_extractions UPSERT returned zero rows when rows were expected
+ *     (e.g. a trigger silently rejected, an RLS misconfiguration, an
+ *     on-conflict mismatch).
+ *
+ * Surfacing this as a typed error (not a swallowed console.error) is the
+ * fix for the production rehearsal incident where extraction_runs landed
+ * but field_extractions did not, and ingest_error stayed null.
+ * transcript-sync catches this and stamps ingest_error so the row is
+ * visible to --retry-ingest.
+ */
+export class AuditPersistError extends TranscriptIngestError {
+  constructor(detail: string) {
+    super("AUDIT_PERSIST_FAILED", `audit persist failed: ${detail}`);
+    this.name = "AuditPersistError";
+  }
+}
+
 // ====================================================================
 // Public API: ingestTranscript
 // ====================================================================
@@ -734,99 +755,119 @@ async function writeAuditTrail(args: {
   } = args;
   const { tenantId, dealId: dealUuid, callId: callUuid, priorExtraction } = target;
 
-  // Outer try wraps audit writes only. TranscriptPersistError is rethrown
-  // explicitly because it is the contract transcript-sync uses to decide
-  // whether deleting the upstream Recall media is safe.
-  try {
+  // Production rehearsal fix: audit writes used to be wrapped in a
+  // try/catch that console.error'd on failure and returned silently.
+  // That hid the field_extractions upsert failure that caused the
+  // call-with-no-stamped-rows bug. Errors now throw AuditPersistError;
+  // transcript-sync catches it and stamps ingest_error.
 
-    const db = supabaseAdmin();
+  const db = supabaseAdmin();
 
-    // The transcripts row is no longer written here. It is now written
-    // by transcript-sync's persistTranscriptBody call BEFORE extraction
-    // is attempted, so extraction failure (e.g. FrameworkNotConfiguredError
-    // thrown earlier in extractAndStore) can never block persistence.
-    //
-    // The void assignment silences the "transcript declared but never
-    // used" hint while keeping the argument in the signature for the
-    // retry-ingest caller, which re-runs extraction from the stored body
-    // and passes it back through here.
-    void transcript;
+  // The transcripts row is written by transcript-sync's
+  // persistTranscriptBody call BEFORE extraction is attempted, so
+  // extraction failure (e.g. FrameworkNotConfiguredError thrown earlier
+  // in extractAndStore) can never block persistence. The void assignment
+  // silences the "transcript declared but never used" hint while
+  // keeping the argument in the signature for the retry-ingest caller,
+  // which re-runs extraction from the stored body and passes it back
+  // through here.
+  void transcript;
 
-    const { merged, changedIds } = mergeExtraction(
-      framework,
-      priorExtraction,
-      extraction,
-      callExternalId,
+  const { merged, changedIds } = mergeExtraction(
+    framework,
+    priorExtraction,
+    extraction,
+    callExternalId,
+  );
+
+  // 1. extraction_runs INSERT (immutable per-call audit row).
+  const runInsert = await db.from("extraction_runs").insert({
+    tenant_id: tenantId,
+    deal_id: dealUuid,
+    call_id: callUuid,
+    model_name: modelName,
+    prompt_version: PROMPT_VERSION,
+    raw_response: extraction as unknown as Json,
+    token_input: inputTokens,
+    token_output: outputTokens,
+    duration_ms: duration,
+  });
+  if (runInsert.error) {
+    throw new AuditPersistError(
+      `extraction_runs insert failed (dealId=${dealUuid}, callId=${callUuid ?? "null"}): ${runInsert.error.message}`,
     );
+  }
 
-    const runInsert = await db.from("extraction_runs").insert({
+  // 2. field_extractions UPSERT.
+  //
+  // Build a row for EVERY framework field the LLM observed (status Yes
+  // or No), not just state changes. This is the second half of the
+  // rehearsal fix: a "Yes" the model confirms again is still a valid
+  // observation, and last_updated_from_call_id should reflect the most
+  // recent call that touched the field. The merge values keep the
+  // prior Yes payload (mergeExtraction's Yes-is-immutable rule), but
+  // the row's last_updated_from_call_id is refreshed.
+  //
+  // Unknown observations are skipped: "the topic did not come up" is
+  // not a field touch.
+  const upsertRows: FieldExtractionInsert[] = [];
+  for (const f of framework.fields) {
+    const incomingEntry = extraction[f.fieldKey];
+    if (!incomingEntry || incomingEntry.status === "Unknown") continue;
+
+    const mergedEntry = merged[f.fieldKey];
+    const row: FieldExtractionInsert = {
       tenant_id: tenantId,
       deal_id: dealUuid,
-      call_id: callUuid,
-      model_name: modelName,
-      prompt_version: PROMPT_VERSION,
-      raw_response: extraction as unknown as Json,
-      token_input: inputTokens,
-      token_output: outputTokens,
-      duration_ms: duration,
-    });
-    if (runInsert.error) {
-      console.error(
-        `[transcript-ingest] extraction_runs insert failed:`,
-        runInsert.error,
-      );
+      framework_field_key: f.fieldKey,
+      framework_id: framework.id,
+      status: mergedEntry.status,
+      last_updated_from_call_id: callUuid,
+    };
+    if (mergedEntry.status === "Yes") {
+      row.answer = mergedEntry.answer;
+      row.evidence = mergedEntry.evidence;
+      row.confidence = mergedEntry.confidence;
+    } else {
+      row.answer = null;
+      row.evidence = null;
+      row.confidence = null;
     }
-
-    if (changedIds.length === 0) {
-      console.log(
-        `[transcript-ingest] audit ok dealId=${dealUuid} framework=${framework.name} transcript_persisted=${callUuid !== null} no field changes`,
-      );
-      return;
-    }
-
-    const upsertRows: FieldExtractionInsert[] = changedIds.map((id) => {
-      const entry = merged[id];
-      const row: FieldExtractionInsert = {
-        tenant_id: tenantId,
-        deal_id: dealUuid,
-        framework_field_key: id,
-        framework_id: framework.id,
-        status: entry.status,
-        last_updated_from_call_id: callUuid,
-      };
-      if (entry.status === "Yes") {
-        row.answer = entry.answer;
-        row.evidence = entry.evidence;
-        row.confidence = entry.confidence;
-      } else {
-        row.answer = null;
-        row.evidence = null;
-        row.confidence = null;
-      }
-      return row;
-    });
-
-    const upsert = await db
-      .from("field_extractions")
-      .upsert(upsertRows, { onConflict: "deal_id,framework_field_key" });
-    if (upsert.error) {
-      console.error(
-        `[transcript-ingest] field_extractions upsert failed:`,
-        upsert.error,
-      );
-    }
-
-    console.log(
-      `[transcript-ingest] audit ok dealId=${dealUuid} framework=${framework.name} transcript_persisted=${callUuid !== null} run_inserted=1 fields_upserted=${changedIds.length} (${changedIds.join(",")})`,
-    );
-  } catch (err) {
-    // writeAuditTrail no longer throws TranscriptPersistError (that lives
-    // in persistTranscriptBody, called from transcript-sync). Any other
-    // failure is best-effort: log, don't re-throw, so a manual_paste
-    // request still returns its extraction to the user even if the
-    // Supabase audit write fails.
-    console.error("[transcript-ingest] audit write failed:", err);
+    upsertRows.push(row);
   }
+
+  if (upsertRows.length === 0) {
+    console.log(
+      `[transcript-ingest] audit ok dealId=${dealUuid} framework=${framework.name} transcript_persisted=${callUuid !== null} no observations`,
+    );
+    return;
+  }
+
+  // .select() forces the upsert to RETURN the affected rows. Without it
+  // a silent zero-row write (RLS misconfiguration, trigger rejection,
+  // on-conflict column mismatch) would slip through.
+  const upsert = await db
+    .from("field_extractions")
+    .upsert(upsertRows, { onConflict: "deal_id,framework_field_key" })
+    .select("framework_field_key, last_updated_from_call_id");
+  if (upsert.error) {
+    throw new AuditPersistError(
+      `field_extractions upsert failed (rows=${upsertRows.length}, dealId=${dealUuid}): ${upsert.error.message}`,
+    );
+  }
+  const returnedCount = upsert.data?.length ?? 0;
+  if (returnedCount === 0) {
+    throw new AuditPersistError(
+      `field_extractions upsert returned 0 rows (expected ${upsertRows.length}, dealId=${dealUuid}). Likely a trigger or RLS silently rejected the write.`,
+    );
+  }
+
+  console.log(
+    `[transcript-ingest] audit ok dealId=${dealUuid} framework=${framework.name} ` +
+      `transcript_persisted=${callUuid !== null} run_inserted=1 ` +
+      `fields_observed=${upsertRows.length} state_changes=${changedIds.length}` +
+      (changedIds.length > 0 ? ` (${changedIds.join(",")})` : ""),
+  );
 }
 
 /**
