@@ -7,28 +7,40 @@
  *   - has_been_extracted = false
  *
  * For each, polls Recall:
- *   - non-terminal status                  -> count and skip
- *   - status = "fatal"                     -> write ingest_error, count, skip
- *   - status = "done"                      -> getTranscript, then:
+ *   - non-terminal status   -> count and skip
+ *   - status = "fatal"      -> write ingest_error, count, skip
+ *   - status = "done"       -> getTranscript, then:
  *
- *       1. SET has_been_extracted=true BEFORE running any
- *          extraction/persistence step. This is an at-most-once gate.
- *          Anything after this point may fail, but the row will not be
- *          re-extracted on a subsequent sync.
- *       2. ingestTranscript({ source:'recall_ai', externalCallId, transcript })
- *          Writes the audit row + per-field rows via the existing
- *          chokepoint.
- *       3. deleteSourceRecording(externalCallId)
- *          Honors the DPA delete-after-pull commitment.
+ *       1. PERSIST TRANSCRIPT BODY (persistTranscriptBody).
+ *          This is the durability gate. If it fails, set ingest_error
+ *          and SKIP deleteSourceRecording. The Recall copy stays
+ *          available for the next sync run.
  *
- *     Any failure after step 1 sets ingest_error but never resets
- *     has_been_extracted to false.
+ *       2. Mark has_been_extracted = true. After this point the call
+ *          will not be re-polled, but the transcript body is already
+ *          durable; --retry-ingest can re-run extraction from it.
+ *
+ *       3. Run extraction (ingestTranscript, source=recall_ai). Failure
+ *          past this point sets ingest_error but does NOT abort the
+ *          pipeline — the body is durable, so step 4 still runs.
+ *
+ *       4. deleteSourceRecording. Honors the DPA delete-after-pull
+ *          commitment. Safe to run regardless of extraction outcome
+ *          because the body is already in the transcripts table.
+ *
+ * Production rehearsal fix (2026-06-06): step 1 was previously embedded
+ * inside step 3 (ingestTranscript wrote the transcripts row as part of
+ * writeAuditTrail), which meant a FrameworkNotConfiguredError thrown
+ * BEFORE writeAuditTrail ran left has_been_extracted=true with no
+ * transcripts row. Body was lost when Recall expired the media. Now
+ * persistence is an explicit first step.
  */
 
 import {
   TranscriptPersistError,
   deleteSourceRecording,
   ingestTranscript,
+  persistTranscriptBody,
 } from "./transcript-ingest";
 import { getBot, getTranscript, type BotStatus } from "./recall";
 import { supabaseAdmin } from "./supabase";
@@ -37,6 +49,7 @@ export type TranscriptSyncCounts = {
   pollBots: number;
   inProgress: number;
   fatal: number;
+  bodiesPersisted: number;
   extracted: number;
   mediaDeleted: number;
   ingestErrors: number;
@@ -70,7 +83,13 @@ export type TranscriptSyncDecision =
       kind: "ingest-error";
       callId: string;
       recallBotId: string;
-      phase: "getBot" | "getTranscript" | "mark" | "ingest" | "delete";
+      phase:
+        | "getBot"
+        | "getTranscript"
+        | "persist"
+        | "mark"
+        | "ingest"
+        | "delete";
       message: string;
     };
 
@@ -85,6 +104,7 @@ export async function runTranscriptSync(
     pollBots: 0,
     inProgress: 0,
     fatal: 0,
+    bodiesPersisted: 0,
     extracted: 0,
     mediaDeleted: 0,
     ingestErrors: 0,
@@ -94,7 +114,7 @@ export async function runTranscriptSync(
   const db = supabaseAdmin();
   const rows = await db
     .from("calls")
-    .select("id, external_id, recall_bot_id")
+    .select("id, tenant_id, external_id, recall_bot_id")
     .eq("source", "recall_ai")
     .eq("has_been_extracted", false)
     .not("recall_bot_id", "is", null);
@@ -107,19 +127,34 @@ export async function runTranscriptSync(
   for (const row of rows.data ?? []) {
     if (!row.recall_bot_id || !row.external_id) continue;
     counts.pollBots += 1;
-    await processRow(row.id, row.external_id, row.recall_bot_id, counts, emit);
+    await processRow(
+      {
+        callId: row.id,
+        tenantId: row.tenant_id,
+        externalCallId: row.external_id,
+        recallBotId: row.recall_bot_id,
+      },
+      counts,
+      emit,
+    );
   }
 
   return counts;
 }
 
+type ProcessRowArgs = {
+  callId: string;
+  tenantId: string;
+  externalCallId: string;
+  recallBotId: string;
+};
+
 async function processRow(
-  callId: string,
-  externalCallId: string,
-  recallBotId: string,
+  args: ProcessRowArgs,
   counts: TranscriptSyncCounts,
   emit: (d: TranscriptSyncDecision) => void,
 ): Promise<void> {
+  const { callId, tenantId, externalCallId, recallBotId } = args;
   const db = supabaseAdmin();
 
   // ----- 1. Poll the bot. -----
@@ -157,7 +192,7 @@ async function processRow(
     return;
   }
 
-  // ----- 2. Pull the transcript. -----
+  // ----- 2. Pull the transcript from Recall. -----
 
   let transcript: string;
   try {
@@ -176,8 +211,42 @@ async function processRow(
     return;
   }
 
-  // ----- 3. Mark has_been_extracted = true BEFORE anything that must not
-  //          repeat. This is the at-most-once gate. -----
+  // ----- 3. DURABILITY GATE. Persist the transcript body to Supabase
+  //          BEFORE any extraction attempt. -----
+  //
+  // If this fails, set ingest_error and SKIP delete entirely so the
+  // upstream Recall copy stays available for the next sync run. We do
+  // NOT mark has_been_extracted in this branch: the next sync re-pulls
+  // and retries persistence.
+
+  try {
+    await persistTranscriptBody({ tenantId, callId, body: transcript });
+    counts.bodiesPersisted += 1;
+  } catch (err) {
+    counts.ingestErrors += 1;
+    const message =
+      err instanceof TranscriptPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    await writeIngestError(
+      callId,
+      `transcript persist failed (Recall media preserved): ${message}`,
+    );
+    emit({
+      kind: "ingest-error",
+      callId,
+      recallBotId,
+      phase: "persist",
+      message,
+    });
+    return;
+  }
+
+  // ----- 4. Mark has_been_extracted = true. The body is now durable; if
+  //          anything after this point fails the operator runs
+  //          --retry-ingest to re-extract from the stored body. -----
 
   const mark = await db
     .from("calls")
@@ -196,55 +265,26 @@ async function processRow(
       phase: "mark",
       message: mark.error.message,
     });
-    return;
+    // Body IS durable, so we still attempt the delete below.
   }
 
-  // ----- 4. Ingest the transcript. -----
-  //
-  // The transcripts body row is the durability gate: ingestTranscript
-  // writes it BEFORE any extraction_runs / field_extractions rows, and
-  // throws TranscriptPersistError if that write fails. We must not
-  // delete Recall media in that case — the customer's only durable
-  // copy of the body would be lost. The retry script can pick it up
-  // when the underlying issue is resolved.
-  //
-  // For any other error past the at-most-once mark, the body is
-  // already durable, so deleting the upstream media is safe.
+  // ----- 5. Run extraction. Failure here sets ingest_error but does
+  //          NOT block the delete step — the body is durable. -----
 
-  let transcriptIsDurable = false;
   try {
     await ingestTranscript({
       source: "recall_ai",
       externalCallId,
       transcript,
     });
-    transcriptIsDurable = true;
     counts.extracted += 1;
     emit({ kind: "extracted", callId, recallBotId });
   } catch (err) {
     counts.ingestErrors += 1;
     const message = err instanceof Error ? err.message : String(err);
-    if (err instanceof TranscriptPersistError) {
-      // Body not durably stored. Set ingest_error, SKIP delete entirely.
-      await writeIngestError(
-        callId,
-        `transcript persist failed (Recall media preserved): ${message}`,
-      );
-      emit({
-        kind: "ingest-error",
-        callId,
-        recallBotId,
-        phase: "ingest",
-        message,
-      });
-      return;
-    }
-    // Any other failure: ingest_error set, but the body MAY still be
-    // durable (TranscriptPersistError throws only when the body write
-    // itself failed). Verify by direct query before deleting.
     await writeIngestError(
       callId,
-      `ingest failed (will not retry): ${message}`,
+      `extraction failed (transcript saved; use --retry-ingest): ${message}`,
     );
     emit({
       kind: "ingest-error",
@@ -253,14 +293,11 @@ async function processRow(
       phase: "ingest",
       message,
     });
-    transcriptIsDurable = await transcriptBodyExists(callId);
+    // Fall through. Body is durable; delete is still safe.
   }
 
-  // ----- 5. Delete the source recording — ONLY if the body is durable. -----
-
-  if (!transcriptIsDurable) {
-    return;
-  }
+  // ----- 6. Delete the source recording. Body is durable in
+  //          public.transcripts, so this is always safe at this point. -----
 
   try {
     await deleteSourceRecording(externalCallId);
@@ -278,22 +315,6 @@ async function processRow(
       message,
     });
   }
-}
-
-async function transcriptBodyExists(callId: string): Promise<boolean> {
-  const db = supabaseAdmin();
-  const row = await db
-    .from("transcripts")
-    .select("id")
-    .eq("call_id", callId)
-    .limit(1);
-  if (row.error) {
-    console.error(
-      `[transcript-sync] could not verify transcripts row for call ${callId}: ${row.error.message}. Assuming NOT durable, skipping delete.`,
-    );
-    return false;
-  }
-  return !!row.data && row.data.length > 0;
 }
 
 async function writeIngestError(callId: string, reason: string): Promise<void> {

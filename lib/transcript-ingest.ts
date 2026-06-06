@@ -151,15 +151,17 @@ export class LLMServiceError extends TranscriptIngestError {
 }
 
 /**
- * Thrown when the transcripts body row fails to persist for a Recall-sourced
- * call. This is the durability gate: callers (transcript-sync) catch this
- * specifically, set calls.ingest_error, and must NOT proceed to delete the
- * upstream Recall media — the customer's only durable copy of the
- * transcript would otherwise be lost.
+ * Thrown by persistTranscriptBody when the transcripts body row fails to
+ * persist for a Recall-sourced call. This is the durability gate:
+ * callers (transcript-sync) catch this specifically, set
+ * calls.ingest_error, and must NOT proceed to delete the upstream
+ * Recall media. The customer's only durable copy of the transcript
+ * would otherwise be lost.
  *
- * Manual paste / seed flow never raises this: no calls row in Supabase
- * means no transcripts row to write, and there is no upstream source to
- * delete either.
+ * Production rehearsal lesson: extraction failure must NEVER block
+ * transcript persistence. persistTranscriptBody runs BEFORE any
+ * extraction attempt, so any extraction error (missing framework, LLM
+ * timeout, parse failure) leaves the body intact.
  */
 export class TranscriptPersistError extends TranscriptIngestError {
   constructor(callId: string, detail: string) {
@@ -739,34 +741,16 @@ async function writeAuditTrail(args: {
 
     const db = supabaseAdmin();
 
-    // ----- DURABILITY GATE -----
-    // For Recall-sourced calls (callUuid present), persist the transcript
-    // body BEFORE anything else. If this fails we must not proceed:
-    // transcript-sync inspects the thrown TranscriptPersistError and
-    // skips deleteSourceRecording, so the Recall copy stays available.
+    // The transcripts row is no longer written here. It is now written
+    // by transcript-sync's persistTranscriptBody call BEFORE extraction
+    // is attempted, so extraction failure (e.g. FrameworkNotConfiguredError
+    // thrown earlier in extractAndStore) can never block persistence.
     //
-    // Seed / manual_paste flow has no calls row in Supabase, hence no
-    // transcripts row to write and no upstream media to delete.
-    if (callUuid) {
-      const transcriptUpsert = await db
-        .from("transcripts")
-        .upsert(
-          {
-            tenant_id: tenantId,
-            call_id: callUuid,
-            body: transcript,
-          },
-          { onConflict: "call_id" },
-        );
-      if (transcriptUpsert.error) {
-        throw new TranscriptPersistError(callUuid, transcriptUpsert.error.message);
-      }
-    }
-
-    // ----- Audit writes. Failures past this point are logged but do not
-    //       throw: the transcript is durably persisted, so deletion of
-    //       the upstream media is still safe. The retry script can
-    //       re-extract from the body to refill these rows. -----
+    // The void assignment silences the "transcript declared but never
+    // used" hint while keeping the argument in the signature for the
+    // retry-ingest caller, which re-runs extraction from the stored body
+    // and passes it back through here.
+    void transcript;
 
     const { merged, changedIds } = mergeExtraction(
       framework,
@@ -836,7 +820,43 @@ async function writeAuditTrail(args: {
       `[transcript-ingest] audit ok dealId=${dealUuid} framework=${framework.name} transcript_persisted=${callUuid !== null} run_inserted=1 fields_upserted=${changedIds.length} (${changedIds.join(",")})`,
     );
   } catch (err) {
-    if (err instanceof TranscriptPersistError) throw err;
+    // writeAuditTrail no longer throws TranscriptPersistError (that lives
+    // in persistTranscriptBody, called from transcript-sync). Any other
+    // failure is best-effort: log, don't re-throw, so a manual_paste
+    // request still returns its extraction to the user even if the
+    // Supabase audit write fails.
     console.error("[transcript-ingest] audit write failed:", err);
+  }
+}
+
+/**
+ * Durably persist the transcript body to Supabase BEFORE any extraction
+ * attempt. Throws TranscriptPersistError on failure.
+ *
+ * Per the production rehearsal: extraction may fail for any number of
+ * reasons (no framework registered, LLM timeout, parse error) and the
+ * caller must still hold a usable copy of the transcript so retry can
+ * re-run extraction without re-pulling from the upstream provider. This
+ * function is the durability gate: transcript-sync calls it first,
+ * marks has_been_extracted only after it succeeds, then runs extraction
+ * and the delete-after-pull step.
+ *
+ * Idempotent on call_id (upsert).
+ */
+export async function persistTranscriptBody(args: {
+  tenantId: string;
+  callId: string;
+  body: string;
+}): Promise<void> {
+  const { tenantId, callId, body } = args;
+  const db = supabaseAdmin();
+  const res = await db
+    .from("transcripts")
+    .upsert(
+      { tenant_id: tenantId, call_id: callId, body },
+      { onConflict: "call_id" },
+    );
+  if (res.error) {
+    throw new TranscriptPersistError(callId, res.error.message);
   }
 }

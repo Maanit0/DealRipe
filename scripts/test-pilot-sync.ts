@@ -38,10 +38,7 @@ import {
   runTranscriptSync,
   type TranscriptSyncDecision,
 } from "../lib/transcript-sync";
-import {
-  extractAndStore,
-  deleteSourceRecording,
-} from "../lib/transcript-ingest";
+import { extractAndStore } from "../lib/transcript-ingest";
 
 const PILOT_TENANT_SLUG = "magaya";
 
@@ -268,6 +265,20 @@ function printTranscriptDecision(d: TranscriptSyncDecision): void {
  * call whose ingest_error is set. Clears ingest_error only when the
  * re-extraction AND (best-effort) media delete both succeed.
  */
+/**
+ * --retry-ingest: re-run extraction ALONE for any call with a persisted
+ * transcript body and a non-null ingest_error.
+ *
+ * Production rehearsal change: this no longer touches deleteSourceRecording.
+ * The new transcript-sync ordering deletes Recall media as soon as the
+ * body is persisted, regardless of extraction outcome — so by the time a
+ * row reaches retry-ingest, deletion is already settled. Retrying delete
+ * here would just re-trigger a Recall 4xx for media that no longer
+ * exists and re-set ingest_error.
+ *
+ * On success, ingest_error is cleared. On failure, ingest_error is
+ * updated with the new reason.
+ */
 async function runRetryIngest(tenantId: string): Promise<void> {
   console.log("Running --retry-ingest for tenant magaya...");
   console.log("");
@@ -288,10 +299,8 @@ async function runRetryIngest(tenantId: string): Promise<void> {
     candidates: 0,
     missingBody: 0,
     extracted: 0,
-    mediaDeleted: 0,
     cleared: 0,
     extractFailures: 0,
-    deleteFailures: 0,
   };
 
   for (const row of rows.data ?? []) {
@@ -334,7 +343,8 @@ async function runRetryIngest(tenantId: string): Promise<void> {
     }
     const body = transcriptRow.data.body;
 
-    // Re-run extraction from the stored body.
+    // Re-run extraction alone (no delete step). The body is durable; if
+    // extraction succeeds we clear ingest_error and the row is healthy.
     try {
       await extractAndStore({
         transcript: body,
@@ -356,35 +366,17 @@ async function runRetryIngest(tenantId: string): Promise<void> {
       continue;
     }
 
-    // Best-effort media delete (no-op for non-recall_ai sources).
-    let deleteOk = true;
-    try {
-      await deleteSourceRecording(externalCallId);
-      counts.mediaDeleted += 1;
-    } catch (err) {
-      deleteOk = false;
-      counts.deleteFailures += 1;
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`[delete-failed] callId=${callId} message=${message}`);
-      await db
-        .from("calls")
-        .update({ ingest_error: `retry media delete failed: ${message}` })
-        .eq("id", callId);
-    }
-
-    if (deleteOk) {
-      const clear = await db
-        .from("calls")
-        .update({ ingest_error: null })
-        .eq("id", callId);
-      if (clear.error) {
-        console.log(
-          `[clear-failed] callId=${callId} message=${clear.error.message}`,
-        );
-      } else {
-        counts.cleared += 1;
-        console.log(`[cleared] callId=${callId}`);
-      }
+    const clear = await db
+      .from("calls")
+      .update({ ingest_error: null })
+      .eq("id", callId);
+    if (clear.error) {
+      console.log(
+        `[clear-failed] callId=${callId} message=${clear.error.message}`,
+      );
+    } else {
+      counts.cleared += 1;
+      console.log(`[cleared] callId=${callId}`);
     }
   }
 
