@@ -612,6 +612,101 @@ create index deals_outcome_label_idx
   on public.deals (tenant_id, outcome_label)
   where outcome_label is not null;
 
+-- =====================================================================
+-- App users + Supabase Auth integration (magic-link auth)
+--
+-- Each row maps an email permitted to sign in to a tenant + role.
+-- Provisioning is operator-managed via the service role: SELECT-only
+-- RLS denies any anon/authenticated write path.
+--
+-- The custom_access_token_hook function below copies tenant_id +
+-- tenant_slug + app_role into every freshly-minted JWT, so RLS
+-- policies on data tables (deals, calls, etc.) continue to use
+-- `(auth.jwt() ->> 'tenant_id') = tenant_id::text` exactly as today.
+-- =====================================================================
+
+create extension if not exists citext;
+
+create table public.app_users (
+  id          uuid        primary key default gen_random_uuid(),
+  tenant_id   uuid        not null references public.tenants(id) on delete cascade,
+  email       citext      not null unique,
+  role        text        not null check (role in ('cro', 'operator')),
+  created_at  timestamptz not null default now()
+);
+
+create index app_users_tenant_id_idx on public.app_users (tenant_id);
+
+create trigger app_users_prevent_tenant_change
+  before update on public.app_users
+  for each row execute function public.prevent_tenant_id_change();
+
+-- ---------------------------------------------------------------------
+-- Custom Access Token Hook (Supabase Auth)
+--
+-- Operator dashboard setup:
+--   Authentication > Hooks > Custom Access Token Hook
+--   -> public.custom_access_token_hook
+--
+-- On every token mint Supabase invokes this function with the pending
+-- event (containing user_id, claims, etc.) and uses the returned event.
+-- We append three claims when the authenticated email is in app_users:
+--   tenant_id    (uuid as text)
+--   tenant_slug  (text; convenience for client-side display)
+--   app_role     ('cro' | 'operator')
+--
+-- If the email is NOT in app_users, the function returns the event
+-- unchanged. The Next.js middleware then routes the user to /no-access.
+--
+-- security definer + restricted search_path are mandatory for an auth
+-- hook (the hook runs as supabase_auth_admin, which has no read access
+-- to public schema by default). The grants below are the minimum
+-- surface the hook needs.
+-- ---------------------------------------------------------------------
+create or replace function public.custom_access_token_hook(event jsonb)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  claims      jsonb := coalesce(event -> 'claims', '{}'::jsonb);
+  user_email  text  := lower(coalesce(claims ->> 'email', ''));
+  app_record  record;
+begin
+  if user_email = '' then
+    return event;
+  end if;
+
+  select au.tenant_id, au.role, t.slug
+    into app_record
+    from public.app_users au
+    join public.tenants t on t.id = au.tenant_id
+    where au.email = user_email
+    limit 1;
+
+  if not found then
+    return event;
+  end if;
+
+  claims := claims
+    || jsonb_build_object('tenant_id',   app_record.tenant_id::text)
+    || jsonb_build_object('tenant_slug', app_record.slug)
+    || jsonb_build_object('app_role',    app_record.role);
+
+  return jsonb_set(event, '{claims}', claims);
+end;
+$$;
+
+-- supabase_auth_admin is the role Supabase Auth runs hooks under.
+-- It has no default permissions on public, so we grant exactly what
+-- the hook reads.
+grant execute on function public.custom_access_token_hook(jsonb) to supabase_auth_admin;
+grant usage  on schema public      to supabase_auth_admin;
+grant select on public.app_users   to supabase_auth_admin;
+grant select on public.tenants     to supabase_auth_admin;
+
 -- ---------------------------------------------------------------------
 -- Role grants. Required after a `drop schema public cascade; create
 -- schema public;` cleanup, which wipes Supabase's default ACLs.

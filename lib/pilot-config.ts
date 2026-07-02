@@ -18,7 +18,11 @@ export type PilotDomainEntry = { domain: string; dealExternalId: string };
  * until then calendar sync dispatches nothing (fail closed).
  */
 export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
-  Object.freeze([]);
+  Object.freeze([
+    { domain: "aquagulf.com", dealExternalId: "aquagulf" }, // Eduardo
+    { domain: "martinbrower.com", dealExternalId: "martinbrower" }, // Juan
+    { domain: "omniva.com", dealExternalId: "omniva" }, // Juan
+  ]);
 
 /**
  * Match a list of attendee emails against the pilot allowlist.

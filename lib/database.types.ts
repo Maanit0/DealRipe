@@ -508,6 +508,30 @@ export type Database = {
         };
         Relationships: [];
       };
+      app_users: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          email: string;
+          role: "cro" | "operator";
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          email: string;
+          role: "cro" | "operator";
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          email?: string;
+          role?: "cro" | "operator";
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       microsoft_connections: {
         Row: {
           id: string;

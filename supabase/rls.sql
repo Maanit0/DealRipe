@@ -411,3 +411,29 @@ create policy prescribed_actions_update on public.prescribed_actions
   for update
   using       ((auth.jwt() ->> 'tenant_id') = tenant_id::text)
   with check  ((auth.jwt() ->> 'tenant_id') = tenant_id::text);
+
+-- ---------------------------------------------------------------------
+-- app_users (magic-link auth roster)
+--
+-- Self-only SELECT: an authenticated user can read THEIR row (matched
+-- by email), nothing else. No INSERT/UPDATE/DELETE policies, so all
+-- provisioning happens via the service role (scripts/seed-app-users.ts
+-- or an operator-run admin path).
+--
+-- citext means the email comparison is case-insensitive without
+-- requiring lower() on both sides, but we apply lower() explicitly on
+-- the auth.email() side for safety against any pre-cast quirks.
+-- ---------------------------------------------------------------------
+alter table public.app_users enable row level security;
+
+drop policy if exists app_users_select_self on public.app_users;
+
+create policy app_users_select_self on public.app_users
+  for select
+  using (
+    auth.email() is not null
+    and lower(auth.email()) = lower(email::text)
+  );
+
+-- No INSERT/UPDATE/DELETE policies: app_users is operator-managed
+-- exclusively via the service role.

@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { MagayaPipeline } from "@/components/MagayaPipeline";
+import { getPilotDigest } from "@/lib/digest";
+import { getFrameworkForDeal } from "@/lib/framework";
 import { SCOTSMAN_FIELDS, type Stage } from "@/lib/scotsman";
 import {
   ALL_DEALS,
@@ -7,6 +10,25 @@ import {
   type Deal,
   type DealRipeAssessment,
 } from "@/lib/seed-data";
+import { getDealsForTenant } from "@/lib/supabase-queries";
+import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+
+async function loadMagayaPipeline() {
+  try {
+    const tenantId = await resolveTenantId("magaya");
+    const deals = await getDealsForTenant(tenantId);
+    const framework = deals.length > 0 ? await getFrameworkForDeal(deals[0].id) : null;
+    // A digest failure must not knock the whole pipeline back to the demo.
+    const digest = await getPilotDigest(tenantId).catch((e) => {
+      console.error("[magaya pipeline] digest failed:", e);
+      return [];
+    });
+    return { deals, framework, digest };
+  } catch (err) {
+    console.error("[magaya pipeline] load failed:", err);
+    return null;
+  }
+}
 
 type HealthStatus = "at_risk" | "stalled" | "healthy";
 
@@ -25,7 +47,40 @@ const AT_RISK_COMPLETION_THRESHOLD = 30;
 const STALLED_DAYS_THRESHOLD = 21;
 const STALLED_DIVERGENCE_THRESHOLD = 20;
 
-export default function PipelinePage() {
+export default async function PipelinePage({
+  searchParams,
+}: {
+  searchParams: { tenant?: string };
+}) {
+  // Magaya account: live, framework-driven pipeline. JWT tenant will replace
+  // the ?tenant param once auth is wired; the TopSort demo path is unchanged.
+  if (searchParams.tenant === "magaya") {
+    const live = await loadMagayaPipeline();
+    if (live)
+      return (
+        <MagayaPipeline
+          deals={live.deals}
+          framework={live.framework}
+          digest={live.digest}
+        />
+      );
+    // Do NOT fall back to the demo for the Magaya tenant; show the failure
+    // so it is obvious something threw (see the dev server terminal).
+    return (
+      <div className="min-h-screen bg-bg">
+        <main className="max-w-[1200px] mx-auto px-6 py-7">
+          <div className="bg-white rounded-xl2 shadow-card border border-line p-8">
+            <p className="text-[14px] text-ink font-medium">Magaya pipeline failed to load</p>
+            <p className="text-[12px] text-muted mt-1">
+              Check the dev server terminal for a line starting
+              &ldquo;[magaya pipeline] load failed&rdquo;.
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   const rows: Row[] = ALL_DEALS.map((deal) => {
     const stage = getStageForDeal(deal);
     if (!stage) throw new Error(`Stage not found for ${deal.id}`);

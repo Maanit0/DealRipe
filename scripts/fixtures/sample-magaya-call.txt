@@ -1,0 +1,58 @@
+Sales call: Magaya (Juan Lopez, AE) and Harbor Freight Logistics (David Okafor, Director of Operations; later joined by Priya Nair, IT Manager)
+Context: mid-stage opportunity, a freight forwarder evaluating Magaya's logistics/supply-chain platform. Second call after a product demo the prior week.
+
+Juan: Hey David, thanks for making the time again. And I think Priya's joining partway through?
+
+David: Yeah, Priya will hop on in about twenty minutes, she runs IT for us. Thanks for the demo last week by the way, the team really liked the visibility on the shipment tracking side.
+
+Juan: That's great to hear. So I wanted to use today to dig into where this sits for you and what a path forward looks like. Maybe start with, remind me what's pushing you to look at a new platform now?
+
+David: Honestly it's that we're drowning in manual work. We're running on CargoWise for the core forwarding piece but everything around it is spreadsheets. Quoting, the customs docs, the customer status updates, all of it is people copying data between systems. It's error prone and it does not scale.
+
+Juan: And why now specifically, versus six months ago or six months from now?
+
+David: Peak season. Our volume roughly doubles from October through December and last year we nearly fell over. The board basically told us we cannot go into this peak on the current setup. So we have a real deadline, we need to be live before peak, which for us means going live by the first week of October at the latest.
+
+Juan: Got it, that's helpful. October go-live. On the investment side, do you have a sense of what you've budgeted for this?
+
+David: We've earmarked somewhere in the range of forty to sixty thousand a year for the platform. That came out of the operations budget.
+
+Juan: Okay. And when it comes to actually approving that spend, who signs off?
+
+David: Anything over fifty grand has to go to Sandra, our CFO. I can recommend, and my recommendation carries a lot of weight, but she makes the final call on the money.
+
+Juan: Have you been able to walk Sandra through this yet, or get her in a room with us?
+
+David: Not yet. I wanted to get comfortable myself first. She's not looped in at this point, I'd want to bring her in once we're down to a final choice.
+
+Juan: Makes sense. Are we the only platform you're looking at, or is there a comparison happening?
+
+David: We're also evaluating Descartes. They're further along on the customs piece honestly, but their quoting workflow felt clunky in the demo. So it's the two of you right now.
+
+Juan: Appreciate you being straight with me on that. Has the team formed a view on which way you're leaning?
+
+David: We haven't made a final decision. You're both still in it. I'd say you're slightly ahead on usability, Descartes is ahead on the customs depth. That's the tension we're working through.
+
+Juan: That's fair. On the contract side, when you get to that point, is legal handled in house or do you use outside counsel?
+
+David: In house. Our general counsel Marcus handles all the vendor contracts directly, so that part tends to move quickly once we decide.
+
+Juan: Good to know. So if I'm hearing you right, this is basically ours to lose at this point?
+
+David: I wouldn't go that far. Like I said, no decision yet, and Descartes is real. Let's not get ahead of ourselves.
+
+Juan: Fair enough, I'll keep earning it. Priya, welcome, we were just talking through the evaluation. I had a couple of technical things I wanted to make sure we cover with you.
+
+Priya: Happy to. The main thing on my end is the data migration from CargoWise and the spreadsheets. That's the part that worries me for an October timeline.
+
+Juan: Totally reasonable concern. Let's make migration a focus. What would help you get comfortable, a technical deep dive with our implementation team?
+
+Priya: Yes, a session where your implementation lead walks through the migration approach with my two engineers. If that goes well, that addresses my biggest open question.
+
+Juan: Let's set that up. So here's what I'd propose as next steps. One, I'll send over a written proposal with pricing and the October implementation timeline. Two, we book the migration deep dive with Priya's team. And three, once you've seen both of those, David, you and I talk about getting Sandra in the room. Does that work?
+
+David: That works. Send the proposal and let's get the migration session on the calendar for next week. I'll commit to that. Once I've seen the proposal and Priya's comfortable on migration, I'm happy to set up the conversation with Sandra.
+
+Juan: Perfect, I'll get the proposal over by Thursday and coordinate with Priya on timing. Thanks both, this was really useful.
+
+David: Thanks Juan, talk soon.

@@ -88,6 +88,7 @@ export const ROLLDOG_WRITE_FIELDS: readonly string[] = Object.freeze([
   "people",
   "budget",
   "competitors",
+  "situation",
 ]);
 
 // ---------------------------------------------------------------------

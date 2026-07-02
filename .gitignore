@@ -7,3 +7,6 @@ next-env.d.ts
 .vercel
 *.mov
 *.mp4
+
+# Saved call transcripts (customer/NDA data, never commit)
+.transcripts/

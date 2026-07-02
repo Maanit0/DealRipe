@@ -1,6 +1,8 @@
 import type { ForecastTenant } from "./types";
 import { TOPSORT } from "./topsort";
 import { AWARE } from "./aware";
+import { COBALT } from "./cobalt";
+import { WESTCHESTER } from "./westchester";
 
 export * from "./types";
 
@@ -18,6 +20,8 @@ export * from "./types";
 export const DEMOS: Record<string, ForecastTenant> = {
   topsort: TOPSORT,
   aware: AWARE,
+  cobalt: COBALT,
+  westchester: WESTCHESTER,
 };
 
 export const DEMO_LIST: ForecastTenant[] = Object.values(DEMOS);

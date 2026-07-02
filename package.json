@@ -11,6 +11,7 @@
     "test:crm-scope": "tsx scripts/test-crm-scope.ts",
     "seed:magaya": "tsx scripts/seed-magaya-tenant.ts",
     "seed:frameworks": "tsx scripts/seed-frameworks.ts",
+    "seed:app-users": "tsx scripts/seed-app-users.ts",
     "demo:crm-audit": "tsx scripts/demo-crm-audit.ts",
     "test:recall-bot": "tsx scripts/test-recall-bot.ts",
     "test:graph": "tsx scripts/test-graph-calendar.ts",
@@ -20,6 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.3",
     "next": "14.2.15",
     "react": "^18.3.1",

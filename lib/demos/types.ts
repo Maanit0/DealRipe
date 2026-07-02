@@ -61,7 +61,7 @@ export type ForecastTenant = {
   slug: TenantSlug;
   name: string;
   product: string;          // shown in top bar context
-  framework: "Scotsman" | "DUCT";
+  framework: "Scotsman" | "DUCT" | "MEDDPICC";
   weekOf: string;
   lastUpdatedAgo: string;
   changedCount: number;
