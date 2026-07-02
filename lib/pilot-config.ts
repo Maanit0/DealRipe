@@ -25,6 +25,25 @@ export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
   ]);
 
 /**
+ * Which rep gets the post-call summary + pre-call briefing for each pilot
+ * deal, keyed by the same dealExternalId used in PILOT_CUSTOMER_DOMAINS.
+ * transcript-sync uses this to route the recap email. If a deal is missing
+ * here, no email is sent (logged, not thrown).
+ *
+ * Confirm the exact addresses against microsoft_connections. ebencomo is
+ * verified from the connect flow; jlopez is the expected form for Juan Lopez.
+ */
+export const PILOT_REP_EMAILS: Readonly<Record<string, string>> = Object.freeze({
+  aquagulf: "ebencomo@magaya.com", // Eduardo
+  martinbrower: "jlopez@magaya.com", // Juan (confirm exact address)
+  omniva: "jlopez@magaya.com", // Juan (confirm exact address)
+});
+
+export function repEmailForDeal(dealExternalId: string): string | null {
+  return PILOT_REP_EMAILS[dealExternalId] ?? null;
+}
+
+/**
  * Match a list of attendee emails against the pilot allowlist.
  * Domain comparison is case-insensitive on the part after the last '@'.
  * Returns the first matching entry or null.

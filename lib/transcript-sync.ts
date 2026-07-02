@@ -42,6 +42,8 @@ import {
   ingestTranscript,
   persistTranscriptBody,
 } from "./transcript-ingest";
+import type { ExtractionMap } from "./briefing-magaya";
+import { sendPostCallSummary } from "./post-call-notify";
 import { getBot, getTranscript, type BotStatus } from "./recall";
 import { supabaseAdmin } from "./supabase";
 
@@ -272,13 +274,35 @@ async function processRow(
   //          NOT block the delete step — the body is durable. -----
 
   try {
-    await ingestTranscript({
+    const ingestResult = await ingestTranscript({
       source: "recall_ai",
       externalCallId,
       transcript,
     });
     counts.extracted += 1;
     emit({ kind: "extracted", callId, recallBotId });
+
+    // Best-effort: email the rep their post-call summary. Fully isolated in
+    // its own try/catch so a mail failure can never affect ingest status or
+    // the media-delete step below.
+    try {
+      const notify = await sendPostCallSummary({
+        tenantId,
+        dealExternalId: ingestResult.dealExternalId,
+        extraction: ingestResult.extraction as unknown as ExtractionMap,
+        transcript,
+      });
+      if (!notify.sent) {
+        console.warn(
+          `[transcript-sync] post-call summary not sent for call ${callId}: ${notify.reason}`,
+        );
+      }
+    } catch (notifyErr) {
+      console.error(
+        `[transcript-sync] post-call summary send threw for call ${callId}:`,
+        notifyErr instanceof Error ? notifyErr.message : notifyErr,
+      );
+    }
   } catch (err) {
     counts.ingestErrors += 1;
     const message = err instanceof Error ? err.message : String(err);

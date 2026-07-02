@@ -10,3 +10,6 @@ next-env.d.ts
 
 # Saved call transcripts (customer/NDA data, never commit)
 .transcripts/
+
+# Rendered email/preview HTML (may contain customer-derived content)
+.previews/
