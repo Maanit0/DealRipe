@@ -44,6 +44,7 @@ import {
 } from "./transcript-ingest";
 import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
+import { writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, type BotStatus } from "./recall";
 import { supabaseAdmin } from "./supabase";
 
@@ -301,6 +302,23 @@ async function processRow(
       console.error(
         `[transcript-sync] post-call summary send threw for call ${callId}:`,
         notifyErr instanceof Error ? notifyErr.message : notifyErr,
+      );
+    }
+
+    // Best-effort: push extracted fields to Rolldog. Gated + fail-closed;
+    // no-ops until the deal's opportunity id is mapped (pilot-config) and
+    // allowlisted (crm-scope). Never affects ingest.
+    try {
+      const wb = await writeBackDealToRolldog("magaya", ingestResult.dealExternalId);
+      if (!wb.written) {
+        console.warn(
+          `[transcript-sync] rolldog write-back skipped for call ${callId}: ${wb.reason}`,
+        );
+      }
+    } catch (wbErr) {
+      console.error(
+        `[transcript-sync] rolldog write-back threw for call ${callId}:`,
+        wbErr instanceof Error ? wbErr.message : wbErr,
       );
     }
   } catch (err) {

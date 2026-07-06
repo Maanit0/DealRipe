@@ -18,7 +18,8 @@
     "test:salesforce": "tsx scripts/test-salesforce.ts",
     "test:ordering": "tsx scripts/test-transcript-ordering.ts",
     "test:pilot-sync": "tsx scripts/test-pilot-sync.ts",
-    "test:post-call-summary": "tsx scripts/test-post-call-summary.ts"
+    "test:post-call-summary": "tsx scripts/test-post-call-summary.ts",
+    "test:briefing-email": "tsx scripts/test-briefing-email.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

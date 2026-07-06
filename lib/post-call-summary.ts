@@ -87,8 +87,8 @@ Rules:
 1. No em-dashes or en-dashes anywhere. Use commas or periods. Hard rule.
 2. No marketing language, no praise, no "great call". Plain, factual, the way a sales manager recaps to a rep.
 3. Ground every statement in the transcript. Do not invent facts, numbers, names, or commitments that were not said.
-4. "recap": 2 to 4 sentences on what actually happened on this call, what the customer said, what moved, what was decided or deferred. Concrete, not generic.
-5. "suggestedNextStep": ONE specific next action for the rep to advance the deal, based on what is still open and what the customer said. Name the person or action. One sentence.
+4. "recap": 2 to 3 short sentences, each at most about 16 words, on what actually happened, what the customer said, what moved or was deferred. Concrete, not generic. Brief and scannable, no run-ons.
+5. "suggestedNextStep": ONE specific next action for the rep, at most about 18 words. Name the person or action. One tight sentence.
 6. Write for the rep's eyes. Second person is fine ("you").
 
 Return a single JSON object, no prose, no markdown fences:

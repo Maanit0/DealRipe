@@ -81,7 +81,7 @@ Rules:
 9. "whatsAtRisk" is what slips if the call goes badly, stated in the customer's own compelling-event or timeline words where available.
 10. "signalFlag" is one short flag ONLY if there is a live risk worth surfacing (economic buyer not engaged, deal stalled, competitor ahead, close date unvalidated). Otherwise null.
 11. Do not invent facts that are not in the provided state.
-12. Each text field is one sentence. Each question is one sentence.
+12. Be brief and scannable, the rep reads this live on a call. Every text field (callObjective, whereItStands, nextStepCommitment, whatsAtRisk, signalFlag) is ONE tight sentence, at most about 22 words, no run-ons and no lists. Each question "ask" is at most about 18 words. Each "why" is one short line, at most about 14 words. Favor fewer words over completeness.
 
 Return a single JSON object, no prose, no markdown fences:
 {

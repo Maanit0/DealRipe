@@ -156,6 +156,7 @@ export type Database = {
           has_been_extracted: boolean;
           recall_bot_id: string | null;
           ingest_error: string | null;
+          briefing_sent_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -171,6 +172,7 @@ export type Database = {
           has_been_extracted?: boolean;
           recall_bot_id?: string | null;
           ingest_error?: string | null;
+          briefing_sent_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -186,6 +188,7 @@ export type Database = {
           has_been_extracted?: boolean;
           recall_bot_id?: string | null;
           ingest_error?: string | null;
+          briefing_sent_at?: string | null;
           created_at?: string;
         };
         Relationships: [];

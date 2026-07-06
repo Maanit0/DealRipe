@@ -44,6 +44,26 @@ export function repEmailForDeal(dealExternalId: string): string | null {
 }
 
 /**
+ * Deal slug -> live Rolldog opportunity id, for write-back routing. Empty
+ * until the reps send their opportunity ids (Juan for martinbrower/omniva;
+ * aquagulf only once it exists in Rolldog).
+ *
+ * IMPORTANT: adding an id here is NOT enough to write. The same id must also
+ * be added to PILOT_OPPORTUNITY_IDS in crm-scope.ts (the security authority,
+ * fail-closed). Until both are set, write-back safely no-ops.
+ */
+export const PILOT_DEAL_ROLLDOG_IDS: Readonly<Record<string, string>> =
+  Object.freeze({
+    // aquagulf: "",     // not in Rolldog yet
+    // martinbrower: "", // fill when Juan sends the opportunity id
+    // omniva: "",       // fill when Juan sends the opportunity id
+  });
+
+export function rolldogOppIdForDeal(dealExternalId: string): string | null {
+  return PILOT_DEAL_ROLLDOG_IDS[dealExternalId] ?? null;
+}
+
+/**
  * Match a list of attendee emails against the pilot allowlist.
  * Domain comparison is case-insensitive on the part after the last '@'.
  * Returns the first matching entry or null.
