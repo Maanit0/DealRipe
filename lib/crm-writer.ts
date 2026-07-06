@@ -70,10 +70,13 @@ export type SyncResult = {
   /** rolldog method name, e.g. "writeBudget" */
   method: string;
   /** "ok": method called and 2xx. "skipped": no Yes fields contributed.
-   *  "error": method called and threw (non-ScopeViolation). */
-  status: "ok" | "skipped" | "error";
+   *  "error": method called and threw (non-ScopeViolation).
+   *  "preview": dry-run; payload composed but NOT sent. */
+  status: "ok" | "skipped" | "error" | "preview";
   /** field_keys whose extractions contributed to this call */
   fieldsWritten: string[];
+  /** For a dry-run preview: the payload that would have been written. */
+  payload?: string;
   /** present only when status === "error". Never contains credential values. */
   error?: string;
 };
@@ -84,6 +87,9 @@ export type SyncDealToRolldogOpts = {
   dealId: string;
   /** External Rolldog opportunity id (deals.external_id, or the id you allowlisted) */
   rolldogOpportunityId: string;
+  /** When true, compose payloads and return status="preview" WITHOUT writing
+   *  to Rolldog. Use to validate the mapping before enabling live writes. */
+  dryRun?: boolean;
 };
 
 /**
@@ -214,12 +220,16 @@ export async function syncDealToRolldog(
 
   // ---- Pass 2: dispatch one call per non-empty payload. ----
 
+  const dryRun = opts.dryRun ?? false;
   const results: SyncResult[] = [];
 
   // writeBudget
   if (budgetParts.length > 0) {
     const notes = budgetParts.map((p) => p.line).join("\n\n");
     const fields = budgetParts.map((p) => p.fieldKey);
+    if (dryRun) {
+      results.push({ method: "writeBudget", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
+    } else {
     try {
       await writeBudget(opts.rolldogOpportunityId, { notes });
       results.push({ method: "writeBudget", status: "ok", fieldsWritten: fields });
@@ -231,6 +241,7 @@ export async function syncDealToRolldog(
         fieldsWritten: fields,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
     }
   } else {
     results.push({ method: "writeBudget", status: "skipped", fieldsWritten: [] });
@@ -246,6 +257,9 @@ export async function syncDealToRolldog(
       payload.isCloseDateValidated = timelineCloseDateValidated;
     }
     const fields = Array.from(timelineFields);
+    if (dryRun) {
+      results.push({ method: "writeTimeline", status: "preview", fieldsWritten: fields, payload: JSON.stringify(payload, null, 2) });
+    } else {
     try {
       await writeTimeline(opts.rolldogOpportunityId, payload);
       results.push({ method: "writeTimeline", status: "ok", fieldsWritten: fields });
@@ -258,12 +272,16 @@ export async function syncDealToRolldog(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    }
   } else {
     results.push({ method: "writeTimeline", status: "skipped", fieldsWritten: [] });
   }
 
   // writeSituation
   if (situationFields.length > 0) {
+    if (dryRun) {
+      results.push({ method: "writeSituation", status: "preview", fieldsWritten: situationFields, payload: JSON.stringify(situationPayload, null, 2) });
+    } else {
     try {
       await writeSituation(opts.rolldogOpportunityId, situationPayload);
       results.push({
@@ -280,6 +298,7 @@ export async function syncDealToRolldog(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    }
   } else {
     results.push({ method: "writeSituation", status: "skipped", fieldsWritten: [] });
   }
@@ -288,6 +307,9 @@ export async function syncDealToRolldog(
   if (competitionParts.length > 0) {
     const notes = competitionParts.map((p) => p.line).join("\n\n");
     const fields = competitionParts.map((p) => p.fieldKey);
+    if (dryRun) {
+      results.push({ method: "writeCompetitionNotes", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
+    } else {
     try {
       await writeCompetitionNotes(opts.rolldogOpportunityId, notes);
       results.push({
@@ -304,6 +326,7 @@ export async function syncDealToRolldog(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    }
   } else {
     results.push({
       method: "writeCompetitionNotes",
@@ -316,6 +339,9 @@ export async function syncDealToRolldog(
   if (participantParts.length > 0) {
     const notes = participantParts.map((p) => p.line).join("\n\n");
     const fields = participantParts.map((p) => p.fieldKey);
+    if (dryRun) {
+      results.push({ method: "writeParticipantNotes", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
+    } else {
     try {
       await writeParticipantNotes(opts.rolldogOpportunityId, { notes });
       results.push({
@@ -331,6 +357,7 @@ export async function syncDealToRolldog(
         fieldsWritten: fields,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
     }
   } else {
     results.push({

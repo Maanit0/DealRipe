@@ -49,20 +49,34 @@ type DealSeed = {
 };
 
 // ---------------------------------------------------------------------
-// EDIT THIS once Mark confirms the three deals. One example prefilled
-// from the screenshots (Express Air Freight, opp 72018, Juan Lopez).
+// Pilot deals (2026-07): Eduardo -> Groupe Morneau (81714), Alba Wheels Up
+// (78273). Juan -> Martin Brower, Omniva (opp ids pending from Juan). Aqua
+// Gulf deferred (not in Rolldog yet). external_id = the slug used across
+// pilot-config; Rolldog opp ids are mapped separately in PILOT_DEAL_ROLLDOG_IDS.
 // ---------------------------------------------------------------------
 const DEALS: DealSeed[] = [
   {
-    external_id: "aquagulf", // matches pilot-config.ts; Rolldog opp id TBD (not in Rolldog yet)
-    account: "Aqua Gulf",
-    industry: "Logistics / freight forwarding",
-    arr: 0, // unknown; refreshes from Rolldog once read is live
-    stage_key: "SQL2",
+    external_id: "morneau", // Eduardo; Rolldog opp 81714 (mapped in pilot-config)
+    account: "Groupe Morneau",
+    industry: "Transport / logistics",
+    arr: 0, // refreshes from Rolldog once read sync is live
+    stage_key: "SQL2", // placeholder; refresh from Rolldog
     days_in_stage: 0,
-    rep_forecast_probability: 0.3, // day-0 placeholder (Pipeline)
-    rep_forecast_close_date: "2026-12-15", // "decision towards end of year" (Eduardo)
-    rep_notes: "Eduardo. Demo done Jul 2 2026; discovery underway. Not yet in Rolldog.",
+    rep_forecast_probability: 0.3,
+    rep_forecast_close_date: "2026-12-31", // placeholder
+    rep_notes: "Eduardo. Rolldog opp 81714. Domain morneauglobal.com. Refresh stage/close from Rolldog.",
+    contacts: [],
+  },
+  {
+    external_id: "alba", // Eduardo; Rolldog opp 78273 (mapped in pilot-config)
+    account: "Alba Wheels Up",
+    industry: "Customs brokerage / logistics",
+    arr: 0,
+    stage_key: "SQL2", // placeholder; refresh from Rolldog
+    days_in_stage: 0,
+    rep_forecast_probability: 0.3,
+    rep_forecast_close_date: "2026-12-31", // placeholder
+    rep_notes: "Eduardo. Rolldog opp 78273. Domain albawheelsup.com. Refresh stage/close from Rolldog.",
     contacts: [],
   },
   {

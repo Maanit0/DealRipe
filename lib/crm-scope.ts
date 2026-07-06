@@ -29,7 +29,10 @@
  * until then every CRM call fails closed.
  */
 export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
-  // intentionally empty until kickoff
+  "81714", // Groupe Morneau (Eduardo). Write-back validated via dry-run 2026-07.
+  "78273", // Alba Wheels Up (Eduardo). Write-back validated via dry-run 2026-07.
+  "80566", // Martin Brower (Juan).
+  "80983", // Omniva (Juan).
 ]);
 
 /**

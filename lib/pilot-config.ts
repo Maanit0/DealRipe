@@ -19,9 +19,11 @@ export type PilotDomainEntry = { domain: string; dealExternalId: string };
  */
 export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
   Object.freeze([
-    { domain: "aquagulf.com", dealExternalId: "aquagulf" }, // Eduardo
-    { domain: "martinbrower.com", dealExternalId: "martinbrower" }, // Juan
-    { domain: "omniva.com", dealExternalId: "omniva" }, // Juan
+    { domain: "morneauglobal.com", dealExternalId: "morneau" }, // Eduardo (Groupe Morneau, opp 81714)
+    { domain: "albawheelsup.com", dealExternalId: "alba" }, // Eduardo (Alba Wheels Up, opp 78273)
+    { domain: "martin-brower.com", dealExternalId: "martinbrower" }, // Juan (opp 80566; email domain uses a hyphen)
+    { domain: "omniva.com", dealExternalId: "omniva" }, // Juan (opp 80983)
+    // Aqua Gulf deferred: not in Rolldog yet (awaiting their RFI, atypical ICP).
   ]);
 
 /**
@@ -34,9 +36,10 @@ export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
  * verified from the connect flow; jlopez is the expected form for Juan Lopez.
  */
 export const PILOT_REP_EMAILS: Readonly<Record<string, string>> = Object.freeze({
-  aquagulf: "ebencomo@magaya.com", // Eduardo
-  martinbrower: "jlopez@magaya.com", // Juan (confirm exact address)
-  omniva: "jlopez@magaya.com", // Juan (confirm exact address)
+  morneau: "ebencomo@magaya.com", // Eduardo
+  alba: "ebencomo@magaya.com", // Eduardo
+  martinbrower: "jlopez@magaya.com", // Juan
+  omniva: "jlopez@magaya.com", // Juan
 });
 
 export function repEmailForDeal(dealExternalId: string): string | null {
@@ -54,9 +57,10 @@ export function repEmailForDeal(dealExternalId: string): string | null {
  */
 export const PILOT_DEAL_ROLLDOG_IDS: Readonly<Record<string, string>> =
   Object.freeze({
-    // aquagulf: "",     // not in Rolldog yet
-    // martinbrower: "", // fill when Juan sends the opportunity id
-    // omniva: "",       // fill when Juan sends the opportunity id
+    morneau: "81714", // Eduardo, Groupe Morneau
+    alba: "78273", // Eduardo, Alba Wheels Up
+    martinbrower: "80566", // Juan, Martin Brower
+    omniva: "80983", // Juan, Omniva
   });
 
 export function rolldogOppIdForDeal(dealExternalId: string): string | null {
