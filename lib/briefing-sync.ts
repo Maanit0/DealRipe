@@ -82,7 +82,7 @@ export async function runBriefingSync(
 
   const connections = await db
     .from("microsoft_connections")
-    .select("id")
+    .select("id, user_principal_name")
     .eq("tenant_id", tenantId);
   if (connections.error) {
     throw new Error(`[briefing-sync] list connections failed: ${connections.error.message}`);
@@ -92,7 +92,19 @@ export async function runBriefingSync(
   const now = Date.now();
 
   for (const conn of connections.data) {
-    const events = await listUpcomingMeetings(conn.id, SCAN_WINDOW_DAYS);
+    // One bad calendar must not abort the whole run. Skip and continue.
+    let events;
+    try {
+      events = await listUpcomingMeetings(conn.id, SCAN_WINDOW_DAYS);
+    } catch (err) {
+      counts.errors += 1;
+      console.error(
+        `[briefing-sync] skipping connection ${conn.user_principal_name ?? conn.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
     for (const ev of events) {
       counts.eventsSeen += 1;
       try {

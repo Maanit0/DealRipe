@@ -44,6 +44,7 @@ export type CalendarSyncCounts = {
   rescheduled: number;
   cancelled: number;
   skippedNoDeal: number;
+  connectionsSkipped: number;
 };
 
 export type CalendarSyncDecision =
@@ -103,6 +104,7 @@ export async function runCalendarSync(
     rescheduled: 0,
     cancelled: 0,
     skippedNoDeal: 0,
+    connectionsSkipped: 0,
   };
   const emit = opts.onDecision ?? (() => {});
 
@@ -111,7 +113,7 @@ export async function runCalendarSync(
 
   const connections = await db
     .from("microsoft_connections")
-    .select("id")
+    .select("id, user_principal_name")
     .eq("tenant_id", tenantId);
   if (connections.error) {
     throw new Error(
@@ -123,7 +125,20 @@ export async function runCalendarSync(
   }
 
   for (const conn of connections.data) {
-    const events = await listUpcomingMeetings(conn.id, SYNC_WINDOW_DAYS);
+    // One bad calendar (no mailbox, revoked token, on-prem Exchange) must not
+    // abort the whole run. Skip it, log which account, and continue.
+    let events;
+    try {
+      events = await listUpcomingMeetings(conn.id, SYNC_WINDOW_DAYS);
+    } catch (err) {
+      counts.connectionsSkipped += 1;
+      console.error(
+        `[calendar-sync] skipping connection ${conn.user_principal_name ?? conn.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
     for (const ev of events) {
       counts.eventsSeen += 1;
       try {
