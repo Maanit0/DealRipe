@@ -14,8 +14,10 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
 import { MailerConfigError, sendEmail } from "./mailer";
-import { repEmailForDeal } from "./pilot-config";
+import { repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
 import { generatePostCallSummary } from "./post-call-summary";
+import { getDealRoom } from "./rolldog";
+import { buildExtractionFromRolldog, mergeRolldogAndCalls, stageFromRolldog } from "./rolldog-briefing-context";
 import { supabaseAdmin } from "./supabase";
 
 export type NotifyResult = { sent: boolean; to?: string; reason?: string };
@@ -53,12 +55,35 @@ export async function sendPostCallSummary(args: {
     return { sent: false, to, reason: "framework load returned null" };
   }
 
+  // Layer live Rolldog context under this call so "still open" reflects what
+  // Rolldog already has (not just what this one call covered). Best-effort.
+  let gapExtraction = args.extraction;
+  let stageKey = dealRow.data.stage_key;
+  const opp = rolldogOppIdForDeal(args.dealExternalId);
+  if (opp) {
+    try {
+      const room = await getDealRoom(opp);
+      gapExtraction = mergeRolldogAndCalls(
+        buildExtractionFromRolldog(framework, room),
+        args.extraction,
+      );
+      stageKey = stageFromRolldog(room) ?? dealRow.data.stage_key;
+    } catch (err) {
+      console.warn(
+        `[post-call] rolldog context read failed for opp ${opp}: ${
+          err instanceof Error ? err.message : String(err)
+        }; using call data only`,
+      );
+    }
+  }
+
   const summary = await generatePostCallSummary({
     account: dealRow.data.account,
-    stageKey: dealRow.data.stage_key,
+    stageKey,
     closeDate: dealRow.data.rep_forecast_close_date ?? undefined,
     framework,
     extraction: args.extraction,
+    gapExtraction,
     transcript: args.transcript,
   });
 

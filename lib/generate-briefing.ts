@@ -57,14 +57,27 @@ function parseJson(raw: string): MagayaBriefing | null {
   }
 }
 
-export async function generateMagayaBriefing(
-  deal: Deal,
-  framework: Framework,
+export type BriefingState = {
+  account: string;
+  stageKey: string;
+  closeDate?: string;
+  attendees: string;
+  framework: Framework;
+  extraction: ExtractionMap;
+};
+
+/**
+ * Generate a briefing from an explicit state (extraction + stage + context),
+ * regardless of where that state came from. The deal-based path below builds
+ * state from a Deal; the Rolldog-context path (scripts/preview-rolldog-briefing)
+ * builds it from a live Rolldog opportunity read.
+ */
+export async function generateBriefingFromState(
+  state: BriefingState,
 ): Promise<MagayaBriefing | null> {
-  const extraction = deal.extraction as unknown as ExtractionMap;
-  const stage = deal.stageKey;
-  const next = nextStageOf(stage);
-  const currentGaps = openGapsForStage(framework, extraction, stage);
+  const { framework, extraction, stageKey } = state;
+  const next = nextStageOf(stageKey);
+  const currentGaps = openGapsForStage(framework, extraction, stageKey);
   const nextGaps = next ? openGapsForStage(framework, extraction, next) : [];
 
   const resp = await getAnthropicClient().messages.create({
@@ -76,11 +89,11 @@ export async function generateMagayaBriefing(
       {
         role: "user",
         content: buildMagayaBriefingUserMessage({
-          account: deal.account,
-          stage,
+          account: state.account,
+          stage: stageKey,
           nextStage: next,
-          closeDate: deal.repForecastCloseDate || undefined,
-          attendees: attendeesFrom(deal),
+          closeDate: state.closeDate,
+          attendees: state.attendees,
           framework,
           extraction,
           currentGaps,
@@ -93,4 +106,18 @@ export async function generateMagayaBriefing(
   const block = resp.content.find((b) => b.type === "text");
   const text = block && "text" in block ? block.text : "";
   return parseJson(text);
+}
+
+export async function generateMagayaBriefing(
+  deal: Deal,
+  framework: Framework,
+): Promise<MagayaBriefing | null> {
+  return generateBriefingFromState({
+    account: deal.account,
+    stageKey: deal.stageKey,
+    closeDate: deal.repForecastCloseDate || undefined,
+    attendees: attendeesFrom(deal),
+    framework,
+    extraction: deal.extraction as unknown as ExtractionMap,
+  });
 }

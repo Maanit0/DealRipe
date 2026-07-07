@@ -90,6 +90,48 @@ export function matchPilotDomain(
   return null;
 }
 
+/**
+ * Fallback matching by meeting subject, for pilot calls where the customer is
+ * not an invited attendee (customer-hosted links, internal-titled placeholders
+ * like "DEMO PLACE HOLDER MARTIN BROWER"). If the deal name appears in the
+ * subject, the bot joins even without the customer domain on the invite.
+ *
+ * Keywords are distinctive per deal to avoid false positives. Tradeoff: this
+ * can also match internal prep meetings about the deal (no customer to record).
+ */
+export const PILOT_DEAL_SUBJECT_KEYWORDS: Readonly<Record<string, string[]>> =
+  Object.freeze({
+    morneau: ["morneau"],
+    alba: ["alba wheels", "albawheels"],
+    martinbrower: ["martin brower", "martin-brower", "martinbrower"],
+    omniva: ["omniva"],
+  });
+
+/**
+ * Match a meeting subject against the pilot deal keywords. Returns the deal's
+ * PilotDomainEntry (so callers use it exactly like a domain match) or null.
+ */
+export function matchPilotSubject(
+  subject: string | null | undefined,
+): PilotDomainEntry | null {
+  if (!subject) return null;
+  const s = subject.toLowerCase();
+  const list = effectivePilotDomains();
+  for (const [slug, keywords] of Object.entries(PILOT_DEAL_SUBJECT_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (s.includes(kw.toLowerCase())) {
+        return (
+          list.find((e) => e.dealExternalId === slug) ?? {
+            domain: "(subject-match)",
+            dealExternalId: slug,
+          }
+        );
+      }
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------
 // Test-only override
 // ---------------------------------------------------------------------

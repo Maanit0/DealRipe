@@ -1,9 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ExtractionMap } from "@/lib/briefing-magaya";
 import { DealView } from "@/components/DealView";
 import { MagayaDealView } from "@/components/MagayaDealView";
 import { getFrameworkForDeal } from "@/lib/framework";
+import { rolldogOppIdForDeal } from "@/lib/pilot-config";
+import { getDealRoom } from "@/lib/rolldog";
+import {
+  buildExtractionFromRolldog,
+  mergeRolldogAndCalls,
+  stageFromRolldog,
+} from "@/lib/rolldog-briefing-context";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
+import { supabaseAdmin } from "@/lib/supabase";
 import { getDealForTenant } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
@@ -17,6 +26,34 @@ async function loadLiveMagayaDeal(id: string) {
     if (!deal) return null;
     const framework = await getFrameworkForDeal(deal.id);
     if (!framework) return null;
+
+    // Best-effort: layer live Rolldog context onto the deal's extraction + stage
+    // so the Opportunity Control sheet reflects Rolldog plus captured calls, not
+    // just captured calls. A Rolldog failure never blocks the page.
+    try {
+      const row = await supabaseAdmin()
+        .from("deals")
+        .select("external_id")
+        .eq("id", id)
+        .maybeSingle();
+      const ext = row.data?.external_id ?? null;
+      const opp = ext ? rolldogOppIdForDeal(ext) : null;
+      if (opp) {
+        const room = await getDealRoom(opp);
+        deal.extraction = mergeRolldogAndCalls(
+          buildExtractionFromRolldog(framework, room),
+          deal.extraction as unknown as ExtractionMap,
+        ) as unknown as typeof deal.extraction;
+        const rStage = stageFromRolldog(room);
+        if (rStage) deal.stageKey = rStage;
+      }
+    } catch (err) {
+      console.warn(
+        "[magaya deal] rolldog context merge skipped:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+
     return { deal, framework };
   } catch (err) {
     console.error("[magaya deal] load failed:", err);

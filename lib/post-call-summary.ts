@@ -40,7 +40,14 @@ export type PostCallSummaryInput = {
   closeDate?: string;
   attendees?: string;
   framework: Framework;
+  /** Extraction from THIS call. Drives "captured on this call". */
   extraction: ExtractionMap;
+  /**
+   * Optional broader state (Rolldog context merged with all calls) used to
+   * compute "still open", so we don't flag gaps Rolldog already has filled.
+   * Defaults to `extraction` when omitted.
+   */
+  gapExtraction?: ExtractionMap;
   transcript: string;
 };
 
@@ -143,7 +150,11 @@ export async function generatePostCallSummary(
   input: PostCallSummaryInput,
 ): Promise<PostCallSummary> {
   const captured = capturedFields(input.framework, input.extraction);
-  const stillOpen = openFields(input.framework, input.extraction, input.stageKey);
+  const stillOpen = openFields(
+    input.framework,
+    input.gapExtraction ?? input.extraction,
+    input.stageKey,
+  );
 
   const resp = await getAnthropicClient().messages.create({
     model: getAnthropicModel(),

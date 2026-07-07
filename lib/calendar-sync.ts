@@ -28,7 +28,7 @@
  */
 
 import type { Json } from "./database.types";
-import { matchPilotDomain } from "./pilot-config";
+import { matchPilotDomain, matchPilotSubject } from "./pilot-config";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import { createBot, deleteBot } from "./recall";
 import { supabaseAdmin } from "./supabase";
@@ -176,12 +176,11 @@ async function processEvent(
   const attendeeEmails = ev.attendees
     .map((a) => a.email)
     .filter((e): e is string => typeof e === "string" && e.length > 0);
-  if (attendeeEmails.length === 0) {
-    emit({ kind: "no-attendees", eventId: ev.eventId, subject: ev.subject });
-    return;
-  }
 
-  const match = matchPilotDomain(attendeeEmails);
+  // Match by customer domain first; fall back to the deal name in the subject
+  // so we still catch pilot calls where the customer is not an invited guest.
+  const match =
+    matchPilotDomain(attendeeEmails) ?? matchPilotSubject(ev.subject);
   if (!match) {
     emit({
       kind: "no-pilot-match",

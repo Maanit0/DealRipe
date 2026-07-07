@@ -13,7 +13,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { listUpcomingMeetings } from "../lib/microsoft-graph";
-import { matchPilotDomain } from "../lib/pilot-config";
+import { matchPilotDomain, matchPilotSubject } from "../lib/pilot-config";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
@@ -66,8 +66,11 @@ async function main(): Promise<void> {
       const domains = Array.from(
         new Set(emails.filter((x) => x.includes("@")).map((x) => x.split("@")[1].toLowerCase())),
       );
-      const match = matchPilotDomain(emails);
-      const tag = match ? `  <-- PILOT (${match.dealExternalId}), bot will join` : "";
+      const dMatch = matchPilotDomain(emails);
+      const sMatch = dMatch ? null : matchPilotSubject(e.subject);
+      const match = dMatch ?? sMatch;
+      const via = dMatch ? "domain" : sMatch ? "subject" : "";
+      const tag = match ? `  <-- PILOT (${match.dealExternalId}, via ${via}), bot will join` : "";
       console.log(`  ${fmt(e.start?.dateTime, e.start?.timeZone)}  |  ${e.subject ?? "(no subject)"}  |  ${domains.join(", ") || "(none)"}${tag}`);
     }
   }

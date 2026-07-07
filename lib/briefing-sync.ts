@@ -13,12 +13,15 @@
  * on. Never throws mid-scan for a single bad meeting.
  */
 
-import { attendeesFrom, generateMagayaBriefing } from "./generate-briefing";
+import type { ExtractionMap } from "./briefing-magaya";
+import { attendeesFrom, generateBriefingFromState } from "./generate-briefing";
 import { loadFramework } from "./framework";
 import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
-import { matchPilotDomain, repEmailForDeal } from "./pilot-config";
+import { matchPilotDomain, matchPilotSubject, repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
+import { getDealRoom } from "./rolldog";
+import { buildExtractionFromRolldog, mergeRolldogAndCalls, stageFromRolldog } from "./rolldog-briefing-context";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
@@ -133,9 +136,10 @@ async function processEvent(
   const attendeeEmails = ev.attendees
     .map((a) => a.email)
     .filter((e): e is string => typeof e === "string" && e.length > 0);
-  const match = matchPilotDomain(attendeeEmails);
+  const match =
+    matchPilotDomain(attendeeEmails) ?? matchPilotSubject(ev.subject);
   if (!match) {
-    emit({ kind: "skip", eventId: ev.eventId, reason: "no pilot-domain match" });
+    emit({ kind: "skip", eventId: ev.eventId, reason: "no pilot match (domain or subject)" });
     return;
   }
   counts.matched += 1;
@@ -203,8 +207,30 @@ async function processEvent(
   const framework = await loadFramework(tenantId, dealRow.data.framework_id);
   if (!framework) throw new Error(`loadFramework returned null for ${dealRow.data.framework_id}`);
 
-  const briefing = await generateMagayaBriefing(deal, framework);
-  if (!briefing) throw new Error("briefing generation returned null");
+  // Base briefing state on captured-call extractions, then layer live Rolldog
+  // context underneath so the brief is grounded even before any call and
+  // sharpens as calls accumulate. Rolldog read is best-effort: if it fails or
+  // the deal has no mapped opp, fall back to call data only.
+  const callExtraction = deal.extraction as unknown as ExtractionMap;
+  let extraction = callExtraction;
+  let stageKey = deal.stageKey;
+  const opp = rolldogOppIdForDeal(match.dealExternalId);
+  if (opp) {
+    try {
+      const room = await getDealRoom(opp);
+      extraction = mergeRolldogAndCalls(
+        buildExtractionFromRolldog(framework, room),
+        callExtraction,
+      );
+      stageKey = stageFromRolldog(room) ?? deal.stageKey;
+    } catch (err) {
+      console.warn(
+        `[briefing-sync] rolldog context read failed for opp ${opp}: ${
+          err instanceof Error ? err.message : String(err)
+        }; using call data only`,
+      );
+    }
+  }
 
   // Attendees with roles, matching the in-app briefing header. Falls back to
   // the meeting's raw attendee names if the deal has no contacts yet.
@@ -217,9 +243,19 @@ async function processEvent(
           .slice(0, 4)
           .join("; ") || undefined;
 
+  const briefing = await generateBriefingFromState({
+    account: deal.account,
+    stageKey,
+    closeDate: deal.repForecastCloseDate || undefined,
+    attendees: attendees ?? `the ${deal.account} team`,
+    framework,
+    extraction,
+  });
+  if (!briefing) throw new Error("briefing generation returned null");
+
   const email = renderPreCallBriefingEmail(briefing, {
     account: deal.account,
-    stageKey: deal.stageKey,
+    stageKey,
     attendees,
     minutesUntil,
   });
