@@ -20,8 +20,7 @@ import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import { matchPilotDomain, matchPilotSubject, repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
-import { getDealRoom } from "./rolldog";
-import { buildExtractionFromRolldog, mergeRolldogAndCalls, stageFromRolldog } from "./rolldog-briefing-context";
+import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
@@ -207,27 +206,21 @@ async function processEvent(
   const framework = await loadFramework(tenantId, dealRow.data.framework_id);
   if (!framework) throw new Error(`loadFramework returned null for ${dealRow.data.framework_id}`);
 
-  // Base briefing state on captured-call extractions, then layer live Rolldog
-  // context underneath so the brief is grounded even before any call and
-  // sharpens as calls accumulate. Rolldog read is best-effort: if it fails or
-  // the deal has no mapped opp, fall back to call data only.
-  const callExtraction = deal.extraction as unknown as ExtractionMap;
-  let extraction = callExtraction;
+  // Confirmed-vs-gap is sourced from the deal's call-verified extraction only,
+  // so the briefing matches the deal page and never treats a stale CRM entry as
+  // covered. Rolldog is read (light) only for the current stage. Best-effort:
+  // if it fails or the deal has no mapped opp, fall back to the deal's stage.
+  const extraction = deal.extraction as unknown as ExtractionMap;
   let stageKey = deal.stageKey;
   const opp = rolldogOppIdForDeal(match.dealExternalId);
   if (opp) {
     try {
-      const room = await getDealRoom(opp);
-      extraction = mergeRolldogAndCalls(
-        buildExtractionFromRolldog(framework, room),
-        callExtraction,
-      );
-      stageKey = stageFromRolldog(room) ?? deal.stageKey;
+      stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? deal.stageKey;
     } catch (err) {
       console.warn(
-        `[briefing-sync] rolldog context read failed for opp ${opp}: ${
+        `[briefing-sync] rolldog stage read failed for opp ${opp}: ${
           err instanceof Error ? err.message : String(err)
-        }; using call data only`,
+        }; using deal stage`,
       );
     }
   }

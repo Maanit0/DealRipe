@@ -289,6 +289,7 @@ async function processEvent(
         deal_id: dealId,
         external_id: ev.eventId,
         call_date: eventDate,
+        scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
         source: "recall_ai",
       })
@@ -383,6 +384,7 @@ async function processEvent(
       .update({
         recall_bot_id: newBot.id,
         call_date: eventDate,
+        scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
       })
       .eq("id", callRow.id);
@@ -431,6 +433,7 @@ async function processEvent(
       .update({
         recall_bot_id: bot.id,
         call_date: eventDate,
+        scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
       })
       .eq("id", callRow.id);
@@ -461,6 +464,7 @@ async function processEvent(
   const upd = await db
     .from("calls")
     .update({
+      scheduled_start: eventIso,
       participants: ev.attendees as unknown as Json,
     })
     .eq("id", callRow.id);

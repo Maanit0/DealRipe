@@ -16,8 +16,8 @@ import { loadFramework } from "./framework";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
 import { generatePostCallSummary } from "./post-call-summary";
-import { getDealRoom } from "./rolldog";
-import { buildExtractionFromRolldog, mergeRolldogAndCalls, stageFromRolldog } from "./rolldog-briefing-context";
+import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import { getDealExtraction } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 
 export type NotifyResult = { sent: boolean; to?: string; reason?: string };
@@ -36,7 +36,7 @@ export async function sendPostCallSummary(args: {
   const db = supabaseAdmin();
   const dealRow = await db
     .from("deals")
-    .select("account, stage_key, framework_id, rep_forecast_close_date")
+    .select("id, account, stage_key, framework_id, rep_forecast_close_date")
     .eq("tenant_id", args.tenantId)
     .eq("external_id", args.dealExternalId)
     .maybeSingle();
@@ -55,24 +55,30 @@ export async function sendPostCallSummary(args: {
     return { sent: false, to, reason: "framework load returned null" };
   }
 
-  // Layer live Rolldog context under this call so "still open" reflects what
-  // Rolldog already has (not just what this one call covered). Best-effort.
+  // "Still open" reflects the deal's cumulative call-verified state (the
+  // field_extractions roll-up, which already includes this call by the time
+  // this runs), not just what this one call covered, and never a stale CRM
+  // entry. Rolldog is read (light) only for the current stage. Best-effort.
   let gapExtraction = args.extraction;
+  try {
+    gapExtraction = (await getDealExtraction(dealRow.data.id)) as unknown as ExtractionMap;
+  } catch (err) {
+    console.warn(
+      `[post-call] extraction roll-up read failed for deal ${args.dealExternalId}: ${
+        err instanceof Error ? err.message : String(err)
+      }; using this call's extraction`,
+    );
+  }
   let stageKey = dealRow.data.stage_key;
   const opp = rolldogOppIdForDeal(args.dealExternalId);
   if (opp) {
     try {
-      const room = await getDealRoom(opp);
-      gapExtraction = mergeRolldogAndCalls(
-        buildExtractionFromRolldog(framework, room),
-        args.extraction,
-      );
-      stageKey = stageFromRolldog(room) ?? dealRow.data.stage_key;
+      stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? dealRow.data.stage_key;
     } catch (err) {
       console.warn(
-        `[post-call] rolldog context read failed for opp ${opp}: ${
+        `[post-call] rolldog stage read failed for opp ${opp}: ${
           err instanceof Error ? err.message : String(err)
-        }; using call data only`,
+        }; using deal stage`,
       );
     }
   }

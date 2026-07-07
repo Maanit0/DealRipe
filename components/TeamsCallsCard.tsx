@@ -11,7 +11,13 @@ type Props = {
  * GongCallsCard design but Teams-branded and framework-neutral copy.
  */
 export function TeamsCallsCard({ dealId, calls }: Props) {
-  const ordered = [...calls].sort((a, b) => (a.date < b.date ? 1 : -1));
+  // "Recent calls" = calls that have already happened. Future meetings live in
+  // the Upcoming call card, not here, so a scheduled call never shows as
+  // "Processing".
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const ordered = [...calls]
+    .filter((c) => (c.date ?? "").slice(0, 10) <= todayStr)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
 
   return (
     <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">

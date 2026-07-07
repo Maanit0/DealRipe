@@ -8,6 +8,8 @@ import {
   stageGateStatus,
 } from "@/lib/framework-stages";
 import type { Deal } from "@/lib/seed-data";
+import { describeUpcomingCall, type UpcomingCall } from "@/lib/supabase-queries";
+import { daysSince, type RolldogSummary } from "@/lib/rolldog-summary";
 
 const STAGE_LABELS: Record<string, string> = {
   SQL0: "Lead",
@@ -49,10 +51,16 @@ export function MagayaPipeline({
   deals,
   framework,
   digest = [],
+  upcomingByDealId = {},
+  summariesByDealId = {},
+  repActivityByDealId = {},
 }: {
   deals: Deal[];
   framework: Framework | null;
   digest?: DigestEntry[];
+  upcomingByDealId?: Record<string, UpcomingCall>;
+  summariesByDealId?: Record<string, RolldogSummary>;
+  repActivityByDealId?: Record<string, string | null>;
 }) {
   const rows: Row[] = framework ? deals.map((deal) => buildRow(deal, framework)) : [];
 
@@ -111,7 +119,11 @@ export function MagayaPipeline({
                   <Th className="pl-5">Account</Th>
                   <Th>Status</Th>
                   <Th>Stage</Th>
+                  <Th>Rep last activity</Th>
+                  <Th>Deal size</Th>
                   <Th>Rep category</Th>
+                  <Th>Rolldog score</Th>
+                  <Th>Next call</Th>
                   <Th className="pr-5">DealRipe read</Th>
                 </tr>
               </thead>
@@ -123,7 +135,7 @@ export function MagayaPipeline({
                         {row.deal.account}
                       </Link>
                       <div className="text-[11px] text-muted mt-0.5">
-                        {row.deal.industry} · {money(row.deal.arr)}
+                        {row.deal.industry}
                       </div>
                     </td>
                     <td className="py-3.5"><StatusBadge health={row.health} /></td>
@@ -132,9 +144,64 @@ export function MagayaPipeline({
                       <div className={`text-[11px] mt-0.5 ${row.deal.daysInStage > 21 ? "text-danger font-semibold" : "text-muted"}`}>
                         {row.deal.daysInStage} days in stage
                       </div>
+                      {(() => {
+                        const age = daysSince(summariesByDealId[row.deal.id]?.createdAt ?? null);
+                        return age == null ? null : (
+                          <div className="text-[11px] text-muted mt-0.5">{age}d old</div>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-3.5 text-[12px]">
+                      {(() => {
+                        const d = daysSince(repActivityByDealId[row.deal.id] ?? null);
+                        if (d == null) return <span className="text-muted">—</span>;
+                        return (
+                          <span className={d > 30 ? "text-danger font-semibold" : "text-ink"}>
+                            {d}d ago
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-3.5 text-[12px]">
+                      {(() => {
+                        const v = summariesByDealId[row.deal.id]?.dealSize ?? row.deal.arr;
+                        return v ? (
+                          <span className="text-ink font-medium">${v.toLocaleString()}</span>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        );
+                      })()}
                     </td>
                     <td className="py-3.5">
                       <span className="text-[12px] font-semibold text-ink">{row.category}</span>
+                    </td>
+                    <td className="py-3.5 text-[12px]">
+                      {(() => {
+                        const s = summariesByDealId[row.deal.id];
+                        if (!s || s.score == null) return <span className="text-muted">—</span>;
+                        return (
+                          <>
+                            <span className="font-semibold text-ink">{s.score}</span>
+                            {s.qRank ? <span className="text-muted"> · rank {s.qRank}</span> : null}
+                          </>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-3.5 text-[12px]">
+                      {(() => {
+                        const u = upcomingByDealId[row.deal.id];
+                        if (!u) return <span className="text-[12px] text-muted">none scheduled</span>;
+                        const d = describeUpcomingCall(u);
+                        return (
+                          <>
+                            <div className="text-ink font-medium">{d.when}</div>
+                            <div className={`text-[11px] mt-0.5 ${u.briefingSentAt ? "text-accent font-medium" : "text-muted"}`}>
+                              {u.briefingSentAt ? "✓ " : ""}
+                              {d.briefing}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="py-3.5 pr-5">
                       <div className="text-[13px] font-semibold text-ink">

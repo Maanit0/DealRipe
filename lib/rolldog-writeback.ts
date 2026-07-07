@@ -59,6 +59,18 @@ export async function writeBackDealToRolldog(
       dealId: dealRow.data.id,
       rolldogOpportunityId: opp,
     });
+    // Stamp when DealRipe last wrote this record so the "rep last activity"
+    // signal can attribute Rolldog's updated-at away from our own writes.
+    // Best-effort: a failed stamp never fails the write-back.
+    const stamp = await db
+      .from("deals")
+      .update({ dealripe_last_writeback_at: new Date().toISOString() })
+      .eq("id", dealRow.data.id);
+    if (stamp.error) {
+      console.warn(
+        `[writeback] wrote to opp ${opp} but failed to stamp dealripe_last_writeback_at: ${stamp.error.message}`,
+      );
+    }
     return { written: true, opportunityId: opp, results };
   } catch (err) {
     if (err instanceof ScopeViolationError) {

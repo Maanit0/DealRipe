@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ExtractionMap } from "@/lib/briefing-magaya";
 import { MagayaBriefingView } from "@/components/MagayaBriefingView";
 import { PrepareBriefingView } from "@/components/PrepareBriefingView";
 import { getFrameworkForDeal } from "@/lib/framework";
-import { attendeesFrom, generateMagayaBriefing } from "@/lib/generate-briefing";
+import { attendeesFrom, generateBriefingFromState } from "@/lib/generate-briefing";
+import { rolldogOppIdForDeal } from "@/lib/pilot-config";
+import { getRolldogSummary, stageKeyFromSummary } from "@/lib/rolldog-summary";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
+import { supabaseAdmin } from "@/lib/supabase";
 import { getDealForTenant } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
@@ -17,7 +21,31 @@ async function loadLiveMagayaDeal(id: string) {
     if (!deal) return null;
     const framework = await getFrameworkForDeal(deal.id);
     if (!framework) return null;
-    return { deal, framework };
+
+    // Confirmed-vs-gap comes from the deal's call-verified extraction only, so
+    // the briefing matches the deal page and never treats a stale CRM entry as
+    // covered. Rolldog is read (light) only for the current stage.
+    const extraction = deal.extraction as unknown as ExtractionMap;
+    let stageKey = deal.stageKey;
+    try {
+      const row = await supabaseAdmin()
+        .from("deals")
+        .select("external_id")
+        .eq("id", id)
+        .maybeSingle();
+      const ext = row.data?.external_id ?? null;
+      const opp = ext ? rolldogOppIdForDeal(ext) : null;
+      if (opp) {
+        stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? deal.stageKey;
+      }
+    } catch (err) {
+      console.warn(
+        "[magaya prepare] rolldog stage read skipped:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+
+    return { deal, framework, extraction, stageKey };
   } catch (err) {
     console.error("[magaya prepare] load failed:", err);
     return null;
@@ -28,7 +56,14 @@ export default async function PreparePage({ params }: { params: { id: string } }
   const live = UUID_RE.test(params.id) ? await loadLiveMagayaDeal(params.id) : null;
 
   if (live) {
-    const briefing = await generateMagayaBriefing(live.deal, live.framework);
+    const briefing = await generateBriefingFromState({
+      account: live.deal.account,
+      stageKey: live.stageKey,
+      closeDate: live.deal.repForecastCloseDate || undefined,
+      attendees: attendeesFrom(live.deal),
+      framework: live.framework,
+      extraction: live.extraction,
+    });
     return (
       <div className="min-h-screen bg-bg">
         <main className="max-w-[1200px] mx-auto px-6 py-7">
@@ -40,7 +75,7 @@ export default async function PreparePage({ params }: { params: { id: string } }
           </Link>
           <MagayaBriefingView
             account={live.deal.account}
-            stageKey={live.deal.stageKey}
+            stageKey={live.stageKey}
             attendees={attendeesFrom(live.deal)}
             briefing={briefing}
           />

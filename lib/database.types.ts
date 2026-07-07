@@ -50,6 +50,7 @@ export type Database = {
           framework_id: string | null;
           outcome_label: "won" | "lost" | null;
           outcome_recorded_at: string | null;
+          dealripe_last_writeback_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -68,6 +69,7 @@ export type Database = {
           framework_id?: string | null;
           outcome_label?: "won" | "lost" | null;
           outcome_recorded_at?: string | null;
+          dealripe_last_writeback_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -86,6 +88,7 @@ export type Database = {
           framework_id?: string | null;
           outcome_label?: "won" | "lost" | null;
           outcome_recorded_at?: string | null;
+          dealripe_last_writeback_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -157,6 +160,7 @@ export type Database = {
           recall_bot_id: string | null;
           ingest_error: string | null;
           briefing_sent_at: string | null;
+          scheduled_start: string | null;
           created_at: string;
         };
         Insert: {
@@ -173,6 +177,7 @@ export type Database = {
           recall_bot_id?: string | null;
           ingest_error?: string | null;
           briefing_sent_at?: string | null;
+          scheduled_start?: string | null;
           created_at?: string;
         };
         Update: {
@@ -189,6 +194,7 @@ export type Database = {
           recall_bot_id?: string | null;
           ingest_error?: string | null;
           briefing_sent_at?: string | null;
+          scheduled_start?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -565,6 +571,33 @@ export type Database = {
           scopes?: string | null;
           connected_at?: string;
           last_synced_at?: string | null;
+        };
+        Relationships: [];
+      };
+      deal_crm_baseline: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          rolldog_opportunity_id: string | null;
+          captured_at: string;
+          payload: Json;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          rolldog_opportunity_id?: string | null;
+          captured_at?: string;
+          payload: Json;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          rolldog_opportunity_id?: string | null;
+          captured_at?: string;
+          payload?: Json;
         };
         Relationships: [];
       };

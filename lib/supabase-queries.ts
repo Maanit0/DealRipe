@@ -107,6 +107,23 @@ function buildExtraction(
   return out;
 }
 
+/**
+ * The deal's cumulative call-verified extraction: the field_extractions
+ * roll-up (one row per field, latest call wins). This is the single source of
+ * truth for confirmed-vs-gap in both the deal UI and the briefings, so they
+ * never disagree. Rolldog is deliberately NOT merged in here; CRM-reported
+ * values live in the separate day-0 baseline and never flip a gate.
+ */
+export async function getDealExtraction(dealId: string): Promise<ExtractionResult> {
+  const db = supabaseAdmin();
+  const fx = await db
+    .from("field_extractions")
+    .select("framework_field_key, status, answer, evidence, confidence")
+    .eq("deal_id", dealId);
+  if (fx.error) throw new Error(`field_extractions read failed: ${fx.error.message}`);
+  return buildExtraction(fx.data ?? []);
+}
+
 function rowToDeal(
   d: {
     id: string;
@@ -258,4 +275,94 @@ export async function getDealForTenant(
     (callsRes.data ?? []).map(rowToCall),
     buildExtraction(fxRes.data ?? []),
   );
+}
+
+// ====================================================================
+// Upcoming call + briefing status (for the live UI)
+// ====================================================================
+
+export type UpcomingCall = {
+  /** Meeting start, ISO (UTC). */
+  scheduledStart: string;
+  /** When the pre-call briefing was sent, or null if not yet. */
+  briefingSentAt: string | null;
+};
+
+/** The soonest future scheduled call for a single deal, or null. */
+export async function getUpcomingCallForDeal(
+  tenantId: string,
+  dealId: string,
+): Promise<UpcomingCall | null> {
+  const db = supabaseAdmin();
+  const res = await db
+    .from("calls")
+    .select("scheduled_start, briefing_sent_at")
+    .eq("tenant_id", tenantId)
+    .eq("deal_id", dealId)
+    .not("scheduled_start", "is", null)
+    .gte("scheduled_start", new Date().toISOString())
+    .order("scheduled_start", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (res.error || !res.data || !res.data.scheduled_start) return null;
+  return {
+    scheduledStart: res.data.scheduled_start,
+    briefingSentAt: res.data.briefing_sent_at ?? null,
+  };
+}
+
+/** Soonest future scheduled call per deal for a tenant, keyed by deal id. */
+export async function getUpcomingCallsForTenant(
+  tenantId: string,
+): Promise<Record<string, UpcomingCall>> {
+  const db = supabaseAdmin();
+  const res = await db
+    .from("calls")
+    .select("deal_id, scheduled_start, briefing_sent_at")
+    .eq("tenant_id", tenantId)
+    .not("scheduled_start", "is", null)
+    .gte("scheduled_start", new Date().toISOString())
+    .order("scheduled_start", { ascending: true });
+  if (res.error || !res.data) return {};
+  const out: Record<string, UpcomingCall> = {};
+  for (const r of res.data) {
+    if (!r.scheduled_start) continue;
+    if (!out[r.deal_id]) {
+      out[r.deal_id] = {
+        scheduledStart: r.scheduled_start,
+        briefingSentAt: r.briefing_sent_at ?? null,
+      };
+    }
+  }
+  return out;
+}
+
+/**
+ * Format an UpcomingCall for the UI: the meeting time, and the briefing
+ * status ("sent 9:31 AM" or "briefing ~9:30 AM" = 30 min before start).
+ */
+export function describeUpcomingCall(u: UpcomingCall): {
+  when: string;
+  briefing: string;
+} {
+  const start = new Date(u.scheduledStart);
+  const when = start.toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (u.briefingSentAt) {
+    const sent = new Date(u.briefingSentAt).toLocaleString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    return { when, briefing: `Briefing sent ${sent}` };
+  }
+  const sendAt = new Date(start.getTime() - 30 * 60 * 1000).toLocaleString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return { when, briefing: `Briefing sends ~${sendAt}` };
 }

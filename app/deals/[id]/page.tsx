@@ -1,19 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { ExtractionMap } from "@/lib/briefing-magaya";
 import { DealView } from "@/components/DealView";
 import { MagayaDealView } from "@/components/MagayaDealView";
 import { getFrameworkForDeal } from "@/lib/framework";
 import { rolldogOppIdForDeal } from "@/lib/pilot-config";
-import { getDealRoom } from "@/lib/rolldog";
 import {
-  buildExtractionFromRolldog,
-  mergeRolldogAndCalls,
-  stageFromRolldog,
-} from "@/lib/rolldog-briefing-context";
+  daysSince,
+  getRolldogSummary,
+  stageKeyFromSummary,
+  type RolldogSummary,
+} from "@/lib/rolldog-summary";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
 import { supabaseAdmin } from "@/lib/supabase";
-import { getDealForTenant } from "@/lib/supabase-queries";
+import { getDealForTenant, getUpcomingCallForDeal } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
 // Live Magaya deals have UUID ids; the TopSort demo uses slug ids.
@@ -27,9 +26,12 @@ async function loadLiveMagayaDeal(id: string) {
     const framework = await getFrameworkForDeal(deal.id);
     if (!framework) return null;
 
-    // Best-effort: layer live Rolldog context onto the deal's extraction + stage
-    // so the Opportunity Control sheet reflects Rolldog plus captured calls, not
-    // just captured calls. A Rolldog failure never blocks the page.
+    // The SQL gates render from the deal's call-verified extraction only, so
+    // the deal page and the briefings agree and never count a stale CRM entry
+    // as confirmed. Rolldog is read (light) purely for reference signals shown
+    // in the header (deal size, score, q-rank) and the current stage. A Rolldog
+    // failure never blocks the page.
+    let rolldogSummary: RolldogSummary | null = null;
     try {
       const row = await supabaseAdmin()
         .from("deals")
@@ -39,22 +41,22 @@ async function loadLiveMagayaDeal(id: string) {
       const ext = row.data?.external_id ?? null;
       const opp = ext ? rolldogOppIdForDeal(ext) : null;
       if (opp) {
-        const room = await getDealRoom(opp);
-        deal.extraction = mergeRolldogAndCalls(
-          buildExtractionFromRolldog(framework, room),
-          deal.extraction as unknown as ExtractionMap,
-        ) as unknown as typeof deal.extraction;
-        const rStage = stageFromRolldog(room);
+        rolldogSummary = await getRolldogSummary(opp);
+        const rStage = stageKeyFromSummary(rolldogSummary);
         if (rStage) deal.stageKey = rStage;
+        if (rolldogSummary?.dealSize != null) deal.arr = rolldogSummary.dealSize;
+        const dis = daysSince(rolldogSummary?.currentStageDate ?? null);
+        if (dis != null) deal.daysInStage = dis;
       }
     } catch (err) {
       console.warn(
-        "[magaya deal] rolldog context merge skipped:",
+        "[magaya deal] rolldog summary read skipped:",
         err instanceof Error ? err.message : err,
       );
     }
 
-    return { deal, framework };
+    const upcomingCall = await getUpcomingCallForDeal(tenantId, deal.id);
+    return { deal, framework, upcomingCall, rolldogSummary };
   } catch (err) {
     console.error("[magaya deal] load failed:", err);
     return null; // Supabase not configured / magaya tenant absent -> demo path
@@ -66,7 +68,14 @@ export default async function DealPage({ params }: { params: { id: string } }) {
 
   let body: React.ReactNode;
   if (live) {
-    body = <MagayaDealView deal={live.deal} framework={live.framework} />;
+    body = (
+      <MagayaDealView
+        deal={live.deal}
+        framework={live.framework}
+        upcomingCall={live.upcomingCall}
+        rolldogSummary={live.rolldogSummary}
+      />
+    );
   } else {
     const deal = getDealById(params.id);
     if (!deal) notFound();

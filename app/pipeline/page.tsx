@@ -10,7 +10,19 @@ import {
   type Deal,
   type DealRipeAssessment,
 } from "@/lib/seed-data";
-import { getDealsForTenant } from "@/lib/supabase-queries";
+import { rolldogOppIdForDeal } from "@/lib/pilot-config";
+import { getCrmBaseline } from "@/lib/crm-baseline";
+import {
+  daysSince,
+  getRolldogSummary,
+  repLastActivityIso,
+  type RolldogSummary,
+} from "@/lib/rolldog-summary";
+import { supabaseAdmin } from "@/lib/supabase";
+import {
+  getDealsForTenant,
+  getUpcomingCallsForTenant,
+} from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
 async function loadMagayaPipeline() {
@@ -23,7 +35,51 @@ async function loadMagayaPipeline() {
       console.error("[magaya pipeline] digest failed:", e);
       return [];
     });
-    return { deals, framework, digest };
+    const upcoming = await getUpcomingCallsForTenant(tenantId).catch((e) => {
+      console.error("[magaya pipeline] upcoming calls failed:", e);
+      return {};
+    });
+
+    // Live Rolldog signals per deal, best-effort, parallel: deal size, score,
+    // and CRM process dates (stage entry, created, updated). We also derive the
+    // rep's true last-activity by attributing updated-at away from DealRipe's
+    // own write-backs, using the write-back stamp and the day-0 baseline.
+    const summaries: Record<string, RolldogSummary> = {};
+    const repActivity: Record<string, string | null> = {};
+    try {
+      const idRows = await supabaseAdmin()
+        .from("deals")
+        .select("id, external_id, dealripe_last_writeback_at")
+        .eq("tenant_id", tenantId);
+      await Promise.all(
+        (idRows.data ?? []).map(async (r) => {
+          const opp = r.external_id ? rolldogOppIdForDeal(r.external_id) : null;
+          if (!opp) return;
+          const s = await getRolldogSummary(opp);
+          if (!s) return;
+          summaries[r.id] = s;
+          const baseline = await getCrmBaseline(r.id).catch(() => null);
+          repActivity[r.id] = repLastActivityIso({
+            liveUpdatedAt: s.updatedAt,
+            dealripeLastWriteback: r.dealripe_last_writeback_at,
+            baselineUpdatedAt: baseline?.summary.updatedAt ?? null,
+          });
+        }),
+      );
+      for (const d of deals) {
+        const s = summaries[d.id];
+        if (s?.dealSize != null) d.arr = s.dealSize;
+        // Days in stage, live from Rolldog's stage-entry date (stage is
+        // rep-owned; DealRipe never writes it, so this stays a clean signal
+        // and it feeds the at-risk / stalled health logic below).
+        const d2 = daysSince(s?.currentStageDate ?? null);
+        if (d2 != null) d.daysInStage = d2;
+      }
+    } catch (e) {
+      console.error("[magaya pipeline] rolldog summaries failed:", e);
+    }
+
+    return { deals, framework, digest, upcoming, summaries, repActivity };
   } catch (err) {
     console.error("[magaya pipeline] load failed:", err);
     return null;
@@ -62,6 +118,9 @@ export default async function PipelinePage({
           deals={live.deals}
           framework={live.framework}
           digest={live.digest}
+          upcomingByDealId={live.upcoming}
+          summariesByDealId={live.summaries}
+          repActivityByDealId={live.repActivity}
         />
       );
     // Do NOT fall back to the demo for the Magaya tenant; show the failure
