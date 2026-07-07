@@ -70,8 +70,14 @@ async function main(): Promise<void> {
       const sMatch = dMatch ? null : matchPilotSubject(e.subject);
       const match = dMatch ?? sMatch;
       const via = dMatch ? "domain" : sMatch ? "subject" : "";
-      const tag = match ? `  <-- PILOT (${match.dealExternalId}, via ${via}), bot will join` : "";
-      console.log(`  ${fmt(e.start?.dateTime, e.start?.timeZone)}  |  ${e.subject ?? "(no subject)"}  |  ${domains.join(", ") || "(none)"}${tag}`);
+      const hasLink = Boolean(e.joinUrl);
+      let tag = "";
+      if (match) {
+        tag = hasLink
+          ? `  <-- PILOT (${match.dealExternalId}, via ${via}), bot will join`
+          : `  <-- PILOT (${match.dealExternalId}, via ${via}) but NO TEAMS LINK, won't join`;
+      }
+      console.log(`  ${fmt(e.start?.dateTime, e.start?.timeZone)}  |  ${e.subject ?? "(no subject)"}  |  ${domains.join(", ") || "(none)"}  |  link: ${hasLink ? "yes" : "no"}${tag}`);
     }
   }
   console.log("");

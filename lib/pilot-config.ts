@@ -23,7 +23,11 @@ export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
     { domain: "albawheelsup.com", dealExternalId: "alba" }, // Eduardo (Alba Wheels Up, opp 78273)
     { domain: "martin-brower.com", dealExternalId: "martinbrower" }, // Juan (opp 80566; email domain uses a hyphen)
     { domain: "omniva.com", dealExternalId: "omniva" }, // Juan (opp 80983)
+    { domain: "iffusa.com", dealExternalId: "iff" }, // Eduardo, IFF Inc (opp 80018; domain observed on the real invite)
+    { domain: "dutyfreeamericas.com", dealExternalId: "dutyfreeamericas" }, // Eduardo, Duty Free Americas (opp 81454; confirm)
+    // Norwegian Cruise Line (opp 77742): matched by subject only until Ed confirms the email domain.
     // Aqua Gulf deferred: not in Rolldog yet (awaiting their RFI, atypical ICP).
+    // Seino Logix (opp 80189) excluded: non-US (Japan), outside the US-only pilot scope.
   ]);
 
 /**
@@ -40,6 +44,9 @@ export const PILOT_REP_EMAILS: Readonly<Record<string, string>> = Object.freeze(
   alba: "ebencomo@magaya.com", // Eduardo
   martinbrower: "jlopez@magaya.com", // Juan
   omniva: "jlopez@magaya.com", // Juan
+  iff: "ebencomo@magaya.com", // Eduardo
+  norwegian: "ebencomo@magaya.com", // Eduardo
+  dutyfreeamericas: "ebencomo@magaya.com", // Eduardo
 });
 
 export function repEmailForDeal(dealExternalId: string): string | null {
@@ -61,6 +68,9 @@ export const PILOT_DEAL_ROLLDOG_IDS: Readonly<Record<string, string>> =
     alba: "78273", // Eduardo, Alba Wheels Up
     martinbrower: "80566", // Juan, Martin Brower
     omniva: "80983", // Juan, Omniva
+    iff: "80018", // Eduardo, IFF Inc
+    norwegian: "77742", // Eduardo, Norwegian Cruise Line
+    dutyfreeamericas: "81454", // Eduardo, Duty Free Americas
   });
 
 export function rolldogOppIdForDeal(dealExternalId: string): string | null {
@@ -105,6 +115,9 @@ export const PILOT_DEAL_SUBJECT_KEYWORDS: Readonly<Record<string, string[]>> =
     alba: ["alba wheels", "albawheels"],
     martinbrower: ["martin brower", "martin-brower", "martinbrower"],
     omniva: ["omniva"],
+    iff: ["iff accounting", "iff inc", "iff usa", "iff chb"], // avoid bare "iff" (matches tariff/sniff/etc.)
+    norwegian: ["norwegian cruise", "ncl"],
+    dutyfreeamericas: ["duty free americas", "dutyfreeamericas"],
   });
 
 /**

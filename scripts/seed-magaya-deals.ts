@@ -103,6 +103,42 @@ const DEALS: DealSeed[] = [
     rep_notes: "Juan. Early/mid stage (SQL2). Confirm Rolldog opp id + close date.",
     contacts: [],
   },
+  {
+    external_id: "iff", // Eduardo; Rolldog opp 80018
+    account: "IFF Inc",
+    industry: "Customs brokerage / logistics",
+    arr: 0,
+    stage_key: "SQL3", // from Rolldog: SQL 3 Proposal Validation
+    days_in_stage: 0,
+    rep_forecast_probability: 0.5,
+    rep_forecast_close_date: "2026-08-17", // from Rolldog
+    rep_notes: "Eduardo. Rolldog opp 80018. Domain iffusa.com (observed on invite).",
+    contacts: [],
+  },
+  {
+    external_id: "norwegian", // Eduardo; Rolldog opp 77742
+    account: "Norwegian Cruise Line",
+    industry: "Cruise line / travel",
+    arr: 0,
+    stage_key: "SQL3", // from Rolldog: SQL 3 Proposal Validation
+    days_in_stage: 0,
+    rep_forecast_probability: 0.5,
+    rep_forecast_close_date: "2026-10-22", // from Rolldog
+    rep_notes: "Eduardo. Rolldog opp 77742. Email domain pending confirmation; matched by subject for now.",
+    contacts: [],
+  },
+  {
+    external_id: "dutyfreeamericas", // Eduardo; Rolldog opp 81454
+    account: "Duty Free Americas",
+    industry: "Duty-free retail",
+    arr: 0,
+    stage_key: "SQL0", // from Rolldog: SQL 0 Awaiting Action
+    days_in_stage: 0,
+    rep_forecast_probability: 0.2,
+    rep_forecast_close_date: "2026-11-30", // from Rolldog
+    rep_notes: "Eduardo. Rolldog opp 81454. Domain dutyfreeamericas.com (confirm).",
+    contacts: [],
+  },
 ];
 
 async function main(): Promise<void> {

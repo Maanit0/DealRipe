@@ -33,6 +33,10 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
   "78273", // Alba Wheels Up (Eduardo). Write-back validated via dry-run 2026-07.
   "80566", // Martin Brower (Juan).
   "80983", // Omniva (Juan).
+  "80018", // IFF Inc (Eduardo).
+  "77742", // Norwegian Cruise Line (Eduardo).
+  "81454", // Duty Free Americas (Eduardo).
+  // Seino Logix (80189) excluded: non-US (Japan), outside the US-only pilot scope.
 ]);
 
 /**
