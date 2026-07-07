@@ -139,6 +139,18 @@ const DEALS: DealSeed[] = [
     rep_notes: "Eduardo. Rolldog opp 81454. Domain dutyfreeamericas.com (confirm).",
     contacts: [],
   },
+  {
+    external_id: "seino", // Eduardo; Rolldog opp 80189
+    account: "Seino Logix",
+    industry: "Logistics (Japan)",
+    arr: 0,
+    stage_key: "SQL1", // from Rolldog: SQL - Develop Opportunity (Qualify)
+    days_in_stage: 0,
+    rep_forecast_probability: 0.2,
+    rep_forecast_close_date: "2027-05-26", // from Rolldog
+    rep_notes: "Eduardo. Rolldog opp 80189. Japan (approved to include). Domain seino.co.jp (confirm).",
+    contacts: [],
+  },
 ];
 
 async function main(): Promise<void> {

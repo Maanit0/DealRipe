@@ -26,8 +26,8 @@ export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
     { domain: "iffusa.com", dealExternalId: "iff" }, // Eduardo, IFF Inc (opp 80018; domain observed on the real invite)
     { domain: "dutyfreeamericas.com", dealExternalId: "dutyfreeamericas" }, // Eduardo, Duty Free Americas (opp 81454; confirm)
     // Norwegian Cruise Line (opp 77742): matched by subject only until Ed confirms the email domain.
+    { domain: "seino.co.jp", dealExternalId: "seino" }, // Eduardo (Seino Logix, opp 80189; Japan, approved to include) — domain to confirm
     // Aqua Gulf deferred: not in Rolldog yet (awaiting their RFI, atypical ICP).
-    // Seino Logix (opp 80189) excluded: non-US (Japan), outside the US-only pilot scope.
   ]);
 
 /**
@@ -47,6 +47,7 @@ export const PILOT_REP_EMAILS: Readonly<Record<string, string>> = Object.freeze(
   iff: "ebencomo@magaya.com", // Eduardo
   norwegian: "ebencomo@magaya.com", // Eduardo
   dutyfreeamericas: "ebencomo@magaya.com", // Eduardo
+  seino: "ebencomo@magaya.com", // Eduardo
 });
 
 export function repEmailForDeal(dealExternalId: string): string | null {
@@ -71,6 +72,7 @@ export const PILOT_DEAL_ROLLDOG_IDS: Readonly<Record<string, string>> =
     iff: "80018", // Eduardo, IFF Inc
     norwegian: "77742", // Eduardo, Norwegian Cruise Line
     dutyfreeamericas: "81454", // Eduardo, Duty Free Americas
+    seino: "80189", // Eduardo, Seino Logix (Japan)
   });
 
 export function rolldogOppIdForDeal(dealExternalId: string): string | null {
@@ -118,6 +120,7 @@ export const PILOT_DEAL_SUBJECT_KEYWORDS: Readonly<Record<string, string[]>> =
     iff: ["iff accounting", "iff inc", "iff usa", "iff chb"], // avoid bare "iff" (matches tariff/sniff/etc.)
     norwegian: ["norwegian cruise", "ncl"],
     dutyfreeamericas: ["duty free americas", "dutyfreeamericas"],
+    seino: ["seino"],
   });
 
 /**
