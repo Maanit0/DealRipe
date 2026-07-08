@@ -45,6 +45,9 @@ export type CalendarSyncCounts = {
   cancelled: number;
   skippedNoDeal: number;
   connectionsSkipped: number;
+  // Future rows pruned because their meeting vanished from the calendar
+  // (rescheduled-and-recreated, or hard-deleted; never formally cancelled).
+  reconciledVanished: number;
 };
 
 export type CalendarSyncDecision =
@@ -83,6 +86,12 @@ export type CalendarSyncDecision =
     }
   | { kind: "no-change"; eventId: string; subject: string | null }
   | {
+      kind: "vanished";
+      eventId: string;
+      callId: string;
+      oldBotId: string | null;
+    }
+  | {
       kind: "error";
       eventId: string;
       subject: string | null;
@@ -105,6 +114,7 @@ export async function runCalendarSync(
     cancelled: 0,
     skippedNoDeal: 0,
     connectionsSkipped: 0,
+    reconciledVanished: 0,
   };
   const emit = opts.onDecision ?? (() => {});
 
@@ -124,6 +134,10 @@ export async function runCalendarSync(
     return counts;
   }
 
+  // Every event id we observe across all calendars this run. Used after the
+  // loop to detect rows whose meeting has vanished (see reconcile step).
+  const seenEventIds = new Set<string>();
+
   for (const conn of connections.data) {
     // One bad calendar (no mailbox, revoked token, on-prem Exchange) must not
     // abort the whole run. Skip it, log which account, and continue.
@@ -141,6 +155,7 @@ export async function runCalendarSync(
     }
     for (const ev of events) {
       counts.eventsSeen += 1;
+      seenEventIds.add(ev.eventId);
       try {
         await processEvent(ev, tenantId, counts, emit);
       } catch (err) {
@@ -155,7 +170,90 @@ export async function runCalendarSync(
     }
   }
 
+  // Reconcile vanished meetings. Only safe when EVERY calendar was read: a
+  // skipped connection means a meeting could live on a calendar we didn't see,
+  // so we must not prune on that basis.
+  if (counts.connectionsSkipped === 0) {
+    await reconcileVanishedMeetings(tenantId, seenEventIds, counts, emit);
+  }
+
   return counts;
+}
+
+// ====================================================================
+// Reconcile vanished meetings
+// ====================================================================
+
+// Only reconcile rows comfortably inside the window we actually read, so a
+// meeting sitting right at the 7-day edge (which listUpcomingMeetings may or
+// may not return) is never mistaken for vanished. One day of slack.
+const RECONCILE_WINDOW_DAYS = SYNC_WINDOW_DAYS - 1;
+
+/**
+ * Prune future pilot calls rows whose event id was NOT observed on any calendar
+ * this run. These are meetings that disappeared without a formal cancellation
+ * (rescheduled-and-recreated with a new id, or hard-deleted), which otherwise
+ * leave an orphan row that shows as a phantom upcoming call and masks the real
+ * one. Scoped to rows inside the read window; the caller guarantees all
+ * calendars were read.
+ */
+async function reconcileVanishedMeetings(
+  tenantId: string,
+  seenEventIds: Set<string>,
+  counts: CalendarSyncCounts,
+  emit: (d: CalendarSyncDecision) => void,
+): Promise<void> {
+  const db = supabaseAdmin();
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const windowEndStr = new Date(now.getTime() + RECONCILE_WINDOW_DAYS * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  // Future rows the read window should have covered.
+  const rows = await db
+    .from("calls")
+    .select("id, external_id, recall_bot_id, call_date")
+    .eq("tenant_id", tenantId)
+    .gte("call_date", todayStr)
+    .lte("call_date", windowEndStr);
+  if (rows.error) {
+    console.error(`[calendar-sync] reconcile read failed: ${rows.error.message}`);
+    return;
+  }
+
+  for (const row of rows.data ?? []) {
+    if (!row.external_id || seenEventIds.has(row.external_id)) continue;
+
+    // The meeting for this row was not on any calendar this run: it vanished.
+    if (row.recall_bot_id) {
+      try {
+        await deleteBot(row.recall_bot_id);
+      } catch (err) {
+        // Best-effort: prune the row anyway so the phantom clears; a stray bot
+        // will simply join nothing.
+        console.error(
+          `[calendar-sync] reconcile: deleteBot ${row.recall_bot_id} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    const del = await db.from("calls").delete().eq("id", row.id);
+    if (del.error) {
+      console.error(
+        `[calendar-sync] reconcile: delete call ${row.id} failed: ${del.error.message}`,
+      );
+      continue;
+    }
+    counts.reconciledVanished += 1;
+    emit({
+      kind: "vanished",
+      eventId: row.external_id,
+      callId: row.id,
+      oldBotId: row.recall_bot_id ?? null,
+    });
+  }
 }
 
 // ====================================================================

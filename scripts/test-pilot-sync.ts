@@ -192,13 +192,16 @@ async function runCalendar(): Promise<void> {
 }
 
 function printCalendarDecision(d: CalendarSyncDecision): void {
-  const subj = d.subject ? `"${d.subject}"` : "(no subject)";
+  const subj = "subject" in d && d.subject ? `"${d.subject}"` : "(no subject)";
   const head = `[${d.kind}] ${d.eventId} ${subj}`;
   switch (d.kind) {
     case "no-join-url":
     case "no-attendees":
     case "no-change":
       console.log(head);
+      return;
+    case "vanished":
+      console.log(`${head}  callId=${d.callId} oldBot=${d.oldBotId ?? "(none)"} (pruned)`);
       return;
     case "no-pilot-match":
       console.log(`${head}  attendees: ${d.attendeeEmails.join(", ")}`);
