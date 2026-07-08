@@ -27,6 +27,8 @@ export const PILOT_CUSTOMER_DOMAINS: ReadonlyArray<PilotDomainEntry> =
     { domain: "dutyfreeamericas.com", dealExternalId: "dutyfreeamericas" }, // Eduardo, Duty Free Americas (opp 81454; confirm)
     // Norwegian Cruise Line (opp 77742): matched by subject only until Ed confirms the email domain.
     { domain: "seino.co.jp", dealExternalId: "seino" }, // Eduardo (Seino Logix, opp 80189; Japan, approved to include) — domain to confirm
+    { domain: "capitoenterprises.com", dealExternalId: "capito" }, // Juan (Capito Enterprises, opp 81531)
+    { domain: "cltair.com", dealExternalId: "cltair" }, // Juan (CLT AIR, opp 81473)
     // Aqua Gulf deferred: not in Rolldog yet (awaiting their RFI, atypical ICP).
   ]);
 
@@ -48,6 +50,8 @@ export const PILOT_REP_EMAILS: Readonly<Record<string, string>> = Object.freeze(
   norwegian: "ebencomo@magaya.com", // Eduardo
   dutyfreeamericas: "ebencomo@magaya.com", // Eduardo
   seino: "ebencomo@magaya.com", // Eduardo
+  capito: "jlopez@magaya.com", // Juan
+  cltair: "jlopez@magaya.com", // Juan
 });
 
 export function repEmailForDeal(dealExternalId: string): string | null {
@@ -73,6 +77,8 @@ export const PILOT_DEAL_ROLLDOG_IDS: Readonly<Record<string, string>> =
     norwegian: "77742", // Eduardo, Norwegian Cruise Line
     dutyfreeamericas: "81454", // Eduardo, Duty Free Americas
     seino: "80189", // Eduardo, Seino Logix (Japan)
+    capito: "81531", // Juan, Capito Enterprises
+    cltair: "81473", // Juan, CLT AIR
   });
 
 export function rolldogOppIdForDeal(dealExternalId: string): string | null {
@@ -121,6 +127,8 @@ export const PILOT_DEAL_SUBJECT_KEYWORDS: Readonly<Record<string, string[]>> =
     norwegian: ["norwegian cruise", "ncl"],
     dutyfreeamericas: ["duty free americas", "dutyfreeamericas"],
     seino: ["seino"],
+    capito: ["capito"],
+    cltair: ["clt air", "cltair"],
   });
 
 /**

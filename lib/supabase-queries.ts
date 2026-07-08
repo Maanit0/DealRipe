@@ -282,13 +282,59 @@ export async function getDealForTenant(
 // ====================================================================
 
 export type UpcomingCall = {
-  /** Meeting start, ISO (UTC). */
+  /** Meeting start, ISO (UTC). When approximate, this is call_date at noon UTC. */
   scheduledStart: string;
   /** When the pre-call briefing was sent, or null if not yet. */
   briefingSentAt: string | null;
+  /**
+   * True when we only know the meeting's date (scheduled_start was null), so
+   * the start is derived from call_date. Guarantees a dated call is never
+   * silently hidden just because a precise time was missing.
+   */
+  approximate: boolean;
 };
 
-/** The soonest future scheduled call for a single deal, or null. */
+type CallTimeRow = {
+  scheduled_start: string | null;
+  call_date: string | null;
+  briefing_sent_at: string | null;
+};
+
+/**
+ * Turn a calls row into an UpcomingCall. Prefers the precise scheduled_start;
+ * falls back to call_date (noon UTC, so the date is stable across US zones)
+ * and flags the result approximate. Returns null if neither is present.
+ */
+function toUpcomingCall(r: CallTimeRow): UpcomingCall | null {
+  if (r.scheduled_start) {
+    return {
+      scheduledStart: r.scheduled_start,
+      briefingSentAt: r.briefing_sent_at ?? null,
+      approximate: false,
+    };
+  }
+  if (r.call_date) {
+    return {
+      scheduledStart: `${r.call_date}T12:00:00.000Z`,
+      briefingSentAt: r.briefing_sent_at ?? null,
+      approximate: true,
+    };
+  }
+  return null;
+}
+
+/**
+ * The `or` clause that matches upcoming calls whether or not they have a
+ * precise start: a future scheduled_start, OR a null scheduled_start whose
+ * call_date is today or later. The second arm is the null-safety guardrail.
+ */
+function upcomingOrFilter(): string {
+  const now = new Date().toISOString();
+  const today = now.slice(0, 10);
+  return `scheduled_start.gte.${now},and(scheduled_start.is.null,call_date.gte.${today})`;
+}
+
+/** The soonest upcoming call for a single deal, or null. */
 export async function getUpcomingCallForDeal(
   tenantId: string,
   dealId: string,
@@ -296,43 +342,35 @@ export async function getUpcomingCallForDeal(
   const db = supabaseAdmin();
   const res = await db
     .from("calls")
-    .select("scheduled_start, briefing_sent_at")
+    .select("scheduled_start, call_date, briefing_sent_at")
     .eq("tenant_id", tenantId)
     .eq("deal_id", dealId)
-    .not("scheduled_start", "is", null)
-    .gte("scheduled_start", new Date().toISOString())
-    .order("scheduled_start", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (res.error || !res.data || !res.data.scheduled_start) return null;
-  return {
-    scheduledStart: res.data.scheduled_start,
-    briefingSentAt: res.data.briefing_sent_at ?? null,
-  };
+    .or(upcomingOrFilter());
+  if (res.error || !res.data) return null;
+  const cands = res.data
+    .map(toUpcomingCall)
+    .filter((c): c is UpcomingCall => c !== null)
+    .sort((a, b) => (a.scheduledStart < b.scheduledStart ? -1 : 1));
+  return cands[0] ?? null;
 }
 
-/** Soonest future scheduled call per deal for a tenant, keyed by deal id. */
+/** Soonest upcoming call per deal for a tenant, keyed by deal id. */
 export async function getUpcomingCallsForTenant(
   tenantId: string,
 ): Promise<Record<string, UpcomingCall>> {
   const db = supabaseAdmin();
   const res = await db
     .from("calls")
-    .select("deal_id, scheduled_start, briefing_sent_at")
+    .select("deal_id, scheduled_start, call_date, briefing_sent_at")
     .eq("tenant_id", tenantId)
-    .not("scheduled_start", "is", null)
-    .gte("scheduled_start", new Date().toISOString())
-    .order("scheduled_start", { ascending: true });
+    .or(upcomingOrFilter());
   if (res.error || !res.data) return {};
   const out: Record<string, UpcomingCall> = {};
   for (const r of res.data) {
-    if (!r.scheduled_start) continue;
-    if (!out[r.deal_id]) {
-      out[r.deal_id] = {
-        scheduledStart: r.scheduled_start,
-        briefingSentAt: r.briefing_sent_at ?? null,
-      };
-    }
+    const u = toUpcomingCall(r);
+    if (!u) continue;
+    const cur = out[r.deal_id];
+    if (!cur || u.scheduledStart < cur.scheduledStart) out[r.deal_id] = u;
   }
   return out;
 }
@@ -346,6 +384,25 @@ export function describeUpcomingCall(u: UpcomingCall): {
   briefing: string;
 } {
   const start = new Date(u.scheduledStart);
+  const sentLabel = (iso: string) =>
+    new Date(iso).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" });
+
+  // Approximate: we only know the date, so show the date without a time and
+  // avoid promising a precise briefing-send moment.
+  if (u.approximate) {
+    const when = start.toLocaleString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    return {
+      when,
+      briefing: u.briefingSentAt
+        ? `Briefing sent ${sentLabel(u.briefingSentAt)}`
+        : "Briefing sends before the call",
+    };
+  }
+
   const when = start.toLocaleString("en-US", {
     weekday: "short",
     month: "short",
@@ -354,11 +411,7 @@ export function describeUpcomingCall(u: UpcomingCall): {
     minute: "2-digit",
   });
   if (u.briefingSentAt) {
-    const sent = new Date(u.briefingSentAt).toLocaleString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    return { when, briefing: `Briefing sent ${sent}` };
+    return { when, briefing: `Briefing sent ${sentLabel(u.briefingSentAt)}` };
   }
   const sendAt = new Date(start.getTime() - 30 * 60 * 1000).toLocaleString("en-US", {
     hour: "numeric",

@@ -16,6 +16,7 @@ import {
   daysSince,
   getRolldogSummary,
   repLastActivityIso,
+  stageKeyFromSummary,
   type RolldogSummary,
 } from "@/lib/rolldog-summary";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -69,6 +70,11 @@ async function loadMagayaPipeline() {
       for (const d of deals) {
         const s = summaries[d.id];
         if (s?.dealSize != null) d.arr = s.dealSize;
+        // Stage live from Rolldog (matches the deal page), so a deal's stage
+        // and its days-in-stage come from the same source and the seed
+        // placeholder never shows.
+        const sk = stageKeyFromSummary(s ?? null);
+        if (sk) d.stageKey = sk;
         // Days in stage, live from Rolldog's stage-entry date (stage is
         // rep-owned; DealRipe never writes it, so this stays a clean signal
         // and it feeds the at-risk / stalled health logic below).

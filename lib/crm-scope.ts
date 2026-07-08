@@ -36,7 +36,9 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
   "80018", // IFF Inc (Eduardo).
   "77742", // Norwegian Cruise Line (Eduardo).
   "81454", // Duty Free Americas (Eduardo).
-  // Seino Logix (80189) excluded: non-US (Japan), outside the US-only pilot scope.
+  "80189", // Seino Logix (Eduardo). Japan; approved to include (Maanit, 2026-07).
+  "81531", // Capito Enterprises (Juan). Added 2026-07 at Juan's request.
+  "81473", // CLT AIR (Juan). Added 2026-07 at Juan's request.
 ]);
 
 /**

@@ -151,6 +151,30 @@ const DEALS: DealSeed[] = [
     rep_notes: "Eduardo. Rolldog opp 80189. Japan (approved to include). Domain seino.co.jp (confirm).",
     contacts: [],
   },
+  {
+    external_id: "capito", // Juan; Rolldog opp 81531
+    account: "Capito Enterprises",
+    industry: "Logistics / freight",
+    arr: 0, // refreshes from Rolldog once read sync is live
+    stage_key: "SQL1", // placeholder; refresh from Rolldog
+    days_in_stage: 0,
+    rep_forecast_probability: 0.2,
+    rep_forecast_close_date: "2026-12-31", // placeholder; refresh from Rolldog
+    rep_notes: "Juan. Rolldog opp 81531. Domain capitoenterprises.com (rosette@capitoenterprises.com). Added 2026-07 at Juan's request. No call scheduled yet.",
+    contacts: [],
+  },
+  {
+    external_id: "cltair", // Juan; Rolldog opp 81473
+    account: "CLT AIR",
+    industry: "Air freight / logistics",
+    arr: 0, // refreshes from Rolldog once read sync is live
+    stage_key: "SQL1", // placeholder; refresh from Rolldog
+    days_in_stage: 0,
+    rep_forecast_probability: 0.2,
+    rep_forecast_close_date: "2026-12-31", // placeholder; refresh from Rolldog
+    rep_notes: "Juan. Rolldog opp 81473. Domain cltair.com (marc.cartafalsa@cltair.com). Added 2026-07 at Juan's request.",
+    contacts: [],
+  },
 ];
 
 async function main(): Promise<void> {
