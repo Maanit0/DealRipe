@@ -6,6 +6,7 @@ import { DealHeaderCard } from "./DealHeaderCard";
 import { useDemoState } from "./DemoStateProvider";
 import { GongCallsCard } from "./GongCallsCard";
 import { OpportunityControlSheet } from "./OpportunityControlSheet";
+import { SimilarDealsCard } from "./SimilarDealsCard";
 import type { Stage } from "@/lib/scotsman";
 import type { CallRecord, Deal } from "@/lib/seed-data";
 
@@ -55,6 +56,7 @@ export function DealView({ deal, stage }: Props) {
           </Link>
         </div>
       </div>
+      <SimilarDealsCard dealId={deal.id} account={deal.account} />
     </div>
   );
 }

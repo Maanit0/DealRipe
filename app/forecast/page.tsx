@@ -84,6 +84,12 @@ function TopBar({ tenant }: { tenant: ForecastTenant }) {
               Pipeline
             </Link>
             <Link
+              href="/forecast/engine"
+              className="text-[12px] font-semibold text-muted hover:text-ink transition"
+            >
+              How it learns
+            </Link>
+            <Link
               href="/onboarding"
               className="text-[12px] font-semibold text-muted hover:text-ink transition"
             >
