@@ -78,6 +78,13 @@ export function MagayaPipeline({
   const atRisk = rows.filter((r) => r.health === "at_risk").length;
   const stalled = rows.filter((r) => r.health === "stalled").length;
 
+  // Only surface digest entries for deals DealRipe has actually captured
+  // evidence on (at least one confirmed gate). Before the first calls land,
+  // every deal would otherwise show identical "nothing known" flags, which
+  // reads as noise rather than insight.
+  const signalDigest = digest.filter((e) => e.forecast.confirmed > 0);
+  const topSignal = signalDigest[0];
+
   return (
     <div className="min-h-screen bg-bg">
       <main className="max-w-[1200px] mx-auto px-6 py-7">
@@ -87,12 +94,6 @@ export function MagayaPipeline({
             {rows.length} deal{rows.length === 1 ? "" : "s"} · {atRisk} at risk · {stalled} stalled
           </div>
         </div>
-
-        {digest.length > 0 && (
-          <div className="mb-5">
-            <MagayaDigest entries={digest} />
-          </div>
-        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-5 bg-white rounded-xl2 shadow-card border border-line p-6">
           <Metric label="Fields auto-logged" value={String(fieldsLogged)} cls="text-ink font-bold" sub="reps didn't enter these" />
@@ -225,6 +226,29 @@ export function MagayaPipeline({
             </table>
           </div>
         )}
+
+        {/* "What needs your attention" demoted to a collapsed panel, and gated
+            to deals with real captured signal so it stays quiet until calls land. */}
+        <details className="mt-5">
+          <summary className="cursor-pointer select-none list-none flex items-baseline justify-between gap-4 bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+            <span className="text-[15px] font-semibold text-ink">What needs your attention</span>
+            <span className="text-[12px] text-muted">
+              {signalDigest.length > 0
+                ? `${signalDigest.length} deal${signalDigest.length === 1 ? "" : "s"} flagged${topSignal ? ` · start with ${topSignal.account}` : ""} ›`
+                : "Nothing captured yet ›"}
+            </span>
+          </summary>
+          <div className="mt-3">
+            {signalDigest.length > 0 ? (
+              <MagayaDigest entries={signalDigest} hideHeader />
+            ) : (
+              <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[12px] text-muted">
+                Insights appear here after DealRipe captures its first calls, from Thursday&rsquo;s
+                meetings onward. Nothing to flag yet.
+              </div>
+            )}
+          </div>
+        </details>
       </main>
     </div>
   );

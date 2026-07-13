@@ -15,20 +15,28 @@ const STAGE_LABELS: Record<string, string> = {
  * one deal to start on, then per deal: what changed, the live risks, and the
  * single coaching question to take into the rep conversation.
  */
-export function MagayaDigest({ entries }: { entries: DigestEntry[] }) {
+export function MagayaDigest({
+  entries,
+  hideHeader = false,
+}: {
+  entries: DigestEntry[];
+  hideHeader?: boolean;
+}) {
   if (entries.length === 0) return null;
   const top = entries[0];
 
   return (
     <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
-      <div className="px-5 py-4 border-b border-line">
-        <h2 className="text-[15px] font-semibold text-ink">What needs your attention</h2>
-        <p className="text-[12px] text-muted mt-0.5">
-          {top.attention > 0
-            ? `Start with ${top.account}. ${top.coaching}`
-            : "All pilot deals are on track this week."}
-        </p>
-      </div>
+      {!hideHeader && (
+        <div className="px-5 py-4 border-b border-line">
+          <h2 className="text-[15px] font-semibold text-ink">What needs your attention</h2>
+          <p className="text-[12px] text-muted mt-0.5">
+            {top.attention > 0
+              ? `Start with ${top.account}. ${top.coaching}`
+              : "All pilot deals are on track this week."}
+          </p>
+        </div>
+      )}
       <div className="divide-y divide-line">
         {entries.map((e) => (
           <div key={e.dealId} className="px-5 py-4">

@@ -20,7 +20,16 @@ import { decodeAccessTokenClaims } from "@/lib/jwt-claims";
  * data starts loading into those routes.
  */
 
-const BASIC_AUTH_PATHS = [/^\/forecast(\/|$)/, /^\/demo(\/|$)/];
+const BASIC_AUTH_PATHS = [
+  /^\/forecast(\/|$)/,
+  /^\/demo(\/|$)/,
+  // Pilot board: the live Magaya pipeline + deal pages carry NDA'd customer
+  // data, so gate them behind the shared pilot password until per-user
+  // magic-link login is turned on for these routes. Mark reaches the board at
+  // /pipeline?tenant=magaya with the DEMO_ACCESS_USER / DEMO_ACCESS_PASSWORD.
+  /^\/pipeline(\/|$)/,
+  /^\/deals(\/|$)/,
+];
 
 const SUPABASE_AUTH_GATE = [
   /^\/operator(\/|$)/,

@@ -11,6 +11,7 @@ import {
   type DealRipeAssessment,
 } from "@/lib/seed-data";
 import { rolldogOppIdForDeal } from "@/lib/pilot-config";
+import { prewarmRolldogToken } from "@/lib/rolldog";
 import { getCrmBaseline } from "@/lib/crm-baseline";
 import {
   daysSince,
@@ -52,16 +53,24 @@ async function loadMagayaPipeline() {
         .from("deals")
         .select("id, external_id, dealripe_last_writeback_at")
         .eq("tenant_id", tenantId);
+      // Warm the Rolldog token once so the parallel reads below share it,
+      // instead of racing to fetch a token at the same instant on a cold load
+      // (which gets throttled and leaves deals blank). Best-effort.
+      await prewarmRolldogToken().catch(() => {});
       await Promise.all(
         (idRows.data ?? []).map(async (r) => {
           const opp = r.external_id ? rolldogOppIdForDeal(r.external_id) : null;
           if (!opp) return;
-          const s = await getRolldogSummary(opp);
-          if (!s) return;
-          summaries[r.id] = s;
-          const baseline = await getCrmBaseline(r.id).catch(() => null);
+          const [live, baseline] = await Promise.all([
+            getRolldogSummary(opp),
+            getCrmBaseline(r.id).catch(() => null),
+          ]);
+          // Live read preferred; fall back to the frozen day-0 baseline so a
+          // throttled read shows the CRM's captured value, not a blank "—".
+          const s = live ?? baseline?.summary ?? null;
+          if (s) summaries[r.id] = s;
           repActivity[r.id] = repLastActivityIso({
-            liveUpdatedAt: s.updatedAt,
+            liveUpdatedAt: s?.updatedAt ?? null,
             dealripeLastWriteback: r.dealripe_last_writeback_at,
             baselineUpdatedAt: baseline?.summary.updatedAt ?? null,
           });

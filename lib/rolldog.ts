@@ -74,6 +74,18 @@ export async function readOpportunity(
 }
 
 /**
+ * Populate the in-memory token cache once, before a burst of parallel reads.
+ * Without this, N reads fired at the same instant on a cold process each fetch
+ * a token concurrently; the OAuth endpoint throttles the herd and most reads
+ * fail. Warming first means the burst shares one cached token. Best-effort:
+ * callers should catch, since a missing credential legitimately throws.
+ */
+export async function prewarmRolldogToken(): Promise<void> {
+  const config = readRolldogConfig();
+  await getAccessToken(config, false);
+}
+
+/**
  * Write to a Rolldog opportunity at the opportunity-scalar level
  * (i.e. attributes that live directly on /opportunities/{id}, not on
  * a sub-resource). `updates` keys are snake_case LOGICAL field names
