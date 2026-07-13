@@ -574,6 +574,45 @@ export type Database = {
         };
         Relationships: [];
       };
+      deal_cro_read: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          forecast_category: string | null;
+          win_probability: number | null;
+          expected_close: string | null;
+          economic_buyer_engaged: string | null;
+          biggest_unknown: string | null;
+          notes: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          forecast_category?: string | null;
+          win_probability?: number | null;
+          expected_close?: string | null;
+          economic_buyer_engaged?: string | null;
+          biggest_unknown?: string | null;
+          notes?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          forecast_category?: string | null;
+          win_probability?: number | null;
+          expected_close?: string | null;
+          economic_buyer_engaged?: string | null;
+          biggest_unknown?: string | null;
+          notes?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       deal_crm_baseline: {
         Row: {
           id: string;

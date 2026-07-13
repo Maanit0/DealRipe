@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DealView } from "@/components/DealView";
 import { MagayaDealView } from "@/components/MagayaDealView";
+import { getCroRead, type CroRead } from "@/lib/cro-read";
 import { getFrameworkForDeal } from "@/lib/framework";
 import { rolldogOppIdForDeal } from "@/lib/pilot-config";
 import {
@@ -56,7 +57,8 @@ async function loadLiveMagayaDeal(id: string) {
     }
 
     const upcomingCall = await getUpcomingCallForDeal(tenantId, deal.id);
-    return { deal, framework, upcomingCall, rolldogSummary };
+    const croRead: CroRead | null = await getCroRead(deal.id).catch(() => null);
+    return { deal, framework, upcomingCall, rolldogSummary, croRead };
   } catch (err) {
     console.error("[magaya deal] load failed:", err);
     return null; // Supabase not configured / magaya tenant absent -> demo path
@@ -74,6 +76,7 @@ export default async function DealPage({ params }: { params: { id: string } }) {
         framework={live.framework}
         upcomingCall={live.upcomingCall}
         rolldogSummary={live.rolldogSummary}
+        croRead={live.croRead}
       />
     );
   } else {

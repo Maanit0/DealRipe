@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { ContactsCard } from "./ContactsCard";
+import { CroReadCard } from "./CroReadCard";
 import { TeamsCallsCard } from "./TeamsCallsCard";
 import { MagayaOpportunityControl } from "./MagayaOpportunityControl";
+import type { CroRead } from "@/lib/cro-read";
 import type { Framework } from "@/lib/framework";
 import { frameworkProgress } from "@/lib/framework-stages";
 import type { Deal } from "@/lib/seed-data";
@@ -22,11 +24,13 @@ export function MagayaDealView({
   framework,
   upcomingCall,
   rolldogSummary,
+  croRead,
 }: {
   deal: Deal;
   framework: Framework;
   upcomingCall?: UpcomingCall | null;
   rolldogSummary?: RolldogSummary | null;
+  croRead?: CroRead | null;
 }) {
   const upcoming = upcomingCall ? describeUpcomingCall(upcomingCall) : null;
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
@@ -87,6 +91,8 @@ export function MagayaDealView({
           </div>
         </div>
       </div>
+
+      <CroReadCard dealId={deal.id} initial={croRead ?? null} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-5 items-start">
         <MagayaOpportunityControl
