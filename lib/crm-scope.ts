@@ -13,7 +13,15 @@
  *
  * Audit reviewer: read top to bottom. The asserts at the bottom are the
  * only callable API; everything above them is data.
+ *
+ * One dynamic exception exists for write-back on auto-linked deals: see
+ * runWithAuthorizedOpportunities below. It authorizes exactly one opportunity,
+ * only for the duration of one write call, only when a deal was safely matched
+ * to it (website or exact-unique-name). Outside that wrapper the store is empty
+ * and only the static PILOT_OPPORTUNITY_IDS apply, so the default is fail-closed.
  */
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // ---------------------------------------------------------------------
 // Allowlist: which opportunities the system may touch at all.
@@ -403,6 +411,32 @@ export function assertScopedWrite(
 }
 
 // ---------------------------------------------------------------------
+// Per-deal write authorization (auto-linked deals)
+// ---------------------------------------------------------------------
+//
+// Auto-created deals (calendar auto-join) are matched to a Rolldog opportunity
+// by the website / exact-unique-name matcher, and that match is stored on the
+// deal. When write-back runs for such a deal, rolldog-writeback wraps the write
+// in runWithAuthorizedOpportunities([oppId]). That authorizes ONLY that opp,
+// ONLY inside that async call, via an AsyncLocalStorage context (per-request,
+// concurrency-safe, no global mutable state). The static PILOT_OPPORTUNITY_IDS
+// remain the authority for the hand-seeded pilot deals.
+
+const authorizedOppsStore = new AsyncLocalStorage<ReadonlySet<string>>();
+
+/**
+ * Run `fn` with `opportunityIds` temporarily authorized for Rolldog writes.
+ * Used only by rolldog-writeback, and only for a deal's own confirmed/high
+ * opportunity match. Fail-closed: nothing is authorized outside this wrapper.
+ */
+export function runWithAuthorizedOpportunities<T>(
+  opportunityIds: readonly string[],
+  fn: () => T,
+): T {
+  return authorizedOppsStore.run(new Set(opportunityIds), fn);
+}
+
+// ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
 
@@ -416,11 +450,16 @@ function computeViolation(
   operation: "read" | "write",
 ): Violation | null {
   const allowedIds = effectivePilotIds(system);
+  // Per-deal write authorization for auto-linked deals (Rolldog only), active
+  // only inside a runWithAuthorizedOpportunities wrapper. Salesforce is never
+  // extended this way.
+  const runtimeAllowed =
+    system === "rolldog" ? authorizedOppsStore.getStore() : undefined;
   const idListName =
     system === "salesforce"
       ? "SALESFORCE_PILOT_OPPORTUNITY_IDS"
       : "PILOT_OPPORTUNITY_IDS";
-  if (!allowedIds.includes(opportunityId)) {
+  if (!allowedIds.includes(opportunityId) && !runtimeAllowed?.has(opportunityId)) {
     return {
       reason:
         `opportunity_id '${opportunityId}' is not in ${idListName} ` +

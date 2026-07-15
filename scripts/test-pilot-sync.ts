@@ -203,6 +203,9 @@ function printCalendarDecision(d: CalendarSyncDecision): void {
     case "vanished":
       console.log(`${head}  callId=${d.callId} oldBot=${d.oldBotId ?? "(none)"} (pruned)`);
       return;
+    case "auto-deal":
+      console.log(`${head}  auto-created deal '${d.dealExternalId}' (${d.domain})`);
+      return;
     case "no-pilot-match":
       console.log(`${head}  attendees: ${d.attendeeEmails.join(", ")}`);
       return;

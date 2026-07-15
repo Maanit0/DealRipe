@@ -28,7 +28,11 @@
  */
 
 import type { Json } from "./database.types";
-import { matchPilotDomain, matchPilotSubject } from "./pilot-config";
+import {
+  accountFromDomain,
+  isAutoJoinRep,
+  resolveMeetingDeal,
+} from "./pilot-config";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import { createBot, deleteBot } from "./recall";
 import { supabaseAdmin } from "./supabase";
@@ -48,6 +52,8 @@ export type CalendarSyncCounts = {
   // Future rows pruned because their meeting vanished from the calendar
   // (rescheduled-and-recreated, or hard-deleted; never formally cancelled).
   reconciledVanished: number;
+  // New deals auto-created from an auto-join rep's external customer calls.
+  autoCreated: number;
 };
 
 export type CalendarSyncDecision =
@@ -86,6 +92,13 @@ export type CalendarSyncDecision =
     }
   | { kind: "no-change"; eventId: string; subject: string | null }
   | {
+      kind: "auto-deal";
+      eventId: string;
+      subject: string | null;
+      dealExternalId: string;
+      domain: string;
+    }
+  | {
       kind: "vanished";
       eventId: string;
       callId: string;
@@ -115,6 +128,7 @@ export async function runCalendarSync(
     skippedNoDeal: 0,
     connectionsSkipped: 0,
     reconciledVanished: 0,
+    autoCreated: 0,
   };
   const emit = opts.onDecision ?? (() => {});
 
@@ -153,11 +167,13 @@ export async function runCalendarSync(
       );
       continue;
     }
+    const repEmail = conn.user_principal_name ?? null;
+    const autoJoin = isAutoJoinRep(repEmail);
     for (const ev of events) {
       counts.eventsSeen += 1;
       seenEventIds.add(ev.eventId);
       try {
-        await processEvent(ev, tenantId, counts, emit);
+        await processEvent(ev, tenantId, counts, emit, { repEmail, autoJoin });
       } catch (err) {
         emit({
           kind: "error",
@@ -265,6 +281,7 @@ async function processEvent(
   tenantId: string,
   counts: CalendarSyncCounts,
   emit: (d: CalendarSyncDecision) => void,
+  opts: { repEmail: string | null; autoJoin: boolean },
 ): Promise<void> {
   if (!ev.joinUrl) {
     emit({ kind: "no-join-url", eventId: ev.eventId, subject: ev.subject });
@@ -275,11 +292,12 @@ async function processEvent(
     .map((a) => a.email)
     .filter((e): e is string => typeof e === "string" && e.length > 0);
 
-  // Match by customer domain first; fall back to the deal name in the subject
-  // so we still catch pilot calls where the customer is not an invited guest.
-  const match =
-    matchPilotDomain(attendeeEmails) ?? matchPilotSubject(ev.subject);
-  if (!match) {
+  // Resolve which deal this meeting belongs to: a hand-seeded pilot deal, or,
+  // for an auto-join rep with an external customer on the invite, an auto deal
+  // created on the fly. Write-back stays gated (an auto deal has no mapped opp),
+  // so it records + briefs + recaps but never writes to Rolldog until mapped.
+  const resolved = resolveMeetingDeal(attendeeEmails, ev.subject, opts.autoJoin);
+  if (!resolved) {
     emit({
       kind: "no-pilot-match",
       eventId: ev.eventId,
@@ -287,6 +305,20 @@ async function processEvent(
       attendeeEmails,
     });
     return;
+  }
+  const dealExternalId = resolved.dealExternalId;
+  if (resolved.isAuto && resolved.domain) {
+    const r = await ensureAutoDeal(tenantId, dealExternalId, resolved.domain, opts.repEmail);
+    if (r.created) {
+      counts.autoCreated += 1;
+      emit({
+        kind: "auto-deal",
+        eventId: ev.eventId,
+        subject: ev.subject,
+        dealExternalId,
+        domain: resolved.domain,
+      });
+    }
   }
 
   counts.matched += 1;
@@ -296,7 +328,7 @@ async function processEvent(
     .from("deals")
     .select("id")
     .eq("tenant_id", tenantId)
-    .eq("external_id", match.dealExternalId)
+    .eq("external_id", dealExternalId)
     .maybeSingle();
   if (dealRow.error) {
     throw new Error(`deals lookup failed: ${dealRow.error.message}`);
@@ -304,13 +336,13 @@ async function processEvent(
   if (!dealRow.data) {
     counts.skippedNoDeal += 1;
     console.warn(
-      `[calendar-sync] no deal with external_id='${match.dealExternalId}' in tenant '${TENANT_SLUG}'; not auto-creating. eventId=${ev.eventId}`,
+      `[calendar-sync] no deal with external_id='${dealExternalId}' in tenant '${TENANT_SLUG}'; not auto-creating. eventId=${ev.eventId}`,
     );
     emit({
       kind: "no-deal",
       eventId: ev.eventId,
       subject: ev.subject,
-      dealExternalId: match.dealExternalId,
+      dealExternalId: dealExternalId,
     });
     return;
   }
@@ -577,6 +609,52 @@ async function processEvent(
 // ====================================================================
 // Helpers
 // ====================================================================
+
+/**
+ * Ensure an auto-created deal exists for a customer domain. Inserts a minimal
+ * deal (placeholder account name, the tenant framework, stage SQL0, the rep's
+ * email for recap routing) only if one isn't already there, so a hand-edited
+ * account name is never overwritten on a later sync. Returns whether it created.
+ */
+async function ensureAutoDeal(
+  tenantId: string,
+  externalId: string,
+  domain: string,
+  repEmail: string | null,
+): Promise<{ created: boolean }> {
+  const db = supabaseAdmin();
+  const existing = await db
+    .from("deals")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("external_id", externalId)
+    .maybeSingle();
+  if (existing.error) {
+    throw new Error(`auto-deal lookup failed for ${externalId}: ${existing.error.message}`);
+  }
+  if (existing.data) return { created: false };
+
+  const fw = await db
+    .from("qualification_frameworks")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .limit(1)
+    .maybeSingle();
+
+  const ins = await db.from("deals").insert({
+    tenant_id: tenantId,
+    external_id: externalId,
+    account: accountFromDomain(domain),
+    stage_key: "SQL0",
+    framework_id: fw.data?.id ?? null,
+    rep_email: repEmail,
+    rep_notes: `Auto-created from ${repEmail ?? "rep"}'s calendar (${domain}). Placeholder account name; edit if needed.`,
+  });
+  if (ins.error) {
+    throw new Error(`auto-deal create failed for ${externalId}: ${ins.error.message}`);
+  }
+  return { created: true };
+}
 
 function eventStartToIso(start: NormalizedMeeting["start"]): string {
   if (!start) {

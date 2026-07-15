@@ -85,6 +85,110 @@ export function rolldogOppIdForDeal(dealExternalId: string): string | null {
   return PILOT_DEAL_ROLLDOG_IDS[dealExternalId] ?? null;
 }
 
+// ---------------------------------------------------------------------
+// Auto-join mode (Mark-approved: cover all of a rep's external customer
+// calls, not just the named pilot deals). OPT-IN and OFF by default: a
+// rep is only in auto-join mode if their calendar address is listed in the
+// AUTO_JOIN_REP_EMAILS env var (comma-separated). Ships off so it never
+// activates until you flip the env var after previewing.
+//
+// Joining/recording an external customer call is governed here; write-back
+// to Rolldog stays gated by PILOT_OPPORTUNITY_IDS, so an auto-created deal
+// with no mapped opportunity records + recaps but never writes to Rolldog.
+// ---------------------------------------------------------------------
+
+/** Internal Magaya domains that never indicate an external customer. */
+export const INTERNAL_DOMAINS: ReadonlyArray<string> = Object.freeze(["magaya.com"]);
+
+/**
+ * External domains that are NOT customers (benefits brokers, recruiters, other
+ * vendors), so auto-join must skip them even though they aren't internal.
+ * bbrown.com is Magaya's employee-benefits broker. Extend via the
+ * AUTO_JOIN_EXCLUDED_DOMAINS env var (comma-separated) without a code change.
+ */
+export const EXCLUDED_DOMAINS: ReadonlyArray<string> = Object.freeze(["bbrown.com"]);
+
+function excludedDomains(): ReadonlyArray<string> {
+  const env = (process.env.AUTO_JOIN_EXCLUDED_DOMAINS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+  return [...EXCLUDED_DOMAINS, ...env];
+}
+
+function autoJoinRepEmails(): ReadonlyArray<string> {
+  const raw = process.env.AUTO_JOIN_REP_EMAILS ?? "";
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+}
+
+/** True if this rep's calendar is in auto-join mode (per the env allowlist). */
+export function isAutoJoinRep(repEmail: string | null | undefined): boolean {
+  if (!repEmail) return false;
+  return autoJoinRepEmails().includes(repEmail.toLowerCase());
+}
+
+/** First external (non-internal) attendee domain on a meeting, or null. */
+export function firstExternalDomain(
+  attendeeEmails: ReadonlyArray<string>,
+): string | null {
+  for (const raw of attendeeEmails) {
+    if (typeof raw !== "string") continue;
+    const at = raw.lastIndexOf("@");
+    if (at < 0) continue;
+    const domain = raw.slice(at + 1).toLowerCase().trim();
+    if (!domain) continue;
+    if (INTERNAL_DOMAINS.includes(domain)) continue;
+    if (excludedDomains().includes(domain)) continue;
+    return domain;
+  }
+  return null;
+}
+
+/** Stable external_id for an auto-created deal, keyed by customer domain. */
+export function autoDealExternalId(domain: string): string {
+  return `auto:${domain.toLowerCase()}`;
+}
+
+/** Placeholder account name derived from a domain, editable later. */
+export function accountFromDomain(domain: string): string {
+  const sld = domain.split(".")[0] ?? domain;
+  return sld ? sld.charAt(0).toUpperCase() + sld.slice(1) : domain;
+}
+
+export type ResolvedMeetingDeal = {
+  dealExternalId: string;
+  domain: string | null;
+  isAuto: boolean;
+};
+
+/**
+ * Resolve which deal a meeting belongs to. A pilot match (domain or subject)
+ * points at a hand-seeded deal. Otherwise, if the rep is in auto-join mode and
+ * an external customer is on the invite, it maps to an auto deal keyed by that
+ * customer's domain. Returns null when there's nothing to cover. Shared by the
+ * calendar sync (which also creates the auto deal) and the briefing sync.
+ */
+export function resolveMeetingDeal(
+  attendeeEmails: ReadonlyArray<string>,
+  subject: string | null | undefined,
+  autoJoin: boolean,
+): ResolvedMeetingDeal | null {
+  const match = matchPilotDomain(attendeeEmails) ?? matchPilotSubject(subject);
+  if (match) {
+    return { dealExternalId: match.dealExternalId, domain: null, isAuto: false };
+  }
+  if (autoJoin) {
+    const domain = firstExternalDomain(attendeeEmails);
+    if (domain) {
+      return { dealExternalId: autoDealExternalId(domain), domain, isAuto: true };
+    }
+  }
+  return null;
+}
+
 /**
  * Match a list of attendee emails against the pilot allowlist.
  * Domain comparison is case-insensitive on the part after the last '@'.

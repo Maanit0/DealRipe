@@ -28,24 +28,27 @@ export async function sendPostCallSummary(args: {
   extraction: ExtractionMap;
   transcript: string;
 }): Promise<NotifyResult> {
-  const to = repEmailForDeal(args.dealExternalId);
-  if (!to) {
-    return { sent: false, reason: `no rep email mapped for deal '${args.dealExternalId}'` };
-  }
-
   const db = supabaseAdmin();
   const dealRow = await db
     .from("deals")
-    .select("id, account, stage_key, framework_id, rep_forecast_close_date")
+    .select("id, account, stage_key, framework_id, rep_forecast_close_date, rep_email")
     .eq("tenant_id", args.tenantId)
     .eq("external_id", args.dealExternalId)
     .maybeSingle();
   if (dealRow.error) {
-    return { sent: false, to, reason: `deal lookup failed: ${dealRow.error.message}` };
+    return { sent: false, reason: `deal lookup failed: ${dealRow.error.message}` };
   }
   if (!dealRow.data) {
-    return { sent: false, to, reason: `deal '${args.dealExternalId}' not found` };
+    return { sent: false, reason: `deal '${args.dealExternalId}' not found` };
   }
+
+  // Route to the mapped pilot rep, or fall back to the deal's rep_email (set
+  // on auto-created deals). No recipient means nothing to send.
+  const to = repEmailForDeal(args.dealExternalId) ?? dealRow.data.rep_email ?? undefined;
+  if (!to) {
+    return { sent: false, reason: `no rep email for deal '${args.dealExternalId}'` };
+  }
+
   if (!dealRow.data.framework_id) {
     return { sent: false, to, reason: `deal '${args.dealExternalId}' has no framework` };
   }

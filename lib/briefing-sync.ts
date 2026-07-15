@@ -19,7 +19,7 @@ import { loadFramework } from "./framework";
 import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
-import { matchPilotDomain, matchPilotSubject, repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
+import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal, rolldogOppIdForDeal } from "./pilot-config";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
@@ -107,10 +107,11 @@ export async function runBriefingSync(
       );
       continue;
     }
+    const autoJoin = isAutoJoinRep(conn.user_principal_name);
     for (const ev of events) {
       counts.eventsSeen += 1;
       try {
-        await processEvent(ev, tenantId, now, counts, emit);
+        await processEvent(ev, tenantId, now, counts, emit, autoJoin);
       } catch (err) {
         counts.errors += 1;
         emit({ kind: "error", eventId: ev.eventId, message: err instanceof Error ? err.message : String(err) });
@@ -127,6 +128,7 @@ async function processEvent(
   now: number,
   counts: BriefingSyncCounts,
   emit: (d: BriefingSyncDecision) => void,
+  autoJoin: boolean,
 ): Promise<void> {
   if (ev.isCancelled || !ev.joinUrl) {
     emit({ kind: "skip", eventId: ev.eventId, reason: "cancelled or no join url" });
@@ -135,12 +137,15 @@ async function processEvent(
   const attendeeEmails = ev.attendees
     .map((a) => a.email)
     .filter((e): e is string => typeof e === "string" && e.length > 0);
-  const match =
-    matchPilotDomain(attendeeEmails) ?? matchPilotSubject(ev.subject);
-  if (!match) {
-    emit({ kind: "skip", eventId: ev.eventId, reason: "no pilot match (domain or subject)" });
+  // Resolve to a pilot deal, or an auto deal for an external customer when the
+  // rep is in auto-join mode. calendar-sync creates the deal + calls row; this
+  // sends the pre-call briefing for it.
+  const resolved = resolveMeetingDeal(attendeeEmails, ev.subject, autoJoin);
+  if (!resolved) {
+    emit({ kind: "skip", eventId: ev.eventId, reason: "no pilot/auto match" });
     return;
   }
+  const dealExternalId = resolved.dealExternalId;
   counts.matched += 1;
 
   const startMs = startToMs(ev.start);
@@ -160,14 +165,14 @@ async function processEvent(
   // Resolve the deal by external_id slug.
   const dealRow = await db
     .from("deals")
-    .select("id, framework_id")
+    .select("id, framework_id, rep_email")
     .eq("tenant_id", tenantId)
-    .eq("external_id", match.dealExternalId)
+    .eq("external_id", dealExternalId)
     .maybeSingle();
   if (dealRow.error) throw new Error(`deals lookup failed: ${dealRow.error.message}`);
   if (!dealRow.data) {
     counts.skippedNoDeal += 1;
-    emit({ kind: "no-deal", dealExternalId: match.dealExternalId, eventId: ev.eventId });
+    emit({ kind: "no-deal", dealExternalId, eventId: ev.eventId });
     return;
   }
   const dealId = dealRow.data.id;
@@ -184,18 +189,19 @@ async function processEvent(
     // calendar-sync has not created the row yet; it will, and the next scan
     // (within a few minutes, still inside the window) will send.
     counts.skippedNoCall += 1;
-    emit({ kind: "no-call-row", dealExternalId: match.dealExternalId, eventId: ev.eventId });
+    emit({ kind: "no-call-row", dealExternalId, eventId: ev.eventId });
     return;
   }
   if (callRow.data.briefing_sent_at) {
     counts.alreadySent += 1;
-    emit({ kind: "already-sent", account: match.dealExternalId, eventId: ev.eventId });
+    emit({ kind: "already-sent", account: dealExternalId, eventId: ev.eventId });
     return;
   }
 
-  const to = repEmailForDeal(match.dealExternalId);
+  // Route to the mapped pilot rep, or the deal's rep_email (auto-created deals).
+  const to = repEmailForDeal(dealExternalId) ?? dealRow.data.rep_email ?? undefined;
   if (!to) {
-    emit({ kind: "skip", eventId: ev.eventId, reason: `no rep email for '${match.dealExternalId}'` });
+    emit({ kind: "skip", eventId: ev.eventId, reason: `no rep email for '${dealExternalId}'` });
     return;
   }
 
@@ -212,7 +218,7 @@ async function processEvent(
   // if it fails or the deal has no mapped opp, fall back to the deal's stage.
   const extraction = deal.extraction as unknown as ExtractionMap;
   let stageKey = deal.stageKey;
-  const opp = rolldogOppIdForDeal(match.dealExternalId);
+  const opp = rolldogOppIdForDeal(dealExternalId);
   if (opp) {
     try {
       stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? deal.stageKey;
