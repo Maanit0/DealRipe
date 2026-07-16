@@ -373,6 +373,15 @@ async function processRow(
         .eq("external_id", ingestResult.dealExternalId)
         .maybeSingle();
       if (dealRow.data) {
+        const callRow = await db
+          .from("calls")
+          .select("call_date, scheduled_start")
+          .eq("id", callId)
+          .maybeSingle();
+        const callDate =
+          callRow.data?.call_date ??
+          callRow.data?.scheduled_start ??
+          new Date().toISOString();
         const people = await extractContactsFromTranscript({
           transcript,
           account: dealRow.data.account,
@@ -381,6 +390,7 @@ async function processRow(
           tenantId,
           dealId: dealRow.data.id,
           contacts: people,
+          callDate,
         });
         if (res.inserted > 0) {
           console.log(

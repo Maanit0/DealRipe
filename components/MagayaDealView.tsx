@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { ContactsCard } from "./ContactsCard";
 import { CroReadCard } from "./CroReadCard";
+import { DealStateCard } from "./DealStateCard";
 import { SentCommsCard } from "./SentCommsCard";
+import { deriveDealState } from "@/lib/deal-state";
 import { TeamsCallsCard } from "./TeamsCallsCard";
 import { MagayaOpportunityControl } from "./MagayaOpportunityControl";
 import type { CroRead } from "@/lib/cro-read";
@@ -38,6 +40,7 @@ export function MagayaDealView({
 }) {
   const upcoming = upcomingCall ? describeUpcomingCall(upcomingCall) : null;
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
+  const dealState = deriveDealState(framework, deal.extraction, deal.stageKey);
   // Magaya reps use forecast categories, not percentages. Derive the category
   // from the seeded number until the live Rolldog read provides it directly.
   const repCategory =
@@ -95,6 +98,8 @@ export function MagayaDealView({
           </div>
         </div>
       </div>
+
+      <DealStateCard state={dealState} />
 
       <CroReadCard dealId={deal.id} initial={croRead ?? null} />
 

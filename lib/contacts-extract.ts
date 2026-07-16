@@ -22,6 +22,10 @@ export type ExtractedContact = {
   name: string;
   role: string;
   relationship: ContactRelationship;
+  /** True if the person actually participated in the call; false if they were
+   *  only mentioned/referenced (a named stakeholder who wasn't present). Drives
+   *  "last contacted": present -> the call date, mentioned-only -> never. */
+  onCall: boolean;
   evidence: string;
 };
 
@@ -48,13 +52,14 @@ export async function extractContactsFromTranscript(args: {
   const system = `You extract the customer-side people named in a B2B sales call transcript for the prospect account "${args.account}".
 
 Return ONLY a JSON array, nothing else. Each element:
-{ "name": string, "role": string, "relationship": "champion"|"economic_buyer"|"influencer"|"user"|"unknown", "evidence": string }
+{ "name": string, "role": string, "relationship": "champion"|"economic_buyer"|"influencer"|"user"|"unknown", "onCall": boolean, "evidence": string }
 
 Rules:
 - Include only NAMED INDIVIDUALS on the customer/buyer side. Exclude the seller/vendor representatives.
 - Do NOT include groups or teams (e.g. "the board", "operations team", "partners", "leadership"). Only specific named people.
 - role: their title or function if stated; otherwise a short description, or "" if none.
 - relationship: champion = the main advocate/driver on the call; economic_buyer = controls budget or gives final sign-off; influencer = weighs in on the decision; user = hands-on end user; unknown = unclear.
+- onCall: true if this person actually spoke or participated in THIS call; false if they were only mentioned or referenced but were not present.
 - evidence: one short verbatim quote from the transcript that supports the person and their role.
 - If there are no named individuals, return [].`;
 
@@ -106,6 +111,7 @@ function normalize(raw: unknown[]): ExtractedContact[] {
       name,
       role: typeof r.role === "string" ? r.role.trim() : "",
       relationship,
+      onCall: r.onCall === true,
       evidence: typeof r.evidence === "string" ? r.evidence.trim() : "",
     });
   }
@@ -121,6 +127,10 @@ export async function upsertDealContacts(args: {
   tenantId: string;
   dealId: string;
   contacts: ExtractedContact[];
+  /** Date of the call these contacts came from (ISO). Stamped as
+   *  last_contacted_at on people who were ON the call; mentioned-only people
+   *  stay null ("never contacted"), which is a useful un-engaged-buyer signal. */
+  callDate?: string | null;
 }): Promise<{ inserted: number; skipped: number }> {
   if (args.contacts.length === 0) return { inserted: 0, skipped: 0 };
   const db = supabaseAdmin();
@@ -158,7 +168,9 @@ export async function upsertDealContacts(args: {
       name: c.name,
       role: c.role || null,
       relationship: c.relationship,
-      last_contacted_at: null,
+      // Present on the call -> contacted on the call date. Only mentioned ->
+      // never contacted (accurate, and flags un-engaged decision-makers).
+      last_contacted_at: c.onCall && args.callDate ? args.callDate : null,
     });
   }
 
