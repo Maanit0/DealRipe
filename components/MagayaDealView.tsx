@@ -2,8 +2,10 @@ import Link from "next/link";
 import { ContactsCard } from "./ContactsCard";
 import { CroReadCard } from "./CroReadCard";
 import { DealStateCard } from "./DealStateCard";
+import { DealHistoryCard } from "./DealHistoryCard";
 import { SentCommsCard } from "./SentCommsCard";
 import { deriveDealState } from "@/lib/deal-state";
+import type { DealHistory } from "@/lib/deal-history";
 import { TeamsCallsCard } from "./TeamsCallsCard";
 import { MagayaOpportunityControl } from "./MagayaOpportunityControl";
 import type { CroRead } from "@/lib/cro-read";
@@ -30,6 +32,7 @@ export function MagayaDealView({
   rolldogSummary,
   croRead,
   sentMessages = [],
+  history,
 }: {
   deal: Deal;
   framework: Framework;
@@ -37,6 +40,7 @@ export function MagayaDealView({
   rolldogSummary?: RolldogSummary | null;
   croRead?: CroRead | null;
   sentMessages?: SentMessage[];
+  history?: DealHistory;
 }) {
   const upcoming = upcomingCall ? describeUpcomingCall(upcomingCall) : null;
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
@@ -108,6 +112,7 @@ export function MagayaDealView({
           framework={framework}
           extraction={deal.extraction}
           currentStageKey={deal.stageKey}
+          capturedByField={history?.perGate ?? {}}
         />
         <div className="space-y-5">
           <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
@@ -143,6 +148,10 @@ export function MagayaDealView({
           </Link>
         </div>
       </div>
+
+      {history && history.timeline.length > 0 && (
+        <DealHistoryCard timeline={history.timeline} />
+      )}
 
       <SentCommsCard messages={sentMessages} />
     </div>

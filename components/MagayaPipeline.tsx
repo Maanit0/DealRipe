@@ -54,6 +54,7 @@ export function MagayaPipeline({
   upcomingByDealId = {},
   summariesByDealId = {},
   repActivityByDealId = {},
+  lastCallByDealId = {},
 }: {
   deals: Deal[];
   framework: Framework | null;
@@ -61,6 +62,7 @@ export function MagayaPipeline({
   upcomingByDealId?: Record<string, UpcomingCall>;
   summariesByDealId?: Record<string, RolldogSummary>;
   repActivityByDealId?: Record<string, string | null>;
+  lastCallByDealId?: Record<string, string | null>;
 }) {
   const rows: Row[] = framework ? deals.map((deal) => buildRow(deal, framework)) : [];
 
@@ -154,12 +156,23 @@ export function MagayaPipeline({
                     </td>
                     <td className="py-3.5 text-[12px]">
                       {(() => {
-                        const d = daysSince(repActivityByDealId[row.deal.id] ?? null);
-                        if (d == null) return <span className="text-muted">—</span>;
+                        const repD = daysSince(repActivityByDealId[row.deal.id] ?? null);
+                        const callD = daysSince(lastCallByDealId[row.deal.id] ?? null);
                         return (
-                          <span className={d > 30 ? "text-danger font-semibold" : "text-ink"}>
-                            {d}d ago
-                          </span>
+                          <div>
+                            {repD == null ? (
+                              <span className="text-muted">—</span>
+                            ) : (
+                              <span className={repD > 30 ? "text-danger font-semibold" : "text-ink"}>
+                                {repD}d ago
+                              </span>
+                            )}
+                            {callD != null && (
+                              <div className="text-[11px] text-accent mt-0.5">
+                                DealRipe call {callD === 0 ? "today" : `${callD}d ago`}
+                              </div>
+                            )}
+                          </div>
                         );
                       })()}
                     </td>

@@ -22,16 +22,30 @@ function stageLabel(key: string): string {
   return STAGE_LABELS[key] ? `${key} · ${STAGE_LABELS[key]}` : key;
 }
 
+function fmtCaptured(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+type Attribution = Record<string, { callDate: string | null }>;
+
 type Props = {
   framework: Framework;
   extraction: ExtractionResult;
   currentStageKey: string;
+  /** fieldKey -> which call captured it, for inline "captured Jul 16" tags. */
+  capturedByField?: Attribution;
 };
 
 export function MagayaOpportunityControl({
   framework,
   extraction,
   currentStageKey,
+  capturedByField = {},
 }: Props) {
   const stages = frameworkStages(framework);
   const { confirmed, total } = frameworkProgress(framework, extraction);
@@ -81,6 +95,7 @@ export function MagayaOpportunityControl({
             key={stage.key}
             stage={stage}
             extraction={extraction}
+            capturedByField={capturedByField}
           />
         ))}
       </div>
@@ -91,9 +106,11 @@ export function MagayaOpportunityControl({
 function StageSection({
   stage,
   extraction,
+  capturedByField,
 }: {
   stage: FrameworkStage;
   extraction: ExtractionResult;
+  capturedByField: Attribution;
 }) {
   const gate = stageGateStatus(stage, extraction);
   const open = gate.total - gate.met;
@@ -131,6 +148,11 @@ function StageSection({
                     <div className="text-[12px] text-muted italic leading-snug">
                       &ldquo;{entry.evidence}&rdquo;
                     </div>
+                    {capturedByField[f.fieldKey]?.callDate && (
+                      <div className="text-[10px] uppercase tracking-wider font-semibold text-accent/80">
+                        Captured {fmtCaptured(capturedByField[f.fieldKey]?.callDate)}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

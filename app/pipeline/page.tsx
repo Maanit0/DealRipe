@@ -94,7 +94,33 @@ async function loadMagayaPipeline() {
       console.error("[magaya pipeline] rolldog summaries failed:", e);
     }
 
-    return { deals, framework, digest, upcoming, summaries, repActivity };
+    // DealRipe's own last-activity: the most recent call it actually captured
+    // per deal. This is real activity Rolldog often can't see (deals with no
+    // opportunity, or a rep who never logged the meeting), so it's shown next
+    // to the rep's CRM staleness rather than merged into it.
+    const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+    const lastCall: Record<string, string | null> = {};
+    try {
+      const nowIso = new Date().toISOString();
+      const callRows = await supabaseAdmin()
+        .from("calls")
+        .select("deal_id, scheduled_start, call_date, outcome")
+        .eq("tenant_id", tenantId)
+        .lte("scheduled_start", nowIso);
+      for (const c of callRows.data ?? []) {
+        if (c.outcome && NO_CONTENT.has(c.outcome)) continue; // skip no-shows/placeholders
+        const when = c.scheduled_start ?? c.call_date;
+        if (!when) continue;
+        const cur = lastCall[c.deal_id];
+        if (!cur || new Date(when).getTime() > new Date(cur).getTime()) {
+          lastCall[c.deal_id] = when;
+        }
+      }
+    } catch (e) {
+      console.error("[magaya pipeline] last-call read failed:", e);
+    }
+
+    return { deals, framework, digest, upcoming, summaries, repActivity, lastCall };
   } catch (err) {
     console.error("[magaya pipeline] load failed:", err);
     return null;
@@ -136,6 +162,7 @@ export default async function PipelinePage({
           upcomingByDealId={live.upcoming}
           summariesByDealId={live.summaries}
           repActivityByDealId={live.repActivity}
+          lastCallByDealId={live.lastCall}
         />
       );
     // Do NOT fall back to the demo for the Magaya tenant; show the failure
