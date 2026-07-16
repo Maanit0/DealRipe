@@ -170,6 +170,7 @@ export type Database = {
           ingest_error: string | null;
           briefing_sent_at: string | null;
           scheduled_start: string | null;
+          outcome: string | null;
           created_at: string;
         };
         Insert: {
@@ -187,6 +188,7 @@ export type Database = {
           ingest_error?: string | null;
           briefing_sent_at?: string | null;
           scheduled_start?: string | null;
+          outcome?: string | null;
           created_at?: string;
         };
         Update: {
@@ -204,6 +206,7 @@ export type Database = {
           ingest_error?: string | null;
           briefing_sent_at?: string | null;
           scheduled_start?: string | null;
+          outcome?: string | null;
           created_at?: string;
         };
         Relationships: [];

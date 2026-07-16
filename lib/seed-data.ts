@@ -29,6 +29,9 @@ export type CallRecord = {
   // readable. This file just references the transcript ID.
   transcriptId: string | null;
   hasBeenExtracted: boolean;
+  // Call outcome: captured | no_conversation | no_show | rescheduled |
+  // placeholder. Undefined/null for seed calls and in-progress rows.
+  outcome?: string | null;
 };
 
 export type Deal = {

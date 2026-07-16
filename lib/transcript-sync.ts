@@ -257,6 +257,28 @@ async function processRow(
     return;
   }
 
+  // ----- 3b. No-conversation guard. A bot that joined but captured almost
+  //           nothing (customer no-show, or a placeholder that never became a
+  //           real meeting) is recorded as such instead of being run through
+  //           extraction (which would just error) or left looking blank. -----
+
+  const MIN_TRANSCRIPT_CHARS = 50;
+  if (transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
+    const noConv = await db
+      .from("calls")
+      .update({ outcome: "no_conversation", has_been_extracted: true, ingest_error: null })
+      .eq("id", callId);
+    if (noConv.error) {
+      console.error(
+        `[transcript-sync] no-conversation mark failed for call ${callId}: ${noConv.error.message}`,
+      );
+    }
+    console.log(
+      `[transcript-sync] call ${callId} captured no conversation (${transcript.trim().length} chars); marked no_conversation.`,
+    );
+    return;
+  }
+
   // ----- 4. Mark has_been_extracted = true. The body is now durable; if
   //          anything after this point fails the operator runs
   //          --retry-ingest to re-extract from the stored body. -----
@@ -292,6 +314,13 @@ async function processRow(
     });
     counts.extracted += 1;
     emit({ kind: "extracted", callId, recallBotId });
+
+    // Record the positive outcome so the UI shows "Extracted" deterministically
+    // rather than inferring it. Best-effort; never blocks the pipeline.
+    const outc = await db.from("calls").update({ outcome: "captured" }).eq("id", callId);
+    if (outc.error) {
+      console.error(`[transcript-sync] outcome=captured mark failed for call ${callId}: ${outc.error.message}`);
+    }
 
     // Best-effort: email the rep their post-call summary. Fully isolated in
     // its own try/catch so a mail failure can never affect ingest status or
