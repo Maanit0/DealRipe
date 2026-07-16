@@ -15,6 +15,14 @@ export function supabaseClient(): SupabaseClient<Database> {
     _client = createClient<Database>(
       requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
       requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+      {
+        // Never let Next's Data Cache serve stale Supabase reads (see the note
+        // in supabaseAdmin). Harmless in the browser where fetch isn't patched.
+        global: {
+          fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+            fetch(input, { ...init, cache: "no-store" }),
+        },
+      },
     );
   }
   return _client;
@@ -36,7 +44,18 @@ export function supabaseAdmin(): SupabaseClient<Database> {
     _admin = createClient<Database>(
       requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
       requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
-      { auth: { persistSession: false, autoRefreshToken: false } },
+      {
+        auth: { persistSession: false, autoRefreshToken: false },
+        // CRITICAL: Next.js App Router patches global fetch to cache responses
+        // in its persistent Data Cache (which survives redeploys). supabase-js
+        // uses fetch, so without this every query URL gets cached and stale
+        // reads persist even after the DB changes. Force no-store so Supabase
+        // reads are always live.
+        global: {
+          fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+            fetch(input, { ...init, cache: "no-store" }),
+        },
+      },
     );
   }
   return _admin;
