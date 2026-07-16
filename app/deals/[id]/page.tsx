@@ -67,12 +67,28 @@ async function loadLiveMagayaDeal(id: string) {
     const sentMessages = await getSentMessages(deal.id).catch(() => []);
     // TEMP debug: reveal what the server actually read for this deal, so a
     // stale render can be diagnosed from Vercel Runtime Logs. Remove after.
-    // Read the URL dynamically (bracket + variable key) so it reflects the
-    // RUNTIME value supabaseAdmin actually connects to, not the build-time
-    // inlined NEXT_PUBLIC_ literal.
+    // Direct diagnostic from production's OWN supabaseAdmin connection: raw
+    // framework_id on the row, how many deals share this external_id, and the
+    // direct sent_messages count. Bypasses getFrameworkForDeal/getSentMessages
+    // to reveal what production's connection actually reads.
     const dbUrlKey = "NEXT_PUBLIC_SUPABASE_URL";
+    const dbg = supabaseAdmin();
+    const rawDeal = await dbg
+      .from("deals")
+      .select("id, external_id, framework_id")
+      .eq("id", deal.id)
+      .maybeSingle();
+    const dup = await dbg
+      .from("deals")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId)
+      .eq("external_id", rawDeal.data?.external_id ?? "");
+    const msgCount = await dbg
+      .from("sent_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("deal_id", deal.id);
     console.log(
-      `[deal-debug] db=${process.env[dbUrlKey]} id=${deal.id} fw=${framework.name} fwId=${framework.id} fields=${framework.fields.length} msgs=${sentMessages.length}`,
+      `[deal-debug] db=${process.env[dbUrlKey]} id=${deal.id} ext=${rawDeal.data?.external_id} rawFwId=${rawDeal.data?.framework_id} dupExtId=${dup.count} directMsgs=${msgCount.count} resolvedFw=${framework.name} resolvedMsgs=${sentMessages.length}`,
     );
     return { deal, framework, upcomingCall, rolldogSummary, croRead, sentMessages };
   } catch (err) {
