@@ -65,6 +65,11 @@ async function loadLiveMagayaDeal(id: string) {
     const upcomingCall = await getUpcomingCallForDeal(tenantId, deal.id);
     const croRead: CroRead | null = await getCroRead(deal.id).catch(() => null);
     const sentMessages = await getSentMessages(deal.id).catch(() => []);
+    // TEMP debug: reveal what the server actually read for this deal, so a
+    // stale render can be diagnosed from Vercel Runtime Logs. Remove after.
+    console.log(
+      `[deal-debug] id=${deal.id} fw=${framework.name} fwId=${framework.id} fields=${framework.fields.length} msgs=${sentMessages.length}`,
+    );
     return { deal, framework, upcomingCall, rolldogSummary, croRead, sentMessages };
   } catch (err) {
     console.error("[magaya deal] load failed:", err);

@@ -83,13 +83,11 @@ export async function loadFramework(
   tenantId: string,
   frameworkId?: string,
 ): Promise<Framework | null> {
-  if (frameworkId) {
-    const cached = byFrameworkId.get(frameworkId);
-    if (cached) return cached;
-  } else {
-    const cached = tenantDefault.get(tenantId);
-    if (cached) return cached;
-  }
+  // NOTE: the in-memory cache is intentionally bypassed. Deals can be
+  // repointed to a different framework at runtime (auto-deal Scotsman ->
+  // Rolldog fix), which made a warm serverless instance serve a stale
+  // framework. force-dynamic already reads per-request, so the cache saved
+  // almost nothing and cost correctness. Always read fresh.
 
   const db = supabaseAdmin();
   const fwQuery = db
@@ -135,8 +133,8 @@ export async function loadFramework(
     })),
   };
 
-  byFrameworkId.set(framework.id, framework);
-  if (!frameworkId) tenantDefault.set(tenantId, framework);
+  // Cache intentionally not populated (see note above). The Maps and
+  // clearCacheForTenant remain for the seed script's invalidation contract.
   return framework;
 }
 
