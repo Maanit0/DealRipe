@@ -31,6 +31,7 @@ const CLASSIFY: Array<{ key: string; label: string }> = [
  */
 export function TeamsCallsCard({ dealId, calls }: Props) {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [reopen, setReopen] = useState<Record<string, boolean>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -41,6 +42,7 @@ export function TeamsCallsCard({ dealId, calls }: Props) {
 
   function classify(callId: string, outcome: string) {
     setOverrides((o) => ({ ...o, [callId]: outcome })); // optimistic
+    setReopen((r) => ({ ...r, [callId]: false }));
     setBusyId(callId);
     startTransition(async () => {
       await classifyCall(callId, outcome, dealId);
@@ -104,8 +106,8 @@ export function TeamsCallsCard({ dealId, calls }: Props) {
                 )}
               </div>
 
-              {unclassified && (
-                <div className="mt-2.5 flex items-center gap-1.5">
+              {noContent && (unclassified || reopen[call.id]) && (
+                <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
                   <span className="text-[11px] text-muted mr-0.5">What happened?</span>
                   {CLASSIFY.map((c) => (
                     <button
@@ -113,11 +115,36 @@ export function TeamsCallsCard({ dealId, calls }: Props) {
                       type="button"
                       disabled={busyId === call.id}
                       onClick={() => classify(call.id, c.key)}
-                      className="text-[11px] font-semibold px-2 py-1 rounded-md border border-line bg-white text-ink hover:border-ink/30 transition disabled:opacity-50"
+                      className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition disabled:opacity-50 ${
+                        outcome === c.key
+                          ? "border-ink bg-ink text-white"
+                          : "border-line bg-white text-ink hover:border-ink/30"
+                      }`}
                     >
                       {c.label}
                     </button>
                   ))}
+                  {!unclassified && (
+                    <button
+                      type="button"
+                      disabled={busyId === call.id}
+                      onClick={() => classify(call.id, "no_conversation")}
+                      className="text-[11px] font-semibold px-2 py-1 rounded-md border border-line bg-white text-muted hover:border-ink/30 transition disabled:opacity-50"
+                    >
+                      Not sure yet
+                    </button>
+                  )}
+                </div>
+              )}
+              {noContent && !unclassified && !reopen[call.id] && (
+                <div className="mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setReopen((r) => ({ ...r, [call.id]: true }))}
+                    className="text-[11px] text-muted underline underline-offset-2 hover:text-ink transition"
+                  >
+                    Change
+                  </button>
                 </div>
               )}
             </div>
