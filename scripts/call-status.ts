@@ -49,9 +49,13 @@ async function main(): Promise<void> {
 
   console.log(`\nCalls (${calls.data?.length ?? 0}):`);
   for (const c of calls.data ?? []) {
+    // The transcript body lives in the transcripts table (keyed by call_id),
+    // not the calls.transcript_id column, so check there for the real answer.
+    const t = await db.from("transcripts").select("body").eq("call_id", c.id).maybeSingle();
+    const bodyLen = t.data?.body?.length ?? 0;
     console.log(`  - scheduled: ${c.scheduled_start ?? "?"}   source: ${c.source ?? "?"}`);
     console.log(`    bot:        ${c.recall_bot_id ?? "(none)"}`);
-    console.log(`    transcript: ${c.transcript_id ? "CAPTURED (" + c.transcript_id + ")" : "not captured yet"}   duration: ${c.duration_minutes ?? "?"} min`);
+    console.log(`    transcript: ${bodyLen > 0 ? `STORED (${bodyLen} chars)` : "not stored"}   duration: ${c.duration_minutes ?? "?"} min`);
     console.log(`    extracted:  ${c.has_been_extracted ? "YES" : "no"}`);
     console.log(`    briefing:   ${c.briefing_sent_at ?? "not sent"}`);
     console.log(`    ingest err: ${c.ingest_error ?? "none"}`);
