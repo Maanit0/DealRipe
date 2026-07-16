@@ -13,6 +13,7 @@
  * Cache invariant: a Framework object in the cache is immutable.
  */
 
+import { cache } from "react";
 import { supabaseAdmin } from "./supabase";
 import type { Json } from "./database.types";
 
@@ -47,48 +48,38 @@ export type Framework = {
 };
 
 // ====================================================================
-// Cache
+// Cache invalidation contract (no-op)
 // ====================================================================
 
-const byFrameworkId = new Map<string, Framework>();
-const tenantDefault = new Map<string, Framework>();
-
 /**
- * Invalidate the cache. Called by scripts/seed-frameworks.ts after a
- * write so the next loadFramework call sees the new data. Not exported
- * for production code; if a framework actually changes at runtime, that
- * is a bug.
+ * Framework loading is request-scoped via React cache() (see loadFramework):
+ * memoized within a single request and discarded at request end, so it can
+ * never serve a stale entry across requests. There is NO process-wide cache to
+ * invalidate. (A module-level Map used to live here and caused a stale
+ * framework to survive a runtime repoint until redeploy, which is exactly the
+ * bug this design avoids.) Kept as a no-op for the seed script's contract.
  */
-function clearCacheForTenant(tenantId: string): void {
-  for (const [id, fw] of byFrameworkId) {
-    if (fw.tenantId === tenantId) byFrameworkId.delete(id);
-  }
-  tenantDefault.delete(tenantId);
+export function __invalidateFrameworkCache(_tenantId: string): void {
+  /* no-op: nothing persists across requests */
 }
-
-export const __invalidateFrameworkCache = clearCacheForTenant;
 
 // ====================================================================
 // Public API
 // ====================================================================
 
 /**
- * Load a framework by tenant and (optionally) framework id. When
- * frameworkId is omitted the tenant's first framework by created_at
- * is returned (the "default framework" convention).
+ * Load a framework by tenant and (optionally) framework id. When frameworkId is
+ * omitted the tenant's first framework by created_at is returned (the "default
+ * framework" convention).
  *
- * Returns null when no framework matches. Throws on Supabase errors.
+ * Wrapped in React cache() so it's loaded at most once per request but never
+ * cached across requests. Returns null when no framework matches. Throws on
+ * Supabase errors.
  */
-export async function loadFramework(
+export const loadFramework = cache(async (
   tenantId: string,
   frameworkId?: string,
-): Promise<Framework | null> {
-  // NOTE: the in-memory cache is intentionally bypassed. Deals can be
-  // repointed to a different framework at runtime (auto-deal Scotsman ->
-  // Rolldog fix), which made a warm serverless instance serve a stale
-  // framework. force-dynamic already reads per-request, so the cache saved
-  // almost nothing and cost correctness. Always read fresh.
-
+): Promise<Framework | null> => {
   const db = supabaseAdmin();
   const fwQuery = db
     .from("qualification_frameworks")
@@ -133,10 +124,8 @@ export async function loadFramework(
     })),
   };
 
-  // Cache intentionally not populated (see note above). The Maps and
-  // clearCacheForTenant remain for the seed script's invalidation contract.
   return framework;
-}
+});
 
 /**
  * Resolve the framework for a deal. Order of precedence:
