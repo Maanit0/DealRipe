@@ -28,6 +28,11 @@ export async function sendPostCallSummary(args: {
   dealExternalId: string;
   extraction: ExtractionMap;
   transcript: string;
+  /** When true, render and archive the recap into sent_messages so the deal
+   *  page can display the new-framework format, but do NOT actually send an
+   *  email. Used to refresh the recap after a framework repoint without
+   *  re-notifying the rep. */
+  dryRun?: boolean;
 }): Promise<NotifyResult> {
   const db = supabaseAdmin();
   const dealRow = await db
@@ -98,6 +103,23 @@ export async function sendPostCallSummary(args: {
   });
 
   const email = renderPostCallSummaryEmail(summary);
+
+  if (args.dryRun) {
+    // Archive the freshly-rendered recap without sending. The deal page reads
+    // from sent_messages, so this refreshes the visible recap to the current
+    // framework's format while leaving the rep's inbox untouched.
+    await recordSentMessage({
+      tenantId: args.tenantId,
+      dealId: dealRow.data.id,
+      kind: "recap",
+      toEmail: to,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      providerId: null,
+    });
+    return { sent: false, to, reason: "dry-run: recap archived, email skipped" };
+  }
 
   try {
     const res = await sendEmail({

@@ -6,7 +6,8 @@
  * is read from the transcripts table; nothing is re-pulled from Recall.
  *
  *   npx tsx scripts/reextract-deal.ts --deal auto:corelogistics.net
- *   npx tsx scripts/reextract-deal.ts --deal auto:corelogistics.net --recap   # also resend the recap
+ *   npx tsx scripts/reextract-deal.ts --deal auto:corelogistics.net --recap           # also resend the recap
+ *   npx tsx scripts/reextract-deal.ts --deal auto:corelogistics.net --preview-recap   # refresh the recap in the UI WITHOUT sending an email
  */
 
 import { config } from "dotenv";
@@ -27,8 +28,13 @@ function arg(name: string): string | undefined {
 async function main(): Promise<void> {
   const ext = arg("--deal");
   const resend = process.argv.includes("--recap");
+  const preview = process.argv.includes("--preview-recap");
   if (!ext) {
-    console.error("Usage: --deal <external_id> [--recap]");
+    console.error("Usage: --deal <external_id> [--recap | --preview-recap]");
+    process.exit(1);
+  }
+  if (resend && preview) {
+    console.error("Pass either --recap or --preview-recap, not both.");
     process.exit(1);
   }
   const tenantId = await resolveTenantId("magaya");
@@ -83,16 +89,25 @@ async function main(): Promise<void> {
   ).length;
   console.log(`Done. Extraction repopulated against the deal's current framework. Confirmed fields: ${answered}.`);
 
-  if (resend) {
+  if (resend || preview) {
     const res = await sendPostCallSummary({
       tenantId,
       dealExternalId: ext,
       extraction: rolled as unknown as ExtractionMap,
       transcript: picked.body,
+      dryRun: preview,
     });
-    console.log(res.sent ? `Recap re-sent to ${res.to}.` : `Recap not sent: ${res.reason}`);
+    if (preview) {
+      console.log(
+        res.reason
+          ? `Recap archived (no email sent) for ${res.to ?? "(no recipient)"}. Reload the deal page.`
+          : "Recap archive attempt returned no reason string.",
+      );
+    } else {
+      console.log(res.sent ? `Recap re-sent to ${res.to}.` : `Recap not sent: ${res.reason}`);
+    }
   } else {
-    console.log("Run again with --recap to resend the recap on the correct framework.");
+    console.log("Run again with --recap to resend, or --preview-recap to refresh the UI without emailing.");
   }
 }
 
