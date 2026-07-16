@@ -229,7 +229,7 @@ async function reconcileVanishedMeetings(
   // Future rows the read window should have covered.
   const rows = await db
     .from("calls")
-    .select("id, external_id, recall_bot_id, call_date")
+    .select("id, external_id, recall_bot_id, call_date, scheduled_start")
     .eq("tenant_id", tenantId)
     .gte("call_date", todayStr)
     .lte("call_date", windowEndStr);
@@ -238,8 +238,21 @@ async function reconcileVanishedMeetings(
     return;
   }
 
+  const nowMs = now.getTime();
+
   for (const row of rows.data ?? []) {
     if (!row.external_id || seenEventIds.has(row.external_id)) continue;
+
+    // Never treat a meeting that has already started as "vanished". The calendar
+    // read only looks forward from now, so a call earlier today drops out of it
+    // the moment it ends. Without this guard that completed call is misread as
+    // vanished and its row (transcript, extraction, briefing) is deleted. Only
+    // genuinely FUTURE meetings that disappeared before happening are prunable.
+    const startMs = row.scheduled_start ? Date.parse(row.scheduled_start) : NaN;
+    const startedAlready = Number.isFinite(startMs)
+      ? startMs <= nowMs
+      : row.call_date === todayStr; // no precise time: don't prune same-day rows
+    if (startedAlready) continue;
 
     // The meeting for this row was not on any calendar this run: it vanished.
     if (row.recall_bot_id) {
