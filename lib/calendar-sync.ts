@@ -647,19 +647,14 @@ async function ensureAutoDeal(
   }
   if (existing.data) return { created: false };
 
-  const fw = await db
-    .from("qualification_frameworks")
-    .select("id")
-    .eq("tenant_id", tenantId)
-    .limit(1)
-    .maybeSingle();
+  const frameworkId = await resolveTenantFrameworkId(db, tenantId);
 
   const ins = await db.from("deals").insert({
     tenant_id: tenantId,
     external_id: externalId,
     account: accountFromDomain(domain),
     stage_key: "SQL0",
-    framework_id: fw.data?.id ?? null,
+    framework_id: frameworkId,
     rep_email: repEmail,
     rep_notes: `Auto-created from ${repEmail ?? "rep"}'s calendar (${domain}). Placeholder account name; edit if needed.`,
   });
@@ -667,6 +662,37 @@ async function ensureAutoDeal(
     throw new Error(`auto-deal create failed for ${externalId}: ${ins.error.message}`);
   }
   return { created: true };
+}
+
+/**
+ * Pick the framework a new auto-deal should use. An auto deal must qualify on
+ * the tenant's REAL framework (Magaya's Rolldog Stage Gates), the same one the
+ * seeded pilot deals use, never a leftover builtin (e.g. the SCOTSMAN seed).
+ * So prefer the tenant's `rolldog` framework; only if the tenant has none do we
+ * fall back to any framework. Returns null if the tenant has no framework.
+ */
+async function resolveTenantFrameworkId(
+  db: ReturnType<typeof supabaseAdmin>,
+  tenantId: string,
+): Promise<string | null> {
+  const rolldog = await db
+    .from("qualification_frameworks")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("source", "rolldog")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (rolldog.data?.id) return rolldog.data.id;
+
+  const any = await db
+    .from("qualification_frameworks")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return any.data?.id ?? null;
 }
 
 function eventStartToIso(start: NormalizedMeeting["start"]): string {

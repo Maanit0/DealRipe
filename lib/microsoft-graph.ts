@@ -197,14 +197,29 @@ export async function listUpcomingMeetings(
       `listUpcomingMeetings: days must be a positive number, got ${days}`,
     );
   }
+  const now = new Date();
+  const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  return listMeetingsBetween(connectionId, now, end);
+}
+
+/**
+ * List calendar events between an explicit start and end. Same field selection
+ * and pagination as listUpcomingMeetings, but the window is caller-controlled
+ * so it can look backward (diagnostics/backfill) as well as forward.
+ */
+export async function listMeetingsBetween(
+  connectionId: string,
+  start: Date,
+  end: Date,
+): Promise<NormalizedMeeting[]> {
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new GraphConfigError("listMeetingsBetween: start and end must be valid dates");
+  }
 
   const accessToken = await getAccessToken(connectionId);
 
-  const now = new Date();
-  const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-
   const initial = new URL(`${GRAPH_BASE}/me/calendarView`);
-  initial.searchParams.set("startDateTime", now.toISOString());
+  initial.searchParams.set("startDateTime", start.toISOString());
   initial.searchParams.set("endDateTime", end.toISOString());
   initial.searchParams.set("$select", CALENDAR_VIEW_SELECT);
   initial.searchParams.set("$orderby", "start/dateTime");
