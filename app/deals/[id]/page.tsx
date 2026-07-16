@@ -67,8 +67,12 @@ async function loadLiveMagayaDeal(id: string) {
     const sentMessages = await getSentMessages(deal.id).catch(() => []);
     // TEMP debug: reveal what the server actually read for this deal, so a
     // stale render can be diagnosed from Vercel Runtime Logs. Remove after.
+    // Read the URL dynamically (bracket + variable key) so it reflects the
+    // RUNTIME value supabaseAdmin actually connects to, not the build-time
+    // inlined NEXT_PUBLIC_ literal.
+    const dbUrlKey = "NEXT_PUBLIC_SUPABASE_URL";
     console.log(
-      `[deal-debug] db=${process.env.NEXT_PUBLIC_SUPABASE_URL} id=${deal.id} fw=${framework.name} fwId=${framework.id} fields=${framework.fields.length} msgs=${sentMessages.length}`,
+      `[deal-debug] db=${process.env[dbUrlKey]} id=${deal.id} fw=${framework.name} fwId=${framework.id} fields=${framework.fields.length} msgs=${sentMessages.length}`,
     );
     return { deal, framework, upcomingCall, rolldogSummary, croRead, sentMessages };
   } catch (err) {
