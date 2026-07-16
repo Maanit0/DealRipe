@@ -17,6 +17,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getDealForTenant, getUpcomingCallForDeal } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
+// Always render from live data. Without this, Next.js caches the rendered deal
+// page per URL and never re-reads Supabase, so framework changes, new
+// extractions, and freshly sent recaps don't show until the cache is busted.
+export const dynamic = "force-dynamic";
+
 // Live Magaya deals have UUID ids; the TopSort demo uses slug ids.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

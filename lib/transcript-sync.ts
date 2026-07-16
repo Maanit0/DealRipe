@@ -45,7 +45,7 @@ import {
 import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
 import { writeBackDealToRolldog } from "./rolldog-writeback";
-import { getBot, getTranscript, type BotStatus } from "./recall";
+import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { supabaseAdmin } from "./supabase";
 
 export type TranscriptSyncCounts = {
@@ -193,6 +193,16 @@ async function processRow(
       rawStatus: bot.rawStatusCode,
     });
     return;
+  }
+
+  // Record the call's real duration (best-effort) from the bot's recording
+  // timestamps, so the deal page shows actual minutes instead of 0.
+  const durationMin = recordingDurationMinutes(bot);
+  if (durationMin !== null) {
+    const durUpd = await db.from("calls").update({ duration_minutes: durationMin }).eq("id", callId);
+    if (durUpd.error) {
+      console.error(`[transcript-sync] duration update failed for call ${callId}: ${durUpd.error.message}`);
+    }
   }
 
   // ----- 2. Pull the transcript from Recall. -----

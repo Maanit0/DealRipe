@@ -213,6 +213,38 @@ export async function getBot(botId: string): Promise<BotResource> {
 }
 
 /**
+ * Recording duration in whole minutes, computed from the bot's status_changes
+ * timestamps: from when recording started (in_call_recording) to when it ended
+ * (recording_done, or call_ended as a fallback). Returns null if the timestamps
+ * aren't both present. Defensive on the timestamp field name across Recall
+ * response shapes (created_at / ts / timestamp).
+ */
+export function recordingDurationMinutes(bot: BotResource): number | null {
+  const raw = bot.raw;
+  if (!isRecord(raw)) return null;
+  const changes = raw.status_changes;
+  if (!Array.isArray(changes)) return null;
+
+  const tsOf = (code: string): number | null => {
+    for (let i = changes.length - 1; i >= 0; i--) {
+      const c = changes[i];
+      if (!isRecord(c) || c.code !== code) continue;
+      const t = c.created_at ?? c.ts ?? c.timestamp;
+      if (typeof t === "string") {
+        const ms = Date.parse(t);
+        if (!Number.isNaN(ms)) return ms;
+      }
+    }
+    return null;
+  };
+
+  const start = tsOf("in_call_recording");
+  const end = tsOf("recording_done") ?? tsOf("call_ended");
+  if (start === null || end === null || end <= start) return null;
+  return Math.max(1, Math.round((end - start) / 60_000));
+}
+
+/**
  * POST /api/v1/recording/{recording_id}/create_transcript/
  *
  * Kicks off async transcription on a completed recording. Uses Recall's
