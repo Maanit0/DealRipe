@@ -17,8 +17,11 @@ import {
   buildMagayaBriefingUserMessage,
   nextStageOf,
   openGapsForStage,
+  openGapsUpToStage,
   type ExtractionMap,
 } from "./briefing-magaya";
+import { inferStageKey } from "./deal-state";
+import type { ExtractionResult } from "./scotsman";
 import type { Framework } from "./framework";
 import type { Deal } from "./seed-data";
 
@@ -75,9 +78,18 @@ export type BriefingState = {
 export async function generateBriefingFromState(
   state: BriefingState,
 ): Promise<MagayaBriefing | null> {
-  const { framework, extraction, stageKey } = state;
+  const { framework, extraction } = state;
+  // Brief against the stage the calls actually show, not a stale/absent CRM
+  // stage: if the deal has captured signal beyond state.stageKey, use that.
+  const stageKey = inferStageKey(
+    framework,
+    extraction as unknown as ExtractionResult,
+    state.stageKey,
+  );
   const next = nextStageOf(stageKey);
-  const currentGaps = openGapsForStage(framework, extraction, stageKey);
+  // Open gaps at AND beneath the effective stage, so an advanced deal still gets
+  // asked about critical un-filled gaps lower down, not just its current slice.
+  const currentGaps = openGapsUpToStage(framework, extraction, stageKey);
   const nextGaps = next ? openGapsForStage(framework, extraction, next) : [];
 
   const resp = await getAnthropicClient().messages.create({

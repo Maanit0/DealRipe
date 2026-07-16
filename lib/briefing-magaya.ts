@@ -66,6 +66,38 @@ export function openGapsForStage(
   return out;
 }
 
+/**
+ * Open gaps at every stage up to AND including the given stage. Use this so a
+ * briefing for an advanced deal still surfaces critical un-filled gaps beneath
+ * it (e.g. Budget at SQL2 when the deal is at SQL4), instead of only the current
+ * stage's slice. Ordered by stage.
+ */
+export function openGapsUpToStage(
+  framework: Framework,
+  extraction: ExtractionMap,
+  stage: string,
+): Gap[] {
+  const rank = (k: string | null): number => {
+    const m = (k ?? "").match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+  };
+  const ceiling = rank(stage);
+  const out: Gap[] = [];
+  for (const f of framework.fields) {
+    if (!f.stageKey || rank(f.stageKey) > ceiling) continue;
+    const status = extraction[f.fieldKey]?.status;
+    if (status === "Yes") continue;
+    out.push({
+      fieldKey: f.fieldKey,
+      label: f.label,
+      question: f.question,
+      stageKey: f.stageKey,
+      status: status === "No" ? "No" : "Unknown",
+    });
+  }
+  return out.sort((a, b) => rank(a.stageKey) - rank(b.stageKey));
+}
+
 export function buildMagayaBriefingSystemPrompt(framework: Framework): string {
   return `You write pre-call briefings for B2B sales reps using the ${framework.name} qualification framework. The briefing arms the rep for their next customer call so they advance the deal toward the next stage gate and toward commitment. It is concise, scannable, and rep-facing.
 

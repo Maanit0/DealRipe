@@ -70,3 +70,20 @@ export function deriveDealState(
 
   return { confirmed, total, stageKey, reachedStageKey, topGaps: topGaps.slice(0, 5), nextStepAnswer };
 }
+
+/**
+ * The stage to brief/qualify against. When a CRM stage exists it's the floor,
+ * but if the calls have already captured signal at a HIGHER stage (common when
+ * a deal isn't in Rolldog, or Rolldog is stale, so reps never logged the real
+ * progress), we use what the calls show. This stops briefings from asking SQL1
+ * basics on a deal that's demonstrably at SQL3/SQL4.
+ */
+export function inferStageKey(
+  framework: Framework,
+  extraction: ExtractionResult,
+  fallbackStageKey: string,
+): string {
+  const { reachedStageKey } = deriveDealState(framework, extraction, fallbackStageKey);
+  if (!reachedStageKey) return fallbackStageKey;
+  return rank(reachedStageKey) > rank(fallbackStageKey) ? reachedStageKey : fallbackStageKey;
+}
