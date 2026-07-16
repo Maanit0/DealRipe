@@ -20,6 +20,7 @@ import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal, rolldogOppIdForDeal } from "./pilot-config";
+import { recordSentMessage } from "./sent-messages";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
@@ -259,8 +260,10 @@ async function processEvent(
     minutesUntil,
   });
 
+  let providerId: string | null = null;
   try {
-    await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
+    const res = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
+    providerId = res.id || null;
   } catch (err) {
     if (err instanceof MailerConfigError) {
       emit({ kind: "skip", eventId: ev.eventId, reason: `mailer not configured: ${err.message}` });
@@ -268,6 +271,19 @@ async function processEvent(
     }
     throw err;
   }
+
+  // Archive the exact briefing that was sent (best-effort, never blocks).
+  await recordSentMessage({
+    tenantId,
+    dealId,
+    callId: callRow.data.id,
+    kind: "briefing",
+    toEmail: to,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    providerId,
+  });
 
   // Mark sent so the next scan does not resend.
   const upd = await db

@@ -649,6 +649,48 @@ export type Database = {
         };
         Relationships: [];
       };
+      sent_messages: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          call_id: string | null;
+          kind: string;
+          to_email: string;
+          subject: string;
+          body_html: string;
+          body_text: string;
+          provider_id: string | null;
+          sent_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          call_id?: string | null;
+          kind: string;
+          to_email: string;
+          subject: string;
+          body_html: string;
+          body_text: string;
+          provider_id?: string | null;
+          sent_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          call_id?: string | null;
+          kind?: string;
+          to_email?: string;
+          subject?: string;
+          body_html?: string;
+          body_text?: string;
+          provider_id?: string | null;
+          sent_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: { [_ in never]: never };

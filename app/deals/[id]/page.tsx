@@ -12,6 +12,7 @@ import {
   type RolldogSummary,
 } from "@/lib/rolldog-summary";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
+import { getSentMessages } from "@/lib/sent-messages";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getDealForTenant, getUpcomingCallForDeal } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
@@ -58,7 +59,8 @@ async function loadLiveMagayaDeal(id: string) {
 
     const upcomingCall = await getUpcomingCallForDeal(tenantId, deal.id);
     const croRead: CroRead | null = await getCroRead(deal.id).catch(() => null);
-    return { deal, framework, upcomingCall, rolldogSummary, croRead };
+    const sentMessages = await getSentMessages(deal.id).catch(() => []);
+    return { deal, framework, upcomingCall, rolldogSummary, croRead, sentMessages };
   } catch (err) {
     console.error("[magaya deal] load failed:", err);
     return null; // Supabase not configured / magaya tenant absent -> demo path
@@ -77,6 +79,7 @@ export default async function DealPage({ params }: { params: { id: string } }) {
         upcomingCall={live.upcomingCall}
         rolldogSummary={live.rolldogSummary}
         croRead={live.croRead}
+        sentMessages={live.sentMessages}
       />
     );
   } else {

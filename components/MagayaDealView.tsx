@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { ContactsCard } from "./ContactsCard";
 import { CroReadCard } from "./CroReadCard";
+import { SentCommsCard } from "./SentCommsCard";
 import { TeamsCallsCard } from "./TeamsCallsCard";
 import { MagayaOpportunityControl } from "./MagayaOpportunityControl";
 import type { CroRead } from "@/lib/cro-read";
+import type { SentMessage } from "@/lib/sent-messages";
 import type { Framework } from "@/lib/framework";
 import { frameworkProgress } from "@/lib/framework-stages";
 import type { Deal } from "@/lib/seed-data";
@@ -25,12 +27,14 @@ export function MagayaDealView({
   upcomingCall,
   rolldogSummary,
   croRead,
+  sentMessages = [],
 }: {
   deal: Deal;
   framework: Framework;
   upcomingCall?: UpcomingCall | null;
   rolldogSummary?: RolldogSummary | null;
   croRead?: CroRead | null;
+  sentMessages?: SentMessage[];
 }) {
   const upcoming = upcomingCall ? describeUpcomingCall(upcomingCall) : null;
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
@@ -134,6 +138,8 @@ export function MagayaDealView({
           </Link>
         </div>
       </div>
+
+      <SentCommsCard messages={sentMessages} />
     </div>
   );
 }

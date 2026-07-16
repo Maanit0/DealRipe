@@ -17,6 +17,7 @@ import { MailerConfigError, sendEmail } from "./mailer";
 import { repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
 import { generatePostCallSummary } from "./post-call-summary";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import { recordSentMessage } from "./sent-messages";
 import { getDealExtraction } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 
@@ -104,6 +105,17 @@ export async function sendPostCallSummary(args: {
       subject: email.subject,
       html: email.html,
       text: email.text,
+    });
+    // Archive the exact recap that was sent (best-effort, never blocks).
+    await recordSentMessage({
+      tenantId: args.tenantId,
+      dealId: dealRow.data.id,
+      kind: "recap",
+      toEmail: to,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      providerId: res.id || null,
     });
     return { sent: true, to, reason: `resend id ${res.id}` };
   } catch (err) {
