@@ -46,6 +46,7 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
 import { writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
+import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
 import { supabaseAdmin } from "./supabase";
 
 export type TranscriptSyncCounts = {
@@ -358,6 +359,39 @@ async function processRow(
       console.error(
         `[transcript-sync] rolldog write-back threw for call ${callId}:`,
         wbErr instanceof Error ? wbErr.message : wbErr,
+      );
+    }
+
+    // Best-effort: add the customer-side people named on the call to the deal
+    // so the Contacts card populates itself. Deduped by name; fully isolated so
+    // it can never affect ingest status or the delete step.
+    try {
+      const dealRow = await db
+        .from("deals")
+        .select("id, account")
+        .eq("tenant_id", tenantId)
+        .eq("external_id", ingestResult.dealExternalId)
+        .maybeSingle();
+      if (dealRow.data) {
+        const people = await extractContactsFromTranscript({
+          transcript,
+          account: dealRow.data.account,
+        });
+        const res = await upsertDealContacts({
+          tenantId,
+          dealId: dealRow.data.id,
+          contacts: people,
+        });
+        if (res.inserted > 0) {
+          console.log(
+            `[transcript-sync] added ${res.inserted} contact(s) to ${ingestResult.dealExternalId} (skipped ${res.skipped} existing)`,
+          );
+        }
+      }
+    } catch (cErr) {
+      console.error(
+        `[transcript-sync] contact extraction threw for call ${callId}:`,
+        cErr instanceof Error ? cErr.message : cErr,
       );
     }
   } catch (err) {

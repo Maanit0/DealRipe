@@ -293,3 +293,17 @@ After this file is fully done, the next tasks wire the migration script and the 
 - **`gen_random_uuid` does not exist.** The `pgcrypto` extension didn't enable. Run `create extension if not exists pgcrypto;` and retry.
 - **`permission denied for schema public`.** You ran the drop-schema cleanup but didn't regrant. Run the grant block from section 3.
 - **Trigger fires on every row but you wanted to disable it temporarily.** Don't. The whole point is that there is no escape hatch except `service_role`. If you need to bulk-load, do it via service role with explicit, correct `tenant_id` on every row.
+
+---
+
+## Caching: reads must be live (do not remove `no-store`)
+
+**The Supabase clients in `lib/supabase.ts` are created with `global.fetch` forcing `cache: "no-store"`. Do not remove this.**
+
+Next.js App Router patches the global `fetch` to cache responses in its **Data Cache**, which is persistent and **survives redeploys** (it is not cleared by a normal deploy, nor by an "ignore build cache" rebuild). `supabase-js` issues its queries through `fetch`, so without `no-store` every Supabase read is eligible for caching keyed by its query URL. The failure mode is nasty and hard to diagnose: you fix data in the database, but the app keeps serving a stale read from before the change, indefinitely, while a *different* query (different URL) on the same page shows fresh data. `export const dynamic = "force-dynamic"` on a route does **not** reliably prevent this for individual `supabase-js` fetches.
+
+Rules to keep this from recurring:
+
+1. Keep `cache: "no-store"` on both `supabaseClient()` and `supabaseAdmin()` in `lib/supabase.ts`.
+2. Never cache database rows in a process-wide / module-level structure (e.g. a top-level `Map`). Such a cache outlives a runtime data change until the serverless instance is recycled, producing the same class of stale-read bug. If you need per-request de-duplication, wrap the loader in React's `cache()` (request-scoped, discarded at request end), as `loadFramework` in `lib/framework.ts` does.
+3. If you ever want a specific read cached for performance, opt in deliberately per query (e.g. `{ next: { revalidate: N } }`), never rely on the default.
