@@ -40,17 +40,18 @@ export function DealStateCard({ state }: { state: DealState }) {
 
       <p className="text-[13px] leading-relaxed text-ink mt-2">
         {reachedStageKey ? (
-          <>
-            Captured signal reaches <span className="font-semibold">{label(reachedStageKey)}</span>
-            {aheadOfStage ? (
-              <>
-                , ahead of the deal&rsquo;s {label(stageKey)} stage, so the story is running
-                faster than the gates beneath it are filled.
-              </>
-            ) : (
-              <>.</>
-            )}
-          </>
+          aheadOfStage ? (
+            <>
+              The calls have reached <span className="font-semibold">{label(reachedStageKey)}</span>{" "}
+              topics, but {topGaps.length} earlier gate{topGaps.length === 1 ? "" : "s"} below are
+              still unconfirmed. The deal sounds advanced, but its qualification has gaps underneath
+              (see below).
+            </>
+          ) : (
+            <>
+              Furthest confirmed gate is at <span className="font-semibold">{label(reachedStageKey)}</span>.
+            </>
+          )
         ) : (
           <>No gates confirmed yet.</>
         )}

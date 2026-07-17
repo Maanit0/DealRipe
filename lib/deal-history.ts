@@ -10,10 +10,17 @@ import { supabaseAdmin } from "./supabase";
 
 export type GateAttribution = { callId: string; callDate: string | null };
 
+export type TimelineGate = {
+  fieldKey: string;
+  label: string;
+  answer: string | null;
+  evidence: string | null;
+};
+
 export type TimelineEntry = {
   callId: string;
   callDate: string | null;
-  confirmed: Array<{ fieldKey: string; label: string }>;
+  confirmed: TimelineGate[];
 };
 
 export type DealHistory = {
@@ -31,7 +38,7 @@ export async function getDealHistory(
   const db = supabaseAdmin();
   const fx = await db
     .from("field_extractions")
-    .select("framework_field_key, last_updated_from_call_id")
+    .select("framework_field_key, last_updated_from_call_id, answer, evidence")
     .eq("tenant_id", tenantId)
     .eq("deal_id", dealId)
     .eq("status", "Yes")
@@ -49,13 +56,15 @@ export async function getDealHistory(
       .select("id, call_date, scheduled_start")
       .in("id", callIds);
     for (const c of calls.data ?? []) {
-      dateByCall[c.id] = c.call_date ?? c.scheduled_start ?? null;
+      // Prefer the meeting timestamp (has a time, unambiguous) over a date-only
+      // call_date, which is prone to off-by-one when rendered across timezones.
+      dateByCall[c.id] = c.scheduled_start ?? c.call_date ?? null;
     }
   }
 
   const labelByKey = new Map(framework.fields.map((f) => [f.fieldKey, f.label]));
   const perGate: Record<string, GateAttribution> = {};
-  const byCall = new Map<string, Array<{ fieldKey: string; label: string }>>();
+  const byCall = new Map<string, TimelineGate[]>();
   for (const r of rows) {
     const callId = r.last_updated_from_call_id as string;
     perGate[r.framework_field_key] = { callId, callDate: dateByCall[callId] ?? null };
@@ -63,6 +72,8 @@ export async function getDealHistory(
     list.push({
       fieldKey: r.framework_field_key,
       label: labelByKey.get(r.framework_field_key) ?? r.framework_field_key,
+      answer: r.answer ?? null,
+      evidence: r.evidence ?? null,
     });
     byCall.set(callId, list);
   }
