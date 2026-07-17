@@ -15,6 +15,7 @@
  */
 
 import type { Json } from "./database.types";
+import { inferStageKey } from "./deal-state";
 import type { Framework } from "./framework";
 import {
   frameworkProgress,
@@ -80,7 +81,10 @@ export function buildSignals(deal: Deal, framework: Framework): DealSignals {
     .map((f) => f.fieldKey);
 
   return {
-    stage: deal.stageKey,
+    // Calls-first stage: what the extraction proves, not the (possibly stale or
+    // absent) CRM stage. Keeps the snapshot, digest, and forecast on the same
+    // truth as the briefing and deal page.
+    stage: inferStageKey(framework, deal.extraction, deal.stageKey),
     amount: deal.arr,
     closeDate: deal.repForecastCloseDate,
     daysInStage: deal.daysInStage,

@@ -14,9 +14,9 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
 import { MailerConfigError, sendEmail } from "./mailer";
-import { repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
+import { getDealContext } from "./deal-context";
+import { repEmailForDeal } from "./pilot-config";
 import { generatePostCallSummary } from "./post-call-summary";
-import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { recordSentMessage } from "./sent-messages";
 import { getDealExtraction } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
@@ -78,18 +78,20 @@ export async function sendPostCallSummary(args: {
       }; using this call's extraction`,
     );
   }
+  // Stage is calls-first (from the canonical deal context), so the recap's
+  // "where it stands" agrees with the briefing and the deal page rather than
+  // deferring to a stale/absent CRM stage. Best-effort: fall back to the deal's
+  // stored stage if the context can't be built.
   let stageKey = dealRow.data.stage_key;
-  const opp = rolldogOppIdForDeal(args.dealExternalId);
-  if (opp) {
-    try {
-      stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? dealRow.data.stage_key;
-    } catch (err) {
-      console.warn(
-        `[post-call] rolldog stage read failed for opp ${opp}: ${
-          err instanceof Error ? err.message : String(err)
-        }; using deal stage`,
-      );
-    }
+  try {
+    const ctx = await getDealContext(args.tenantId, dealRow.data.id);
+    if (ctx) stageKey = ctx.effectiveStageKey;
+  } catch (err) {
+    console.warn(
+      `[post-call] deal context read failed for ${args.dealExternalId}: ${
+        err instanceof Error ? err.message : String(err)
+      }; using deal stage`,
+    );
   }
 
   const summary = await generatePostCallSummary({
