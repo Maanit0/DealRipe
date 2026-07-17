@@ -10,6 +10,7 @@ import {
 import type { Deal } from "@/lib/seed-data";
 import { describeUpcomingCall, type UpcomingCall } from "@/lib/supabase-queries";
 import { daysSince, type RolldogSummary } from "@/lib/rolldog-summary";
+import { deriveDealState } from "@/lib/deal-state";
 
 const STAGE_LABELS: Record<string, string> = {
   SQL0: "Lead",
@@ -31,6 +32,8 @@ type Row = {
   category: "Commit" | "Expect" | "Pipeline";
   mismatch: boolean;
   health: Health;
+  /** DealRipe evidence-based risk flags (the "why"), most important first. */
+  reasons: string[];
 };
 
 function stageRank(key: string): number {
@@ -232,6 +235,13 @@ export function MagayaPipeline({
                             : `${row.currentOpen} open for ${row.deal.stageKey}`}
                         </div>
                       )}
+                      {row.reasons
+                        .filter((r) => r !== "Rep committed above the evidence")
+                        .map((r) => (
+                          <div key={r} className="text-[11px] text-danger mt-0.5">
+                            {r}
+                          </div>
+                        ))}
                     </td>
                   </tr>
                 ))}
@@ -280,9 +290,32 @@ function buildRow(deal: Deal, framework: Framework): Row {
   // The rep is confident (Commit/Expect) but the calls don't back it.
   const mismatch = category !== "Pipeline" && completion < 0.6;
 
+  // DealRipe evidence-based risk flags, from what the calls actually captured.
+  const ds = deriveDealState(framework, deal.extraction, deal.stageKey);
+  const reachedRank = ds.reachedStageKey ? stageRank(ds.reachedStageKey) : -1;
+  const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+
+  const unengagedEB = deal.contacts.some(
+    (c) => c.relationship === "economic_buyer" && !c.lastContactedAt,
+  );
+  // Only a risk once the deal is advanced (proposal+); an un-engaged buyer on a
+  // fresh lead is normal.
+  const unengagedEBRisk = unengagedEB && reachedRank >= 3;
+  const aheadWithGaps =
+    ds.reachedStageKey !== null &&
+    reachedRank > stageRank(deal.stageKey) &&
+    ds.topGaps.length > 0;
+  const hadNoShow = deal.calls.some((c) => c.outcome && NO_CONTENT.has(c.outcome));
+
+  const reasons: string[] = [];
+  if (unengagedEBRisk) reasons.push("Economic buyer never engaged");
+  if (mismatch) reasons.push("Rep committed above the evidence");
+  if (aheadWithGaps) reasons.push(`Advanced on calls, ${ds.topGaps.length} gaps beneath`);
+  if (hadNoShow) reasons.push("A recent call was a no-show");
+
   const lateStage = stageRank(deal.stageKey) >= 4;
   let health: Health = "healthy";
-  if (mismatch || (lateStage && currentOpen > 0)) health = "at_risk";
+  if (mismatch || (lateStage && currentOpen > 0) || unengagedEBRisk) health = "at_risk";
   else if (deal.daysInStage > 21) health = "stalled";
 
   return {
@@ -294,6 +327,7 @@ function buildRow(deal: Deal, framework: Framework): Row {
     category,
     mismatch,
     health,
+    reasons,
   };
 }
 
