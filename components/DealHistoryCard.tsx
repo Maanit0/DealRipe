@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TimelineEntry } from "@/lib/deal-history";
 
 function fmt(iso: string | null): string {
@@ -21,7 +22,13 @@ function fmt(iso: string | null): string {
  * it confirmed with the verbatim quote behind each, so a sales leader can go
  * back and review any single meeting.
  */
-export function DealHistoryCard({ timeline }: { timeline: TimelineEntry[] }) {
+export function DealHistoryCard({
+  dealId,
+  timeline,
+}: {
+  dealId: string;
+  timeline: TimelineEntry[];
+}) {
   return (
     <div className="bg-white rounded-xl2 shadow-card border border-line px-6 py-5">
       <h2 className="text-[15px] font-semibold text-ink">Deal progression</h2>
@@ -61,12 +68,22 @@ export function DealHistoryCard({ timeline }: { timeline: TimelineEntry[] }) {
                       <div className="text-[12.5px] text-ink leading-snug mt-0.5">{g.answer}</div>
                     )}
                     {g.evidence && (
-                      <div className="text-[12px] text-muted italic leading-snug mt-0.5">
+                      <Link
+                        href={`/deals/${dealId}/calls/${entry.callId}/transcript?q=${encodeURIComponent(g.evidence)}`}
+                        className="block text-[12px] text-muted italic leading-snug mt-0.5 hover:text-ink transition"
+                        title="Open the transcript at this quote"
+                      >
                         &ldquo;{g.evidence}&rdquo;
-                      </div>
+                      </Link>
                     )}
                   </div>
                 ))}
+                <Link
+                  href={`/deals/${dealId}/calls/${entry.callId}/transcript`}
+                  className="inline-block text-[11px] font-semibold text-accent hover:underline mt-1"
+                >
+                  View full transcript →
+                </Link>
               </div>
             </details>
           ))}

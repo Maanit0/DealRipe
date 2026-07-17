@@ -112,6 +112,7 @@ export function MagayaDealView({
           framework={framework}
           extraction={deal.extraction}
           currentStageKey={deal.stageKey}
+          dealId={deal.id}
           capturedByField={history?.perGate ?? {}}
         />
         <div className="space-y-5">
@@ -150,7 +151,7 @@ export function MagayaDealView({
       </div>
 
       {history && history.timeline.length > 0 && (
-        <DealHistoryCard timeline={history.timeline} />
+        <DealHistoryCard dealId={deal.id} timeline={history.timeline} />
       )}
 
       <SentCommsCard messages={sentMessages} />

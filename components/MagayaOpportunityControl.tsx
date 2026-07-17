@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Framework } from "@/lib/framework";
 import type { ExtractionResult } from "@/lib/scotsman";
 import {
@@ -31,13 +32,16 @@ function fmtCaptured(iso: string | null | undefined): string {
   }
 }
 
-type Attribution = Record<string, { callDate: string | null }>;
+type Attribution = Record<string, { callId: string; callDate: string | null }>;
 
 type Props = {
   framework: Framework;
   extraction: ExtractionResult;
   currentStageKey: string;
-  /** fieldKey -> which call captured it, for inline "captured Jul 16" tags. */
+  /** Deal id, for linking a gate's quote to the call transcript. */
+  dealId?: string;
+  /** fieldKey -> which call captured it, for inline "captured Jul 16" tags and
+   *  the transcript link on the quote. */
   capturedByField?: Attribution;
 };
 
@@ -45,6 +49,7 @@ export function MagayaOpportunityControl({
   framework,
   extraction,
   currentStageKey,
+  dealId,
   capturedByField = {},
 }: Props) {
   const stages = frameworkStages(framework);
@@ -96,6 +101,7 @@ export function MagayaOpportunityControl({
             stage={stage}
             extraction={extraction}
             capturedByField={capturedByField}
+            dealId={dealId}
           />
         ))}
       </div>
@@ -107,10 +113,12 @@ function StageSection({
   stage,
   extraction,
   capturedByField,
+  dealId,
 }: {
   stage: FrameworkStage;
   extraction: ExtractionResult;
   capturedByField: Attribution;
+  dealId?: string;
 }) {
   const gate = stageGateStatus(stage, extraction);
   const open = gate.total - gate.met;
@@ -145,9 +153,19 @@ function StageSection({
                 {entry?.status === "Yes" && (
                   <div className="mt-1.5 space-y-1">
                     <div className="text-[12.5px] text-ink leading-snug">{entry.answer}</div>
-                    <div className="text-[12px] text-muted italic leading-snug">
-                      &ldquo;{entry.evidence}&rdquo;
-                    </div>
+                    {dealId && capturedByField[f.fieldKey]?.callId ? (
+                      <Link
+                        href={`/deals/${dealId}/calls/${capturedByField[f.fieldKey]?.callId}/transcript?q=${encodeURIComponent(entry.evidence)}`}
+                        className="block text-[12px] text-muted italic leading-snug hover:text-ink transition"
+                        title="Open the transcript at this quote"
+                      >
+                        &ldquo;{entry.evidence}&rdquo;
+                      </Link>
+                    ) : (
+                      <div className="text-[12px] text-muted italic leading-snug">
+                        &ldquo;{entry.evidence}&rdquo;
+                      </div>
+                    )}
                     {capturedByField[f.fieldKey]?.callDate && (
                       <div className="text-[10px] uppercase tracking-wider font-semibold text-accent/80">
                         Captured {fmtCaptured(capturedByField[f.fieldKey]?.callDate)}
