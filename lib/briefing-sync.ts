@@ -13,16 +13,13 @@
  * on. Never throws mid-scan for a single bad meeting.
  */
 
-import type { ExtractionMap } from "./briefing-magaya";
-import { attendeesFrom, generateBriefingFromState } from "./generate-briefing";
-import { loadFramework } from "./framework";
+import { generateBriefingFromState } from "./generate-briefing";
 import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
-import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal, rolldogOppIdForDeal } from "./pilot-config";
+import { briefingStateFromContext, getDealContext } from "./deal-context";
+import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-config";
 import { recordSentMessage } from "./sent-messages";
-import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
-import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
@@ -206,37 +203,18 @@ async function processEvent(
     return;
   }
 
-  // Load the full deal + framework and generate the briefing.
-  const deal = await getDealForTenant(tenantId, dealId);
-  if (!deal) throw new Error(`getDealForTenant returned null for ${dealId}`);
-  if (!dealRow.data.framework_id) throw new Error(`deal ${dealId} has no framework`);
-  const framework = await loadFramework(tenantId, dealRow.data.framework_id);
-  if (!framework) throw new Error(`loadFramework returned null for ${dealRow.data.framework_id}`);
+  // Build the canonical deal context: calls-first stage, call-verified
+  // extraction, contact-derived attendees. Rolldog informs the stage only as a
+  // fallback; it never overrides what the calls show. Same source the in-app
+  // preview reads, so the two briefings match.
+  const ctx = await getDealContext(tenantId, dealId);
+  if (!ctx) throw new Error(`getDealContext returned null for ${dealId}`);
 
-  // Confirmed-vs-gap is sourced from the deal's call-verified extraction only,
-  // so the briefing matches the deal page and never treats a stale CRM entry as
-  // covered. Rolldog is read (light) only for the current stage. Best-effort:
-  // if it fails or the deal has no mapped opp, fall back to the deal's stage.
-  const extraction = deal.extraction as unknown as ExtractionMap;
-  let stageKey = deal.stageKey;
-  const opp = rolldogOppIdForDeal(dealExternalId);
-  if (opp) {
-    try {
-      stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? deal.stageKey;
-    } catch (err) {
-      console.warn(
-        `[briefing-sync] rolldog stage read failed for opp ${opp}: ${
-          err instanceof Error ? err.message : String(err)
-        }; using deal stage`,
-      );
-    }
-  }
-
-  // Attendees with roles, matching the in-app briefing header. Falls back to
-  // the meeting's raw attendee names if the deal has no contacts yet.
+  // Attendees with roles when we have contacts; otherwise fall back to the
+  // meeting's raw attendee names.
   const attendees =
-    deal.contacts.length > 0
-      ? attendeesFrom(deal)
+    ctx.contacts.length > 0
+      ? ctx.attendees
       : ev.attendees
           .map((a) => a.name || a.email)
           .filter((n): n is string => typeof n === "string" && n.length > 0)
@@ -244,18 +222,14 @@ async function processEvent(
           .join("; ") || undefined;
 
   const briefing = await generateBriefingFromState({
-    account: deal.account,
-    stageKey,
-    closeDate: deal.repForecastCloseDate || undefined,
-    attendees: attendees ?? `the ${deal.account} team`,
-    framework,
-    extraction,
+    ...briefingStateFromContext(ctx),
+    attendees: attendees ?? `the ${ctx.account} team`,
   });
   if (!briefing) throw new Error("briefing generation returned null");
 
   const email = renderPreCallBriefingEmail(briefing, {
-    account: deal.account,
-    stageKey,
+    account: ctx.account,
+    stageKey: ctx.effectiveStageKey,
     attendees,
     minutesUntil,
   });
@@ -299,5 +273,5 @@ async function processEvent(
   }
 
   counts.sent += 1;
-  emit({ kind: "sent", account: deal.account, eventId: ev.eventId, to, minutesUntil });
+  emit({ kind: "sent", account: ctx.account, eventId: ev.eventId, to, minutesUntil });
 }
