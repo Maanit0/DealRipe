@@ -38,6 +38,29 @@ const RELATIONSHIPS = new Set<ContactRelationship>([
 ]);
 
 /**
+ * A contact is worth showing a CRO only if it's a real stakeholder. Keep anyone
+ * with a defined relationship (including a mentioned-only economic buyer, that's
+ * the un-engaged-buyer signal), but drop the noise the LLM sometimes grabs from
+ * scheduling/email logistics: an "unknown" relationship with no substantive role
+ * or a placeholder role like "unknown internal stakeholder". This is what keeps
+ * "Unknown internal stakeholder" out of the pipeline-review brief.
+ */
+export function isMeaningfulContact(c: {
+  relationship?: string | null;
+  role?: string | null;
+}): boolean {
+  const rel = (c.relationship ?? "").toLowerCase().trim();
+  const role = (c.role ?? "").toLowerCase().trim();
+  if (rel && rel !== "unknown") return true;
+  const junkRole =
+    !role ||
+    /unknown|mentioned|scheduling|shared .*email|internal stakeholder|copied|cc'?d/.test(
+      role,
+    );
+  return !junkRole;
+}
+
+/**
  * Extract the named, customer-side individuals from a transcript. Excludes the
  * seller's own reps and non-person groups ("the board", "operations team").
  * Returns [] on any failure or if the API key is unset.
@@ -61,6 +84,7 @@ Rules:
 - relationship: champion = the main advocate/driver on the call; economic_buyer = controls budget or gives final sign-off; influencer = weighs in on the decision; user = hands-on end user; unknown = unclear.
 - onCall: true if this person actually spoke or participated in THIS call; false if they were only mentioned or referenced but were not present.
 - evidence: one short verbatim quote from the transcript that supports the person and their role.
+- EXCLUDE people who only appear in scheduling or email logistics (copied on an intro email, set up the meeting) with no substantive role in the evaluation. Do NOT invent placeholder entries like "Unknown internal stakeholder". If someone's role AND relationship are both unclear and they did not participate substantively, omit them entirely.
 - If there are no named individuals, return [].`;
 
   try {
@@ -157,6 +181,11 @@ export async function upsertDealContacts(args: {
   for (const c of args.contacts) {
     const key = c.name.toLowerCase();
     if (have.has(key)) {
+      skipped += 1;
+      continue;
+    }
+    // Never store scheduling/logistics noise as a stakeholder.
+    if (!isMeaningfulContact(c)) {
       skipped += 1;
       continue;
     }

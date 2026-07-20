@@ -1,3 +1,4 @@
+import { isMeaningfulContact } from "@/lib/contacts-extract";
 import type { Contact } from "@/lib/seed-data";
 
 type Props = {
@@ -21,16 +22,19 @@ const RELATIONSHIP_STYLE: Record<Contact["relationship"], string> = {
 };
 
 export function ContactsCard({ contacts }: Props) {
+  // Hide scheduling/logistics noise ("Unknown internal stakeholder") that the
+  // extractor may have stored before the filter existed.
+  const shown = contacts.filter((c) => isMeaningfulContact(c));
   return (
     <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
       <div className="px-5 py-4 border-b border-line">
         <h2 className="text-[15px] font-semibold text-ink">Contacts</h2>
         <p className="text-[12px] text-muted mt-0.5">
-          {contacts.length} people on the account
+          {shown.length} people on the account
         </p>
       </div>
       <div className="divide-y divide-line">
-        {contacts.map((c) => (
+        {shown.map((c) => (
           <div key={c.id} className="px-5 py-3.5 flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[13px] font-semibold text-ink leading-snug truncate">

@@ -47,6 +47,9 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
   "80189", // Seino Logix (Eduardo). Japan; approved to include (Maanit, 2026-07).
   "81531", // Capito Enterprises (Juan). Added 2026-07 at Juan's request.
   "81473", // CLT AIR (Juan). Added 2026-07 at Juan's request.
+  "82396", // Extrum (Juan). ID confirmed by Mark Buman on the 2026-07-20 call.
+  "82359", // Core Logistics International (Juan). Confirmed by Mark 2026-07-20;
+           // Salesforce says qualified, Rolldog shows unqualified (their sync gap).
 ]);
 
 /**

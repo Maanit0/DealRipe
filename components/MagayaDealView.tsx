@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AttendanceCard } from "./AttendanceCard";
 import { ContactsCard } from "./ContactsCard";
 import { CroReadCard } from "./CroReadCard";
 import { DealStateCard } from "./DealStateCard";
@@ -6,6 +7,7 @@ import { DealHistoryCard } from "./DealHistoryCard";
 import { SentCommsCard } from "./SentCommsCard";
 import { deriveDealState } from "@/lib/deal-state";
 import type { DealHistory } from "@/lib/deal-history";
+import type { DealAttendance } from "@/lib/attendance";
 import { TeamsCallsCard } from "./TeamsCallsCard";
 import { MagayaOpportunityControl } from "./MagayaOpportunityControl";
 import type { CroRead } from "@/lib/cro-read";
@@ -33,6 +35,7 @@ export function MagayaDealView({
   croRead,
   sentMessages = [],
   history,
+  attendance,
 }: {
   deal: Deal;
   framework: Framework;
@@ -41,6 +44,7 @@ export function MagayaDealView({
   croRead?: CroRead | null;
   sentMessages?: SentMessage[];
   history?: DealHistory;
+  attendance?: DealAttendance;
 }) {
   const upcoming = upcomingCall ? describeUpcomingCall(upcomingCall) : null;
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
@@ -140,6 +144,7 @@ export function MagayaDealView({
             )}
           </div>
           <ContactsCard contacts={deal.contacts} />
+          {attendance && <AttendanceCard attendance={attendance} />}
           <TeamsCallsCard dealId={deal.id} calls={deal.calls} />
           <Link
             href={`/deals/${deal.id}/prepare`}
