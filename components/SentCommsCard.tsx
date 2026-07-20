@@ -1,17 +1,5 @@
+import { LocalTime } from "./LocalTime";
 import type { SentMessage } from "@/lib/sent-messages";
-
-function fmt(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 /**
  * The exact briefings and recaps DealRipe emailed the rep for this deal,
@@ -47,7 +35,7 @@ export function SentCommsCard({ messages }: { messages: SentMessage[] }) {
                   <span className="text-[13px] text-ink truncate">{m.subject}</span>
                 </span>
                 <span className="text-[11px] text-muted whitespace-nowrap flex items-center gap-2">
-                  {fmt(m.sentAt)}
+                  <LocalTime iso={m.sentAt} />
                   <span className="text-muted/70 group-open:rotate-180 transition-transform">⌄</span>
                 </span>
               </summary>
