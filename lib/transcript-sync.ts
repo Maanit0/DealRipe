@@ -57,6 +57,10 @@ export type TranscriptSyncCounts = {
   extracted: number;
   mediaDeleted: number;
   ingestErrors: number;
+  // Second-pass recovery of extractions that failed after the transcript was
+  // already saved (e.g. an LLM timeout). Capped at 3 retries per call.
+  retriesAttempted: number;
+  retriesRecovered: number;
 };
 
 export type TranscriptSyncDecision =
@@ -112,6 +116,8 @@ export async function runTranscriptSync(
     extracted: 0,
     mediaDeleted: 0,
     ingestErrors: 0,
+    retriesAttempted: 0,
+    retriesRecovered: 0,
   };
   const emit = opts.onDecision ?? (() => {});
 
@@ -143,7 +149,128 @@ export async function runTranscriptSync(
     );
   }
 
+  // Second pass: recover calls whose transcript was saved but whose extraction
+  // failed (they carry has_been_extracted=true, so the loop above skips them).
+  await retryFailedExtractions(counts, emit);
+
   return counts;
+}
+
+const MAX_INGEST_RETRIES = 3;
+
+function parseRetryCount(err: string | null): number {
+  const m = (err ?? "").match(/\[retry (\d+)\/\d+\]/);
+  return m ? Number(m[1]) : 0;
+}
+
+function stripMarker(err: string | null): string {
+  return (err ?? "").replace(/\[(?:retry \d+\/\d+|gave up[^\]]*)\]\s*/g, "");
+}
+
+/**
+ * Re-run extraction from the stored transcript for calls whose first attempt
+ * failed after the body was saved (typically an LLM timeout). Capped at
+ * MAX_INGEST_RETRIES per call, tracked via a [retry N/3] marker in ingest_error
+ * so no schema column is needed. After the cap it is marked "[gave up ...]" and
+ * left for manual attention instead of looping forever (which would burn LLM
+ * calls). One retry per 5-minute cron run gives natural backoff.
+ */
+async function retryFailedExtractions(
+  counts: TranscriptSyncCounts,
+  emit: (d: TranscriptSyncDecision) => void,
+): Promise<void> {
+  const db = supabaseAdmin();
+  const rows = await db
+    .from("calls")
+    .select("id, tenant_id, external_id, ingest_error")
+    .eq("source", "recall_ai")
+    .eq("has_been_extracted", true)
+    .not("ingest_error", "is", null)
+    .like("ingest_error", "%extraction failed%")
+    .not("ingest_error", "like", "%gave up%");
+  if (rows.error) {
+    console.error(`[transcript-sync] retry query failed: ${rows.error.message}`);
+    return;
+  }
+
+  for (const row of rows.data ?? []) {
+    if (!row.external_id) continue;
+    const prev = parseRetryCount(row.ingest_error);
+    if (prev >= MAX_INGEST_RETRIES) {
+      await writeIngestError(
+        row.id,
+        `[gave up after ${MAX_INGEST_RETRIES} retries] ${stripMarker(row.ingest_error)}`,
+      );
+      continue;
+    }
+    const attempt = prev + 1;
+
+    const t = await db.from("transcripts").select("body").eq("call_id", row.id).maybeSingle();
+    const body = t.data?.body ?? "";
+    if (body.trim().length < 50) continue; // nothing to re-extract from
+
+    counts.retriesAttempted += 1;
+    try {
+      const ingestResult = await ingestTranscript({
+        source: "recall_ai",
+        externalCallId: row.external_id,
+        transcript: body,
+      });
+      await db.from("calls").update({ ingest_error: null, outcome: "captured" }).eq("id", row.id);
+      counts.retriesRecovered += 1;
+      counts.extracted += 1;
+      emit({ kind: "extracted", callId: row.id, recallBotId: "" });
+
+      // Recap + contacts, mirroring the first-pass side effects. Both isolated.
+      try {
+        await sendPostCallSummary({
+          tenantId: row.tenant_id,
+          dealExternalId: ingestResult.dealExternalId,
+          extraction: ingestResult.extraction as unknown as ExtractionMap,
+          transcript: body,
+        });
+      } catch (e) {
+        console.error(`[transcript-sync] retry recap threw for ${row.id}:`, e);
+      }
+      try {
+        const dealRow = await db
+          .from("deals")
+          .select("id, account")
+          .eq("tenant_id", row.tenant_id)
+          .eq("external_id", ingestResult.dealExternalId)
+          .maybeSingle();
+        if (dealRow.data) {
+          const callRow = await db
+            .from("calls")
+            .select("call_date, scheduled_start")
+            .eq("id", row.id)
+            .maybeSingle();
+          const callDate =
+            callRow.data?.call_date ?? callRow.data?.scheduled_start ?? new Date().toISOString();
+          const people = await extractContactsFromTranscript({
+            transcript: body,
+            account: dealRow.data.account,
+          });
+          await upsertDealContacts({
+            tenantId: row.tenant_id,
+            dealId: dealRow.data.id,
+            contacts: people,
+            callDate,
+          });
+        }
+      } catch (e) {
+        console.error(`[transcript-sync] retry contacts threw for ${row.id}:`, e);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const marker =
+        attempt >= MAX_INGEST_RETRIES
+          ? `[gave up after ${MAX_INGEST_RETRIES} retries]`
+          : `[retry ${attempt}/${MAX_INGEST_RETRIES}]`;
+      await writeIngestError(row.id, `${marker} extraction failed (transcript saved): ${message}`);
+      counts.ingestErrors += 1;
+    }
+  }
 }
 
 type ProcessRowArgs = {
