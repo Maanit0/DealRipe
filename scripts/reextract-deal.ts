@@ -14,6 +14,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { extractAndStore } from "../lib/transcript-ingest";
+import { extractContactsFromTranscript, upsertDealContacts } from "../lib/contacts-extract";
 import { sendPostCallSummary } from "../lib/post-call-notify";
 import type { ExtractionMap } from "../lib/briefing-magaya";
 import { getDealExtraction } from "../lib/supabase-queries";
@@ -63,11 +64,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let picked: { callExternalId: string; body: string } | null = null;
+  let picked: { callExternalId: string; body: string; callDate: string | null } | null = null;
   for (const c of calls.data ?? []) {
     const t = await db.from("transcripts").select("body").eq("call_id", c.id).maybeSingle();
     if (t.data?.body && c.external_id) {
-      picked = { callExternalId: c.external_id, body: t.data.body };
+      picked = { callExternalId: c.external_id, body: t.data.body, callDate: c.scheduled_start ?? null };
       break;
     }
   }
@@ -88,6 +89,18 @@ async function main(): Promise<void> {
     (v) => v && v.status === "Yes",
   ).length;
   console.log(`Done. Extraction repopulated against the deal's current framework. Confirmed fields: ${answered}.`);
+
+  // Contacts are part of a full re-ingest: the normal pipeline extracts fields,
+  // contacts, and the recap together, so a retry must too (a timeout that drops
+  // fields drops contacts as well).
+  const contacts = await extractContactsFromTranscript({ transcript: picked.body, account: deal.data.account });
+  const cres = await upsertDealContacts({
+    tenantId,
+    dealId: deal.data.id,
+    contacts,
+    callDate: picked.callDate,
+  });
+  console.log(`Contacts: ${cres.inserted} added, ${cres.skipped} skipped.`);
 
   if (resend || preview) {
     const res = await sendPostCallSummary({

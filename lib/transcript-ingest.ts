@@ -70,7 +70,11 @@ type FieldExtractionInsert =
 const TENANT_SLUG = "topsort";
 const PROMPT_VERSION = "v1";
 const MIN_TRANSCRIPT_CHARS = 50;
-const REQUEST_TIMEOUT_MS = 45_000;
+// Long calls produce long transcripts (a 60-min call is ~50K chars), and
+// extracting all gates from that can take well over a minute. 45s was too
+// tight and silently dropped fields/contacts/recap on long calls. The cron's
+// function budget is 300s, so 120s leaves ample margin for a single call.
+const REQUEST_TIMEOUT_MS = 120_000;
 
 // ====================================================================
 // Errors. The route handler matches on these classes to map HTTP codes.

@@ -23,10 +23,10 @@ config({ path: ".env.local" });
 
 import { writeFileSync } from "node:fs";
 
-import { getPilotDigest } from "../lib/digest";
 import { renderWeeklyDigestEmail } from "../lib/emails/weekly-digest";
 import { sendEmail } from "../lib/mailer";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
+import { buildWeeklyDigestData } from "../lib/weekly-digest-data";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -46,22 +46,23 @@ async function main(): Promise<void> {
 
   const baseUrl = process.env.DEALRIPE_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? arg("--base-url");
   const tenantId = await resolveTenantId("magaya");
-  const entries = await getPilotDigest(tenantId);
+  const { attention, movement, noShows } = await buildWeeklyDigestData(tenantId);
   const email = renderWeeklyDigestEmail({
-    entries,
+    attention,
+    movement,
+    noShows,
     weekLabel: weekLabel(),
     recipientName: name,
     baseUrl,
   });
   if (!baseUrl) {
-    console.log("Note: DEALRIPE_APP_URL not set, digest rendered without deal links. Set it (e.g. https://your-app.vercel.app) to enable click-through.");
+    console.log("Note: DEALRIPE_APP_URL not set, digest rendered without deal links. Set it (https://www.dealripe.com) to enable click-through.");
   }
 
   writeFileSync(out, email.html, "utf8");
 
-  const attention = entries.filter((e) => e.attention > 0);
-  console.log(`Deals scanned:     ${entries.length}`);
-  console.log(`Needs attention:   ${attention.length}${attention.length ? "  (" + attention.slice(0, 5).map((e) => e.account).join(", ") + ")" : ""}`);
+  console.log(`Needs attention:   ${attention.length}${attention.length ? "  (" + attention.map((e) => e.account).join(", ") + ")" : ""}`);
+  console.log(`Movement:          ${movement.length}${movement.length ? "  (" + movement.map((e) => e.account).join(", ") + ")" : ""}`);
   console.log(`Subject:           ${email.subject}`);
   console.log(`Written to:        ${out}`);
 

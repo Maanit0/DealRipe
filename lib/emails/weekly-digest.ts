@@ -1,12 +1,11 @@
 /**
- * Weekly digest email for the sales leader. Renders the ranked DigestEntry list
- * from lib/digest.ts (getPilotDigest) into the same clean card style as the
- * recap. Leads with what needs attention, then what moved. No em-dashes.
- *
- * Pure function: takes already-built entries, returns { subject, html, text }.
+ * Weekly digest email for the sales leader. Renders the evidence-based digest
+ * data (buildWeeklyDigestData) into clean cards: one flowing paragraph per
+ * deal, the account name itself is the link (no crowding), no-shows in their
+ * own section. Matches the recap style. No em-dashes.
  */
 
-import type { DigestEntry } from "../digest";
+import type { DigestAttention, DigestMovement, DigestNoShow } from "../weekly-digest-data";
 
 const BG = "#F4F6F9";
 const CARD = "#FFFFFF";
@@ -25,62 +24,38 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function money(n: number): string {
-  return n > 0 ? `$${n.toLocaleString()}` : "";
-}
-
-// A "movement" line is a real change, not a baseline or a no-op.
-function isMovement(line: string): boolean {
-  return !/^Baseline|^No change/.test(line);
-}
-
 export function renderWeeklyDigestEmail(args: {
-  entries: DigestEntry[];
+  attention: DigestAttention[];
+  movement: DigestMovement[];
+  noShows: DigestNoShow[];
   weekLabel: string;
   recipientName?: string;
-  /** Absolute app URL (e.g. https://dealripe.vercel.app). When set, each deal
-   *  links to its inspection page and a pipeline button appears. Omit and the
-   *  digest renders as plain text with no links. */
   baseUrl?: string;
 }): RenderedEmail {
-  const { entries, weekLabel, recipientName } = args;
+  const { weekLabel, recipientName } = args;
   const base = (args.baseUrl ?? "").replace(/\/$/, "");
-  const dealHref = (id: string) => `${base}/deals/${id}`;
+  const attention = args.attention.slice(0, 6);
+  const movement = args.movement.slice(0, 6);
+  const noShows = args.noShows.slice(0, 6);
 
-  // Attention = deals with real risk, ranked (getPilotDigest already sorted).
-  const attention = entries.filter((e) => e.attention > 0).slice(0, 5);
-  // Movement = deals that actually changed this week, not already in attention.
-  const attentionIds = new Set(attention.map((e) => e.dealId));
-  const movement = entries
-    .filter((e) => !attentionIds.has(e.dealId) && e.changed.some(isMovement))
-    .slice(0, 6);
+  // Account name as a subtle link when we have a base URL.
+  const name = (account: string, dealId: string): string =>
+    base
+      ? `<a href="${base}/deals/${dealId}" style="color:${NAVY};text-decoration:none;">${esc(account)}</a>`
+      : esc(account);
 
   const subject = `DealRipe weekly digest, week of ${weekLabel}${
     attention.length ? `. ${attention.length} need${attention.length === 1 ? "s" : ""} attention` : ""
   }`;
 
   const attentionCards = attention
-    .map((e) => {
-      const topRisk = e.risks[0] ?? "Needs review";
-      const sub = [e.stage, money(e.amount)].filter(Boolean).join("  ·  ");
-      const changed = e.changed.filter(isMovement);
-      return `
-      <div style="margin-top:16px;padding-top:16px;border-top:1px solid ${BORDER};">
-        <div style="font-family:${SANS};font-size:16px;font-weight:600;color:${NAVY};">${esc(e.account)} &nbsp;&middot;&nbsp; ${esc(topRisk.toLowerCase())}</div>
-        <div style="font-family:${SANS};font-size:12px;color:${MUTED};margin-top:2px;">${esc(sub)}</div>
-        <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};margin-top:8px;">${esc(e.coaching)}</div>
-        ${
-          changed.length
-            ? `<div style="font-family:${SANS};font-size:13px;line-height:21px;color:${MUTED};margin-top:6px;">This week: ${esc(changed.join(" "))}</div>`
-            : ""
-        }
-        ${
-          base
-            ? `<div style="margin-top:8px;"><a href="${dealHref(e.dealId)}" style="font-family:${SANS};font-size:13px;font-weight:600;color:${GREEN};text-decoration:none;">Inspect this deal &rarr;</a></div>`
-            : ""
-        }
-      </div>`;
-    })
+    .map(
+      (e, i) => `
+      <div style="${i === 0 ? "" : `margin-top:18px;padding-top:18px;border-top:1px solid ${BORDER};`}">
+        <div style="font-family:${SANS};font-size:16px;font-weight:600;color:${NAVY};line-height:23px;">${i + 1}. ${name(e.account, e.dealId)} &nbsp;&middot;&nbsp; ${esc(e.headline)}</div>
+        <div style="font-family:${SANS};font-size:15px;line-height:24px;color:${INK};margin-top:8px;">${esc(e.detail)}</div>
+      </div>`,
+    )
     .join("");
 
   const movementRows = movement
@@ -88,10 +63,22 @@ export function renderWeeklyDigestEmail(args: {
       (e, i) => `
       <tr>
         <td valign="top" width="18" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${GREEN};font-weight:700;">&#10003;</td>
-        <td valign="top" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${base ? `<a href="${dealHref(e.dealId)}" style="color:${NAVY};text-decoration:none;">${esc(e.account)}</a>` : esc(e.account)}.</strong> ${esc(e.changed.filter(isMovement).join(" "))}</td>
+        <td valign="top" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(e.account, e.dealId)}.</strong> ${esc(e.note)}</td>
       </tr>`,
     )
     .join("");
+
+  const noShowRows = noShows
+    .map(
+      (e, i) => `
+      <tr>
+        <td valign="top" width="18" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${AMBER};font-weight:700;">&#9679;</td>
+        <td valign="top" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(e.account, e.dealId)}.</strong> ${esc(e.note)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  const spacer = `<tr><td style="height:14px;line-height:14px;">&nbsp;</td></tr>`;
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/></head>
@@ -106,24 +93,34 @@ export function renderWeeklyDigestEmail(args: {
   </td></tr>
 
   <tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
-    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${RED};margin:0;">Needs your attention</div>
+    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${RED};margin:0 0 ${attention.length ? "4px" : "0"} 0;">Needs your attention</div>
     ${
       attention.length
         ? attentionCards
-        : `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};margin-top:12px;">Nothing flagged this week. Every active deal is progressing or newly captured.</div>`
+        : `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};margin-top:8px;">Nothing flagged this week. Every deal with a captured call is progressing.</div>`
     }
   </td></tr>
 
-  <tr><td style="height:14px;line-height:14px;">&nbsp;</td></tr>
+  ${spacer}
 
   <tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
     <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${GREEN};margin:0 0 14px 0;">Movement this week</div>
     ${
       movement.length
         ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${movementRows}</table>`
-        : `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">No stage changes or new confirmations since last week.</div>`
+        : `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">No new calls captured since last week.</div>`
     }
   </td></tr>
+
+  ${
+    noShows.length
+      ? `${spacer}
+  <tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
+    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 14px 0;">No-shows</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${noShowRows}</table>
+  </td></tr>`
+      : ""
+  }
 
   ${
     base
@@ -134,27 +131,25 @@ export function renderWeeklyDigestEmail(args: {
   }
 
   <tr><td style="padding:18px 6px 0 6px;">
-    <div style="font-family:${SANS};font-size:13px;line-height:21px;color:${MUTED};">Ranked by what needs you most, drawn from every call captured this week. Reply to this email with anything you want the digest to track.</div>
+    <div style="font-family:${SANS};font-size:13px;line-height:21px;color:${MUTED};">Ranked by what needs you most, drawn from what your calls actually captured this week. Reply with anything you want the digest to track.</div>
   </td></tr>
 
 </table>
 </td></tr></table></body></html>`;
 
-  const textLines: string[] = [`DealRipe weekly digest, week of ${weekLabel}`, ""];
-  textLines.push("NEEDS YOUR ATTENTION");
+  const t: string[] = [`DealRipe weekly digest, week of ${weekLabel}`, "", "NEEDS YOUR ATTENTION"];
   if (attention.length) {
-    for (const e of attention) {
-      textLines.push(`- ${e.account} (${e.stage}): ${e.risks[0] ?? "review"}. ${e.coaching}`);
-    }
+    attention.forEach((e, i) => t.push(`${i + 1}. ${e.account}: ${e.headline}. ${e.detail}`));
   } else {
-    textLines.push("- Nothing flagged this week.");
+    t.push("- Nothing flagged this week.");
   }
-  textLines.push("", "MOVEMENT THIS WEEK");
-  if (movement.length) {
-    for (const e of movement) textLines.push(`- ${e.account}: ${e.changed.filter(isMovement).join(" ")}`);
-  } else {
-    textLines.push("- No changes since last week.");
+  t.push("", "MOVEMENT THIS WEEK");
+  if (movement.length) for (const e of movement) t.push(`- ${e.account}: ${e.note}`);
+  else t.push("- No new calls captured since last week.");
+  if (noShows.length) {
+    t.push("", "NO-SHOWS");
+    for (const e of noShows) t.push(`- ${e.account}: ${e.note}`);
   }
 
-  return { subject, html, text: textLines.join("\n") };
+  return { subject, html, text: t.join("\n") };
 }

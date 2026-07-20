@@ -13,9 +13,16 @@
  * Cache invariant: a Framework object in the cache is immutable.
  */
 
-import { cache } from "react";
+import { cache as reactCache } from "react";
 import { supabaseAdmin } from "./supabase";
 import type { Json } from "./database.types";
+
+// React's cache() only exists inside the Next.js server runtime. In a plain
+// Node/tsx script (backfills, re-extraction) the import resolves to undefined,
+// so fall back to an identity wrapper. Scripts lose request-scoped memoization,
+// which is irrelevant for a one-shot process.
+const cache: typeof reactCache =
+  typeof reactCache === "function" ? reactCache : (<A extends unknown[], R>(fn: (...a: A) => R) => fn) as typeof reactCache;
 
 export type FrameworkSource = "builtin" | "rolldog" | "manual";
 

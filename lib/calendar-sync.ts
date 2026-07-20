@@ -339,7 +339,7 @@ async function processEvent(
   const db = supabaseAdmin();
   const dealRow = await db
     .from("deals")
-    .select("id")
+    .select("id, rep_email")
     .eq("tenant_id", tenantId)
     .eq("external_id", dealExternalId)
     .maybeSingle();
@@ -361,6 +361,20 @@ async function processEvent(
   }
 
   const dealId = dealRow.data.id;
+
+  // Auto-heal rep ownership: any deal we see on a rep's calendar gets its
+  // rep_email filled when it was missing (seeded deals never set it). Only
+  // fills a null, never reassigns a deal that already has an owner. Best
+  // effort: a failure here must not abort the sync.
+  if (!dealRow.data.rep_email && opts.repEmail) {
+    const heal = await db.from("deals").update({ rep_email: opts.repEmail }).eq("id", dealId);
+    if (heal.error) {
+      console.warn(
+        `[calendar-sync] rep_email backfill failed for ${dealExternalId}: ${heal.error.message}`,
+      );
+    }
+  }
+
   const eventIso = eventStartToIso(ev.start);
   const eventDate = eventIso.slice(0, 10);
 
