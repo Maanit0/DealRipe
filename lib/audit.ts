@@ -56,6 +56,7 @@ type CallRow = {
   call_date: string | null;
   outcome: string | null;
   has_been_extracted: boolean;
+  meeting_type: string | null;
 };
 
 function norm(name: string): string {
@@ -83,11 +84,17 @@ export async function runDailyAudit(
   for (const deal of deals) {
     const callsRes = await db
       .from("calls")
-      .select("id, scheduled_start, call_date, outcome, has_been_extracted")
+      .select("id, scheduled_start, call_date, outcome, has_been_extracted, meeting_type")
       .eq("tenant_id", tenantId)
       .eq("deal_id", deal.id)
       .order("scheduled_start", { ascending: false });
     const calls = (callsRes.data ?? []) as CallRow[];
+
+    // Skip non-opportunity deals (every classified call is existing-customer or
+    // internal), the same exclusion the pipeline and digest apply. A deal stays
+    // in scope if any call is a new opportunity or is still unclassified.
+    const classified = calls.map((c) => c.meeting_type).filter((t): t is string => !!t);
+    if (classified.length > 0 && classified.every((t) => t !== "new_opportunity")) continue;
 
     const captured = calls.filter((c) => {
       if (!c.has_been_extracted) return false;
