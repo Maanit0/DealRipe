@@ -51,14 +51,26 @@ export async function getDealAttendance(
   }
   if (!call) return null;
 
-  // Speaker names from the transcript (the token before ": " on each line), so
-  // "spoke" reflects actual participation, not just being mentioned.
+  // Speaker tokens from the transcript, so "spoke" reflects actual
+  // participation, not just being mentioned. Labels come in several shapes:
+  //   "Ely Cardenas | EXTRUM:buenas tardes"   (colon, no space, company suffix)
+  //   "Juan Lopez: que me comenta"            (colon + space)
+  // So we split on the first colon (not ": "), drop any " | COMPANY" suffix, and
+  // keep the individual name words as tokens.
   const t = await db.from("transcripts").select("body").eq("call_id", call.id).maybeSingle();
-  const speakers = new Set<string>();
-  for (const line of (t.data?.body ?? "").split("\n")) {
-    const idx = line.indexOf(": ");
-    if (idx > 0 && idx < 40) speakers.add(line.slice(0, idx).toLowerCase().trim());
+  const speakerTokens = new Set<string>();
+  for (const raw of (t.data?.body ?? "").split("\n")) {
+    const line = raw.trim();
+    const idx = line.indexOf(":");
+    if (idx <= 0 || idx > 60) continue;
+    let label = line.slice(0, idx);
+    const pipe = label.indexOf("|");
+    if (pipe > 0) label = label.slice(0, pipe); // strip " | EXTRUM" style suffix
+    for (const tok of label.toLowerCase().split(/[^a-záéíóúñü]+/i)) {
+      if (tok.length >= 3) speakerTokens.add(tok);
+    }
   }
+  const tokens = [...speakerTokens];
 
   const invitees: Invitee[] = [];
   for (const p of call.participants as Array<Record<string, unknown>>) {
@@ -67,8 +79,23 @@ export async function getDealAttendance(
     const domain = email?.split("@")[1]?.toLowerCase();
     if (domain === "magaya.com") continue; // internal reps, not customer stakeholders
     if (!name && !email) continue;
-    const first = (name ?? email?.split("@")[0] ?? "").toLowerCase().trim().split(/\s+/)[0];
-    const spoke = first.length >= 2 && [...speakers].some((s) => s.includes(first));
+
+    // Identity candidates: name words plus the email local part. A calendar
+    // invite often carries only "ecardenas@extrum.com", whose local part won't
+    // equal the spoken "Ely Cardenas", so we match by substring both ways: the
+    // spoken last name "cardenas" is contained in the local part "ecardenas".
+    const identity: string[] = [];
+    if (name) {
+      for (const w of name.toLowerCase().split(/[^a-záéíóúñü]+/i)) if (w.length >= 2) identity.push(w);
+    }
+    const local = email?.split("@")[0]?.toLowerCase();
+    if (local) identity.push(local);
+
+    const spoke = identity.some((id) =>
+      tokens.some(
+        (s) => s === id || (s.length >= 4 && id.includes(s)) || (id.length >= 4 && s.includes(id)),
+      ),
+    );
     invitees.push({
       name,
       email,
