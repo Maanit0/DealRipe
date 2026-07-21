@@ -51,7 +51,7 @@ async function loadMagayaPipeline() {
     try {
       const idRows = await supabaseAdmin()
         .from("deals")
-        .select("id, external_id, dealripe_last_writeback_at")
+        .select("id, external_id, rolldog_opportunity_id, dealripe_last_writeback_at")
         .eq("tenant_id", tenantId);
       // Warm the Rolldog token once so the parallel reads below share it,
       // instead of racing to fetch a token at the same instant on a cold load
@@ -59,7 +59,13 @@ async function loadMagayaPipeline() {
       await prewarmRolldogToken().catch(() => {});
       await Promise.all(
         (idRows.data ?? []).map(async (r) => {
-          const opp = r.external_id ? rolldogOppIdForDeal(r.external_id) : null;
+          // Resolve the opp the same way write-back does: the pilot-config map
+          // for seeded deals, else the rolldog_opportunity_id column that
+          // link-deal writes for auto-linked deals (Aeronet, Core Logistics).
+          const opp =
+            (r.external_id ? rolldogOppIdForDeal(r.external_id) : null) ??
+            r.rolldog_opportunity_id ??
+            null;
           if (!opp) return;
           const [live, baseline] = await Promise.all([
             getRolldogSummary(opp),

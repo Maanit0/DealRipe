@@ -44,11 +44,13 @@ async function loadLiveMagayaDeal(id: string) {
     try {
       const row = await supabaseAdmin()
         .from("deals")
-        .select("external_id")
+        .select("external_id, rolldog_opportunity_id")
         .eq("id", id)
         .maybeSingle();
       const ext = row.data?.external_id ?? null;
-      const opp = ext ? rolldogOppIdForDeal(ext) : null;
+      // Pilot-config map for seeded deals, else the link-deal column for
+      // auto-linked deals (Aeronet, Core Logistics, Extrum).
+      const opp = (ext ? rolldogOppIdForDeal(ext) : null) ?? row.data?.rolldog_opportunity_id ?? null;
       if (opp) {
         rolldogSummary = await getRolldogSummary(opp);
         const rStage = stageKeyFromSummary(rolldogSummary);
