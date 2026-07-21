@@ -50,6 +50,7 @@
 import { getAnthropicClient, getAnthropicModel } from "./anthropic";
 import { mergeExtraction } from "./extraction-merge";
 import { buildExtractionSystemPrompt } from "./extraction-prompt";
+import { enforceGrounding } from "./grounding";
 import {
   getFrameworkForDeal,
   loadFramework,
@@ -385,7 +386,17 @@ export async function extractAndStore(
       throw new ExtractionParseError(text.length);
     }
 
-    const extraction = validateAndFillExtraction(framework, parsed);
+    const validated = validateAndFillExtraction(framework, parsed);
+    // Grounding guardrail: drop any "Yes" whose evidence quote is not actually
+    // in the transcript, so a hallucinated confirmation never gets stored or
+    // shown. Runs before the audit write, so field_extractions only ever holds
+    // grounded confirmations.
+    const { extraction, report: grounding } = enforceGrounding(validated, args.transcript);
+    if (grounding.downgraded.length > 0 || grounding.flagged.length > 0) {
+      console.warn(
+        `[transcript-ingest] dealId=${args.dealExternalId} grounding downgraded=[${grounding.downgraded.join(",")}] flagged=[${grounding.flagged.join(",")}]`,
+      );
+    }
     const duration = Date.now() - start;
     const inputTokens = response.usage?.input_tokens ?? 0;
     const outputTokens = response.usage?.output_tokens ?? 0;

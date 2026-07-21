@@ -135,6 +135,18 @@ export async function syncDealToRolldog(
     (fxRes.data ?? []).map((r) => [r.framework_field_key, r] as const),
   );
 
+  // Latest captured call date, for the write's [DealRipe · call date] stamp.
+  const callRow = await db
+    .from("calls")
+    .select("scheduled_start, call_date")
+    .eq("deal_id", opts.dealId)
+    .order("scheduled_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const stamp = buildDealRipeStamp(
+    callRow.data?.scheduled_start ?? callRow.data?.call_date ?? null,
+  );
+
   // ---- Pass 1: accumulate per-method payloads. ----
 
   type NotesPart = { fieldKey: string; line: string };
@@ -158,7 +170,7 @@ export async function syncDealToRolldog(
     // surface as "undefined" in the template string otherwise.
     if (!ex || ex.status !== "Yes" || !ex.answer || !ex.evidence) continue;
 
-    const composed = composeNote(ex.answer, ex.evidence);
+    const composed = composeNote(ex.answer);
     const method = String(f.writeTarget.method ?? "");
     const attr = String(f.writeTarget.attr ?? "");
 
@@ -167,7 +179,7 @@ export async function syncDealToRolldog(
         // All budget fields collapse to one combined notes payload.
         budgetParts.push({
           fieldKey: f.fieldKey,
-          line: `${f.fieldKey}: ${composed}`,
+          line: composed,
         });
         break;
       }
@@ -176,12 +188,13 @@ export async function syncDealToRolldog(
         // flips the structured boolean (Yes status = customer confirmed).
         timelineParts.push({
           fieldKey: f.fieldKey,
-          line: `${f.fieldKey}: ${composed}`,
+          line: composed,
         });
         timelineFields.add(f.fieldKey);
-        if (attr === "is-close-date-validated") {
-          timelineCloseDateValidated = true;
-        }
+        // Deliberately NOT flipping is-close-date-validated: Rolldog returns 422
+        // when that boolean is set true without a close-date-validator. The
+        // validation is captured in the timeline note instead. Revisit once the
+        // validator field's expected shape is confirmed.
         break;
       }
       case "writeSituation": {
@@ -192,7 +205,7 @@ export async function syncDealToRolldog(
         // silently sending to the wrong attribute.
         const param = situationParamFromAttr(attr);
         if (param) {
-          assignSituationField(situationPayload, param, composed);
+          assignSituationField(situationPayload, param, capNote(`${stamp} ${composed}`));
           situationFields.push(f.fieldKey);
         }
         break;
@@ -200,14 +213,14 @@ export async function syncDealToRolldog(
       case "writeCompetitionNotes": {
         competitionParts.push({
           fieldKey: f.fieldKey,
-          line: `${f.fieldKey}: ${composed}`,
+          line: composed,
         });
         break;
       }
       case "writeParticipantNotes": {
         participantParts.push({
           fieldKey: f.fieldKey,
-          line: `${f.fieldKey}: ${composed}`,
+          line: composed,
         });
         break;
       }
@@ -225,7 +238,7 @@ export async function syncDealToRolldog(
 
   // writeBudget
   if (budgetParts.length > 0) {
-    const notes = budgetParts.map((p) => p.line).join("\n\n");
+    const notes = capNote(`${stamp} ${budgetParts.map((p) => p.line).join(" · ")}`);
     const fields = budgetParts.map((p) => p.fieldKey);
     if (dryRun) {
       results.push({ method: "writeBudget", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
@@ -251,7 +264,7 @@ export async function syncDealToRolldog(
   if (timelineParts.length > 0 || timelineCloseDateValidated !== undefined) {
     const payload: TimelineWrite = {};
     if (timelineParts.length > 0) {
-      payload.notes = timelineParts.map((p) => p.line).join("\n\n");
+      payload.notes = capNote(`${stamp} ${timelineParts.map((p) => p.line).join(" · ")}`);
     }
     if (timelineCloseDateValidated !== undefined) {
       payload.isCloseDateValidated = timelineCloseDateValidated;
@@ -305,7 +318,7 @@ export async function syncDealToRolldog(
 
   // writeCompetitionNotes
   if (competitionParts.length > 0) {
-    const notes = competitionParts.map((p) => p.line).join("\n\n");
+    const notes = capNote(`${stamp} ${competitionParts.map((p) => p.line).join(" · ")}`);
     const fields = competitionParts.map((p) => p.fieldKey);
     if (dryRun) {
       results.push({ method: "writeCompetitionNotes", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
@@ -337,7 +350,7 @@ export async function syncDealToRolldog(
 
   // writeParticipantNotes
   if (participantParts.length > 0) {
-    const notes = participantParts.map((p) => p.line).join("\n\n");
+    const notes = capNote(`${stamp} ${participantParts.map((p) => p.line).join(" · ")}`);
     const fields = participantParts.map((p) => p.fieldKey);
     if (dryRun) {
       results.push({ method: "writeParticipantNotes", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
@@ -374,8 +387,40 @@ export async function syncDealToRolldog(
 // Internals
 // ====================================================================
 
-function composeNote(answer: string, evidence: string): string {
-  return `${answer} (evidence: "${evidence}")`;
+// CRM notes stay concise: just the answer. The dated [DealRipe] stamp is added
+// at assembly time, and the verbatim evidence quote lives in DealRipe (clickable
+// from the deal page), not in the CRM, which keeps notes under Rolldog's field
+// length cap and reads cleanly for a human.
+function composeNote(answer: string): string {
+  return answer.trim();
+}
+
+function fmtStampDate(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  } catch {
+    return "";
+  }
+}
+
+// Attribution stamp so a Rolldog reader sees the source and date at a glance:
+// "[DealRipe · Jul 16 call]". One date, the call date, since write-back fires
+// right after the call (same day in normal operation). Falls back to the write
+// date only if the call date is unknown.
+function buildDealRipeStamp(callDate: string | null): string {
+  const d = fmtStampDate(callDate) || fmtStampDate(new Date().toISOString());
+  return d ? `[DealRipe · ${d} call]` : "[DealRipe]";
+}
+
+const MAX_NOTE = 280; // Rolldog note fields cap around 300; leave headroom.
+function capNote(s: string): string {
+  const t = s.trim();
+  return t.length <= MAX_NOTE ? t : `${t.slice(0, MAX_NOTE - 1).trimEnd()}…`;
 }
 
 type SituationParam =

@@ -357,7 +357,8 @@ async function safeBody(res: Response): Promise<unknown> {
 
 function tagWithDealRipe(text: string): string {
   if (typeof text !== "string") return text;
-  if (text.includes(DEALRIPE_TAG)) return text;
+  // Already carries a [DealRipe] or [DealRipe · ...] stamp: leave it alone.
+  if (text.trimStart().startsWith("[DealRipe")) return text;
   return text.trim().length === 0
     ? `${DEALRIPE_TAG}`
     : `${DEALRIPE_TAG} ${text}`;
