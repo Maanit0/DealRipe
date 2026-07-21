@@ -11,6 +11,7 @@ import type { Deal } from "@/lib/seed-data";
 import { describeUpcomingCall, type UpcomingCall } from "@/lib/supabase-queries";
 import { daysSince, type RolldogSummary } from "@/lib/rolldog-summary";
 import { deriveDealState } from "@/lib/deal-state";
+import { repDisplayName } from "@/lib/pilot-config";
 
 const STAGE_LABELS: Record<string, string> = {
   SQL0: "Lead",
@@ -58,6 +59,7 @@ export function MagayaPipeline({
   summariesByDealId = {},
   repActivityByDealId = {},
   lastCallByDealId = {},
+  repFilter = null,
 }: {
   deals: Deal[];
   framework: Framework | null;
@@ -66,6 +68,8 @@ export function MagayaPipeline({
   summariesByDealId?: Record<string, RolldogSummary>;
   repActivityByDealId?: Record<string, string | null>;
   lastCallByDealId?: Record<string, string | null>;
+  /** Lowercased rep login email to filter by, or null for all reps. */
+  repFilter?: string | null;
 }) {
   // Exclude non-opportunity meetings (existing customer / internal): they get a
   // recap but are not sales pipeline. A deal is dropped only when every
@@ -74,7 +78,16 @@ export function MagayaPipeline({
     const classified = deal.calls.map((c) => c.meetingType).filter((t): t is string => !!t);
     return !(classified.length > 0 && classified.every((t) => t !== "new_opportunity"));
   });
-  const rows: Row[] = framework ? salesDeals.map((deal) => buildRow(deal, framework)) : [];
+
+  // Reps present in the pipeline, for the filter chips (Eduardo, Juan first).
+  const repEmails = Array.from(
+    new Set(salesDeals.map((d) => (d.repEmail ?? "").toLowerCase()).filter(Boolean)),
+  ).sort((a, b) => (repDisplayName(a) ?? "").localeCompare(repDisplayName(b) ?? ""));
+
+  const visibleDeals = repFilter
+    ? salesDeals.filter((d) => (d.repEmail ?? "").toLowerCase() === repFilter)
+    : salesDeals;
+  const rows: Row[] = framework ? visibleDeals.map((deal) => buildRow(deal, framework)) : [];
 
   rows.sort((a, b) => {
     const order = { at_risk: 0, stalled: 1, healthy: 2 };
@@ -108,6 +121,12 @@ export function MagayaPipeline({
             </div>
             <div className="mt-0.5 flex items-center justify-end gap-3">
               <Link
+                href="/audit"
+                className="text-[12px] font-medium text-accent hover:underline"
+              >
+                Audit →
+              </Link>
+              <Link
                 href="/impact"
                 className="text-[12px] font-medium text-accent hover:underline"
               >
@@ -122,6 +141,23 @@ export function MagayaPipeline({
             </div>
           </div>
         </div>
+
+        {repEmails.length > 0 && (
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted mr-1">
+              Rep
+            </span>
+            <RepChip label="All" href="/pipeline?tenant=magaya" active={!repFilter} />
+            {repEmails.map((email) => (
+              <RepChip
+                key={email}
+                label={repDisplayName(email) ?? email}
+                href={`/pipeline?tenant=magaya&rep=${encodeURIComponent(email)}`}
+                active={repFilter === email}
+              />
+            ))}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-5 bg-white rounded-xl2 shadow-card border border-line p-6">
           <Metric label="Fields auto-logged" value={String(fieldsLogged)} cls="text-ink font-bold" sub="reps didn't enter these" />
@@ -146,6 +182,7 @@ export function MagayaPipeline({
               <thead>
                 <tr className="border-b border-line">
                   <Th className="pl-5">Account</Th>
+                  <Th>Rep</Th>
                   <Th>Status</Th>
                   <Th>Stage</Th>
                   <Th>Rep last activity</Th>
@@ -166,6 +203,15 @@ export function MagayaPipeline({
                       <div className="text-[11px] text-muted mt-0.5">
                         {row.deal.industry}
                       </div>
+                    </td>
+                    <td className="py-3.5 text-[12px]">
+                      {repDisplayName(row.deal.repEmail) ? (
+                        <span className="text-ink font-medium">
+                          {repDisplayName(row.deal.repEmail)}
+                        </span>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
                     </td>
                     <td className="py-3.5"><StatusBadge health={row.health} /></td>
                     <td className="py-3.5 text-[12px]">
@@ -371,6 +417,21 @@ function StatusBadge({ health }: { health: Health }) {
       <span className={`w-1.5 h-1.5 rounded-full ${map.d}`} />
       {map.t}
     </span>
+  );
+}
+
+function RepChip({ label, href, active }: { label: string; href: string; active: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`text-[12px] font-medium rounded-full px-3 py-1 border transition ${
+        active
+          ? "bg-ink text-white border-ink"
+          : "bg-white text-muted border-line hover:border-ink/30 hover:text-ink"
+      }`}
+    >
+      {label}
+    </Link>
   );
 }
 

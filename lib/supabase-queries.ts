@@ -140,6 +140,7 @@ function rowToDeal(
     rep_forecast_probability: number | null;
     rep_forecast_close_date: string | null;
     rep_notes: string | null;
+    rep_email?: string | null;
   },
   contacts: Contact[],
   calls: CallRecord[],
@@ -159,11 +160,12 @@ function rowToDeal(
     calls,
     extraction,
     repNotes: d.rep_notes ?? "",
+    repEmail: d.rep_email ?? null,
   };
 }
 
 const DEAL_COLS =
-  "id, tenant_id, account, industry, arr, stage_key, days_in_stage, rep_forecast_probability, rep_forecast_close_date, rep_notes";
+  "id, tenant_id, account, industry, arr, stage_key, days_in_stage, rep_forecast_probability, rep_forecast_close_date, rep_notes, rep_email";
 
 /**
  * All deals for a tenant, fully populated (contacts, calls, extraction).

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DealView } from "@/components/DealView";
 import { MagayaDealView } from "@/components/MagayaDealView";
-import { getDealAttendance, type DealAttendance } from "@/lib/attendance";
+import { getDealAttendanceHistory, type CallAttendance } from "@/lib/attendance";
 import { getCroRead, type CroRead } from "@/lib/cro-read";
 import { getDealHistory } from "@/lib/deal-history";
 import { getFrameworkForDeal } from "@/lib/framework";
@@ -73,9 +73,10 @@ async function loadLiveMagayaDeal(id: string) {
       perGate: {},
       timeline: [],
     }));
-    const attendance: DealAttendance = await getDealAttendance(tenantId, deal.id).catch(
-      () => null,
-    );
+    const attendance: CallAttendance[] = await getDealAttendanceHistory(
+      tenantId,
+      deal.id,
+    ).catch(() => []);
     return {
       deal,
       framework,

@@ -54,6 +54,9 @@ export type Deal = {
   extraction: ExtractionResult;
   // Rep's free-text notes, what they would have written manually.
   repNotes: string;
+  // The rep who owns this deal (their login email), when known. Seeded demo
+  // deals leave this null; live Magaya deals carry it from the CRM/calendar.
+  repEmail?: string | null;
 };
 
 // ============================================================

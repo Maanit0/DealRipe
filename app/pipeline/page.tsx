@@ -153,7 +153,7 @@ const STALLED_DIVERGENCE_THRESHOLD = 20;
 export default async function PipelinePage({
   searchParams,
 }: {
-  searchParams: { tenant?: string };
+  searchParams: { tenant?: string; rep?: string };
 }) {
   // Magaya account: live, framework-driven pipeline. JWT tenant will replace
   // the ?tenant param once auth is wired; the TopSort demo path is unchanged.
@@ -169,6 +169,7 @@ export default async function PipelinePage({
           summariesByDealId={live.summaries}
           repActivityByDealId={live.repActivity}
           lastCallByDealId={live.lastCall}
+          repFilter={searchParams.rep ? searchParams.rep.toLowerCase() : null}
         />
       );
     // Do NOT fall back to the demo for the Magaya tenant; show the failure

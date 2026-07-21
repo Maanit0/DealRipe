@@ -58,6 +58,25 @@ export function repEmailForDeal(dealExternalId: string): string | null {
   return PILOT_REP_EMAILS[dealExternalId] ?? null;
 }
 
+/** Rep login email -> short display name, for pipeline/digest/deal UI. */
+export const REP_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  "jlopez@magaya.com": "Juan",
+  "ebencomo@magaya.com": "Eduardo",
+});
+
+/**
+ * Short, human name for a rep from their login email. Falls back to the local
+ * part of the address (title-cased) so an unmapped rep still reads sensibly,
+ * and returns null when there is no rep at all.
+ */
+export function repDisplayName(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const key = email.toLowerCase();
+  if (REP_DISPLAY_NAMES[key]) return REP_DISPLAY_NAMES[key];
+  const local = key.split("@")[0] ?? key;
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
 /**
  * Deal slug -> live Rolldog opportunity id, for write-back routing. Empty
  * until the reps send their opportunity ids (Juan for martinbrower/omniva;
