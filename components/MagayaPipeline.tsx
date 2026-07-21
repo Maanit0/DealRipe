@@ -106,12 +106,20 @@ export function MagayaPipeline({
             <div className="text-[12px] text-muted">
               {rows.length} deal{rows.length === 1 ? "" : "s"} · {atRisk} at risk · {stalled} stalled
             </div>
-            <Link
-              href="/digests"
-              className="text-[12px] font-medium text-accent hover:underline mt-0.5 inline-block"
-            >
-              Sent digests →
-            </Link>
+            <div className="mt-0.5 flex items-center justify-end gap-3">
+              <Link
+                href="/impact"
+                className="text-[12px] font-medium text-accent hover:underline"
+              >
+                Impact →
+              </Link>
+              <Link
+                href="/digests"
+                className="text-[12px] font-medium text-accent hover:underline"
+              >
+                Sent digests →
+              </Link>
+            </div>
           </div>
         </div>
 
