@@ -25,6 +25,7 @@ import { writeFileSync } from "node:fs";
 
 import { renderWeeklyDigestEmail } from "../lib/emails/weekly-digest";
 import { sendEmail } from "../lib/mailer";
+import { recordDigestSend } from "../lib/sent-messages";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 import { buildWeeklyDigestData } from "../lib/weekly-digest-data";
 
@@ -75,7 +76,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const res = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, ...(replyTo ? { replyTo } : {}) });
-  console.log(`\nSent to ${to}. Resend id: ${res.id}`);
+  await recordDigestSend({
+    tenantId,
+    toEmail: to,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    providerId: res.id,
+  });
+  console.log(`\nSent to ${to}. Resend id: ${res.id}  (logged to the digest history)`);
 }
 
 main().catch((e) => {

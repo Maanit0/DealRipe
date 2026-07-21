@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { renderWeeklyDigestEmail } from "@/lib/emails/weekly-digest";
 import { sendEmail } from "@/lib/mailer";
+import { recordDigestSend } from "@/lib/sent-messages";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 import { buildWeeklyDigestData } from "@/lib/weekly-digest-data";
 
@@ -68,6 +69,14 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       html: email.html,
       text: email.text,
       replyTo: process.env.DIGEST_REPLY_TO ?? "maanits@berkeley.edu",
+    });
+    await recordDigestSend({
+      tenantId,
+      toEmail: to,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      providerId: res.id,
     });
     return NextResponse.json({
       ok: true,

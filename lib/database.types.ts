@@ -656,7 +656,7 @@ export type Database = {
         Row: {
           id: string;
           tenant_id: string;
-          deal_id: string;
+          deal_id: string | null;
           call_id: string | null;
           kind: string;
           to_email: string;
@@ -669,7 +669,7 @@ export type Database = {
         Insert: {
           id?: string;
           tenant_id: string;
-          deal_id: string;
+          deal_id?: string | null;
           call_id?: string | null;
           kind: string;
           to_email: string;
@@ -682,7 +682,7 @@ export type Database = {
         Update: {
           id?: string;
           tenant_id?: string;
-          deal_id?: string;
+          deal_id?: string | null;
           call_id?: string | null;
           kind?: string;
           to_email?: string;
