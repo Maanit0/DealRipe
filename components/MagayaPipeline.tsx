@@ -95,8 +95,16 @@ export function MagayaPipeline({
       <main className="max-w-[1200px] mx-auto px-6 py-7">
         <div className="flex items-baseline justify-between gap-4 mb-5">
           <h1 className="text-[24px] font-semibold tracking-tight text-ink">Magaya</h1>
-          <div className="text-[12px] text-muted">
-            {rows.length} deal{rows.length === 1 ? "" : "s"} · {atRisk} at risk · {stalled} stalled
+          <div className="text-right">
+            <div className="text-[12px] text-muted">
+              {rows.length} deal{rows.length === 1 ? "" : "s"} · {atRisk} at risk · {stalled} stalled
+            </div>
+            <Link
+              href="/digests"
+              className="text-[12px] font-medium text-accent hover:underline mt-0.5 inline-block"
+            >
+              Sent digests →
+            </Link>
           </div>
         </div>
 
