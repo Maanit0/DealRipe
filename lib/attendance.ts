@@ -35,10 +35,15 @@ export async function getDealAttendance(
     .order("scheduled_start", { ascending: false });
   if (calls.error) return null;
 
-  // Most recent real call that has an invite list.
+  // Most recent real call that has already HAPPENED and has an invite list.
+  // A future scheduled call has no transcript, so every invitee would look like
+  // a no-show; attendance only makes sense for a call in the past.
+  const now = Date.now();
   let call: { id: string; scheduled_start: string | null; call_date: string | null; participants: unknown } | null = null;
   for (const c of calls.data ?? []) {
     if (c.outcome && NO_CONTENT.has(c.outcome)) continue;
+    const t = Date.parse(c.scheduled_start ?? c.call_date ?? "");
+    if (Number.isFinite(t) && t > now) continue; // upcoming call, not yet happened
     if (Array.isArray(c.participants) && c.participants.length > 0) {
       call = c;
       break;
