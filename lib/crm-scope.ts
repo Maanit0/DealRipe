@@ -52,6 +52,8 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
            // Salesforce says qualified, Rolldog shows unqualified (their sync gap).
   "82481", // Aeronet (Eduardo). Opp created by the BDR on 2026-07-21; confirmed
            // on the Eduardo call. Backfills the recovered Jul 20 call's gates.
+  "82482", // Air Americas LLC (auto-linked). Website-verified match
+           // (airamericas.com) confirmed by Maanit 2026-07-21 before linking.
 ]);
 
 /**
