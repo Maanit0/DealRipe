@@ -34,7 +34,9 @@ export function AttendanceCard({ attendance }: { attendance: DealAttendance }) {
 
   const spoke = attendance.invitees.filter((i) => i.spoke).length;
   const total = attendance.invitees.length;
-  const silent = total - spoke;
+  // A "no-show" is only meaningful for someone who was actually invited. People
+  // who joined without an invite are, by definition, present.
+  const silent = attendance.invitees.filter((i) => i.onInvite && !i.spoke).length;
 
   return (
     <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
@@ -46,13 +48,13 @@ export function AttendanceCard({ attendance }: { attendance: DealAttendance }) {
       </div>
 
       <div className={`text-[13px] mt-1.5 ${silent > 0 ? "text-danger" : "text-ink"}`}>
-        {spoke} of {total} invited customer{total === 1 ? "" : "s"} took part
+        {spoke} of {total} customer stakeholder{total === 1 ? "" : "s"} took part
         {silent > 0 ? `, ${silent} invited but did not speak` : ""}
       </div>
 
       <div className="mt-3 space-y-2">
         {attendance.invitees.map((i, idx) => {
-          const label = i.name ?? i.email ?? "Unknown invitee";
+          const label = i.name ?? i.email ?? "Unknown attendee";
           const resp = i.responseStatus ? RESP[i.responseStatus] ?? i.responseStatus : null;
           return (
             <div key={`${label}-${idx}`} className="flex items-start justify-between gap-3">
@@ -61,7 +63,9 @@ export function AttendanceCard({ attendance }: { attendance: DealAttendance }) {
                 {i.email && i.name && (
                   <div className="text-[11px] text-muted truncate">{i.email}</div>
                 )}
-                {resp && <div className="text-[11px] text-muted mt-0.5">RSVP: {resp}</div>}
+                {i.onInvite
+                  ? resp && <div className="text-[11px] text-muted mt-0.5">RSVP: {resp}</div>
+                  : <div className="text-[11px] text-muted mt-0.5">Joined, not on invite</div>}
               </div>
               <span
                 className={`shrink-0 text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full ${
