@@ -11,8 +11,10 @@
  */
 
 import type { ExtractionMap } from "./briefing-magaya";
+import { renderGeneralRecapEmail } from "./emails/general-recap";
 import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
+import { classifyMeetingType, generateGeneralRecap } from "./meeting-classify";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { repEmailForDeal } from "./pilot-config";
@@ -64,47 +66,67 @@ export async function sendPostCallSummary(args: {
     return { sent: false, to, reason: "framework load returned null" };
   }
 
-  // "Still open" reflects the deal's cumulative call-verified state (the
-  // field_extractions roll-up, which already includes this call by the time
-  // this runs), not just what this one call covered, and never a stale CRM
-  // entry. Rolldog is read (light) only for the current stage. Best-effort.
-  let gapExtraction = args.extraction;
-  try {
-    gapExtraction = (await getDealExtraction(dealRow.data.id)) as unknown as ExtractionMap;
-  } catch (err) {
-    console.warn(
-      `[post-call] extraction roll-up read failed for deal ${args.dealExternalId}: ${
-        err instanceof Error ? err.message : String(err)
-      }; using this call's extraction`,
-    );
-  }
-  // Stage is calls-first (from the canonical deal context), so the recap's
-  // "where it stands" agrees with the briefing and the deal page rather than
-  // deferring to a stale/absent CRM stage. Best-effort: fall back to the deal's
-  // stored stage if the context can't be built.
-  let stageKey = dealRow.data.stage_key;
-  try {
-    const ctx = await getDealContext(args.tenantId, dealRow.data.id);
-    if (ctx) stageKey = ctx.effectiveStageKey;
-  } catch (err) {
-    console.warn(
-      `[post-call] deal context read failed for ${args.dealExternalId}: ${
-        err instanceof Error ? err.message : String(err)
-      }; using deal stage`,
-    );
+  // Classify the meeting. DealRipe auto-joins every invited meeting, so not
+  // every call is a new-opportunity sales call. A customer or internal meeting
+  // gets a plain takeaways + next-steps recap instead of the qualification one
+  // (which would be the wrong shape and read as noise, per Eduardo's feedback).
+  const meetingType = await classifyMeetingType(args.transcript);
+  let email: ReturnType<typeof renderPostCallSummaryEmail> | null = null;
+
+  if (meetingType !== "new_opportunity") {
+    const general = await generateGeneralRecap({
+      account: dealRow.data.account,
+      transcript: args.transcript,
+    });
+    if (general) {
+      email = renderGeneralRecapEmail({ account: dealRow.data.account, recap: general, meetingType });
+    }
+    // If general generation failed, fall through to the qualification recap.
   }
 
-  const summary = await generatePostCallSummary({
-    account: dealRow.data.account,
-    stageKey,
-    closeDate: dealRow.data.rep_forecast_close_date ?? undefined,
-    framework,
-    extraction: args.extraction,
-    gapExtraction,
-    transcript: args.transcript,
-  });
+  if (!email) {
+    // "Still open" reflects the deal's cumulative call-verified state (the
+    // field_extractions roll-up, which already includes this call by the time
+    // this runs), not just what this one call covered, and never a stale CRM
+    // entry. Rolldog is read (light) only for the current stage. Best-effort.
+    let gapExtraction = args.extraction;
+    try {
+      gapExtraction = (await getDealExtraction(dealRow.data.id)) as unknown as ExtractionMap;
+    } catch (err) {
+      console.warn(
+        `[post-call] extraction roll-up read failed for deal ${args.dealExternalId}: ${
+          err instanceof Error ? err.message : String(err)
+        }; using this call's extraction`,
+      );
+    }
+    // Stage is calls-first (from the canonical deal context), so the recap's
+    // "where it stands" agrees with the briefing and the deal page rather than
+    // deferring to a stale/absent CRM stage. Best-effort: fall back to the deal's
+    // stored stage if the context can't be built.
+    let stageKey = dealRow.data.stage_key;
+    try {
+      const ctx = await getDealContext(args.tenantId, dealRow.data.id);
+      if (ctx) stageKey = ctx.effectiveStageKey;
+    } catch (err) {
+      console.warn(
+        `[post-call] deal context read failed for ${args.dealExternalId}: ${
+          err instanceof Error ? err.message : String(err)
+        }; using deal stage`,
+      );
+    }
 
-  const email = renderPostCallSummaryEmail(summary);
+    const summary = await generatePostCallSummary({
+      account: dealRow.data.account,
+      stageKey,
+      closeDate: dealRow.data.rep_forecast_close_date ?? undefined,
+      framework,
+      extraction: args.extraction,
+      gapExtraction,
+      transcript: args.transcript,
+    });
+
+    email = renderPostCallSummaryEmail(summary);
+  }
 
   if (args.dryRun) {
     // Archive the freshly-rendered recap without sending. The deal page reads

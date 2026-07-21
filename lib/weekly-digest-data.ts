@@ -109,10 +109,13 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
     const hasContent = gates > 0 || engaged.length > 0;
 
     // No-show: own section, fires regardless of captured content.
+    const now = Date.now();
     const noShowCall = (callsBy[d.id] ?? []).find((c) => {
       if (!c.outcome || !NO_CONTENT.has(String(c.outcome))) return false;
       const t = Date.parse(String(c.scheduled_start ?? c.call_date ?? ""));
-      return Number.isFinite(t) && t >= tenDaysAgo;
+      // Only a call that has already happened can be a no-show. A future
+      // scheduled call is "upcoming", never a no-show.
+      return Number.isFinite(t) && t >= tenDaysAgo && t <= now;
     });
     if (noShowCall) {
       const dt = shortDate(String(noShowCall.scheduled_start ?? noShowCall.call_date ?? ""));

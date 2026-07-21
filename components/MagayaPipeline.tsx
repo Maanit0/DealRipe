@@ -313,7 +313,13 @@ function buildRow(deal: Deal, framework: Framework): Row {
     ds.reachedStageKey !== null &&
     reachedRank > stageRank(deal.stageKey) &&
     ds.topGaps.length > 0;
-  const hadNoShow = deal.calls.some((c) => c.outcome && NO_CONTENT.has(c.outcome));
+  // A no-show can only be a call that already happened; a future scheduled
+  // call is "upcoming", never a no-show.
+  const hadNoShow = deal.calls.some((c) => {
+    if (!c.outcome || !NO_CONTENT.has(c.outcome)) return false;
+    const t = Date.parse(c.date);
+    return Number.isFinite(t) && t <= Date.now();
+  });
 
   const reasons: string[] = [];
   if (unengagedEBRisk) reasons.push("Economic buyer never engaged");

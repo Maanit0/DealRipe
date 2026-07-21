@@ -50,6 +50,8 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
   "82396", // Extrum (Juan). ID confirmed by Mark Buman on the 2026-07-20 call.
   "82359", // Core Logistics International (Juan). Confirmed by Mark 2026-07-20;
            // Salesforce says qualified, Rolldog shows unqualified (their sync gap).
+  "82481", // Aeronet (Eduardo). Opp created by the BDR on 2026-07-21; confirmed
+           // on the Eduardo call. Backfills the recovered Jul 20 call's gates.
 ]);
 
 /**
