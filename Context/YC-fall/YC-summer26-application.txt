@@ -1,0 +1,180 @@
+Y Combinator
+maanits
+settings
+Log out
+chevron_left
+Back
+DealRipe
+Summer 2026
+Founders
+Founder Video
+Company
+Progress
+Idea
+Equity
+Curious
+Batch Preference
+Invited
+Founders
+Maanit Sharma
+error
+Profile incomplete
+keyboard_arrow_down
+Who writes code, or does other technical work on your product? Was any of it done by a non-founder? Please explain.
+I write all the code. I'm a senior in EECS at UC Berkeley graduating May 18, with coursework in NLP, deep learning, machine learning, computer vision, robotics, operating systems, and reinforcement learning. I have two published IEEE papers in ML/AI. The product is Next.js 14 with TypeScript, deployed on Vercel, with seven API route handlers calling Claude Sonnet 4.6 via the Anthropic SDK. Persistence is a multi-tenant Supabase Postgres with row-level security policies, database-level tenant-isolation triggers, and a per-call audit trail. No one else has written any code on the product.
+Are you looking for a cofounder?
+No
+Founder Video
+Company
+Company name
+DealRipe
+Describe what your company does in 50 characters or less.
+Agent that audits deals and improves win rates
+Company URL, if any
+https://www.dealripe.com/
+Please provide a link to the product, if any.
+https://dealripe.vercel.app/
+What is your company going to make? Please describe your product and what it does or will do.
+DealRipe is the deal inspection layer that sits underneath a B2B sales team's existing stack (CRM, call recording tools, email, calendar). For sales teams with 10+ reps, it does three things:
+1. First, it audits every active deal against the team's own sales qualification framework (SCOTSMAN, MEDDIC, MEDDPICC, whatever they use) and surfaces what's missing. For example, budget not confirmed, economic buyer not identified, or procurement timeline not mapped. The blindspots sales reps either bias optimistically or forget to log or ask about on calls.
+2. Second, before every customer call, it tells the rep the exact situational questions to ask to close those gaps. Reps stop walking out of calls without confirming budget. CROs stop spending 10 hours a week manually verifying deals.
+3. Third, after every call, it pulls the actual answers out of the transcript and writes them back into the CRM with the customer's verbatim quote as evidence. When a CRO inspects a deal, they see "Budget confirmed at $200,000, Q3 procurement cycle" with the exact 12 seconds from the call where the prospect said it. The data going into the CRM is what the customer actually said, not what the rep typed three days later from memory.
+
+Today, the MVP runs the audit and question generation against ingested call transcripts and ships extractions to a dashboard. I've demoed it on 8 CRO calls. The next two builds are the Salesforce write-back integration for Mike Rogers's pilot at Mind.io (target: week of May 11) and the Microsoft Teams transcript pipeline for Mark Buman's pilot at Magaya (target: post legal review and code review on May 11).
+
+Why CROs want this: every other AI sales tool (Gong, Clari, Salesforce Einstein) reads from the CRM and trusts what's there. Sales reps control CRM input and their incentives reward making pipelines look healthier than they are. Every AI in the stack confidently summarizes data the rep fabricated. We sit underneath those tools and fix the data itself, so everything above us actually means something.
+Where do you live now, and where would the company be based after YC?
+Berkeley, USA / San Francisco, USA
+Explain your decision regarding location.
+I'm in Berkeley finishing my last semester of EECS at UC Berkeley, graduating in May. I'll move into SF the day the batch starts and the company will be based there during and after. SF has the highest density of B2B SaaS CROs (my customers) and the applied AI engineering talent I'll need to hire. No visa or relocation blockers.
+Progress
+How far along are you?
+Six weeks ago on March 23rd, I had my first CRO discovery call after pivoting from engineering to sales. Since then, I’ve had 33 unique CRO and VP of Sales discovery calls (55 total counting follow-ups), three pilots in late-stage close motion, nine more CROs mid-funnel, the Magaya CIO AI governance review cleared this morning, and a $4,000 setup fee commitment from Mike Rogers at Mind.io with second call to close on May 6. The Apollo sequence I built and tune weekly is currently booking 1-2 CRO meetings per day from cold. Conversion from discovery to demo is ~25%. Conversion from demo to pilot commitment is ~35%. Both rates have climbed as the demo narrative has tightened.
+
+The pattern converged fast. CROs are burning real cycles on deals that won't close because reps surface budget gaps, missing economic buyers, or procurement blockers far too late. The question that kept landing was past-tense, never hypothetical: "walk me through the last deal that slipped, when did you first know it was in trouble." The pace has accelerated. Last week I ran 9 CRO calls. Next week has 15 scheduled, including the Mike Rogers budget close on May 6 and the Paul Foreman follow-up on May 8.
+
+Mike Rogers, VP RevOps at Mind.io. Proposal in budget review at $4,000 setup fee plus monthly per-rep pricing. Second call May 6 to close. Independently built a v0 of the same tool internally in 24 hours using Claude. He demoed it to me on the call. He bought my pitch over his own tool because we ship multi-tenant, framework-configurable, and generate situational questions for each rep per deal.
+
+Mark Buman, CRO at Magaya. CIO AI governance review cleared this morning (May 4). Their CIO Matthew Fotouhi approved the product in concept. I sent the DPA and pilot services agreement to their legal team this afternoon. Code review with their CIO and IT team scheduled for May 11. Pilot starts on legal sign-off. Converts to annual contract on success criteria. Triages 100+ deals/quarter through a red/yellow/green system. First call April 17, demo April 23, governance review and DPA delivery May 4.
+
+Paul Foreman, former CRO at TopSort. Committed to bringing DealRipe in on day one of his new CRO role. Handed me his entire SCOTSMAN sales playbook (18-field qualification sheet, SPIN bank, rep coaching rubric) on calls one and two. That playbook is what the MVP runs against. He's moving to a new CRO role and committed to bringing DealRipe in from day one. Next call May 8.
+
+Beyond these three, nine more CROs and VPs of Sales have done discovery and demos and are mid-funnel (Brian Krause at Aware, Joe Dillon at Cayosoft, Mark Baxter at EchoStor, Stefano Marmonti at EMQX, Kevin Brooks at Procurant, Matt Gahr at Second Nature, Richard Benigno at Morphisec, Mike Dennis at Big Think Studio, and Hanyul at Mimica, who agreed today to run a parallel pilot pending his Sales Ops review). Three independent CROs (Mike Rogers, Joe Dillon, Kevin Brooks) named close-date prediction as the #1 AI output they'd pay for, without prompting. Today the demos run on ingested transcripts against my own seed pipelines. Salesforce write-back and Microsoft Teams + Gong transcript ingestion are the next builds, sequenced against the May pilots.
+
+
+Update as of May 11:
+Mike Rogers, Mind.io: Pilot services agreement sent May 7 at $4,000 build-out plus per-rep monthly. Mike came back May 8 asking for additional scope. Pipeline health dashboard, forecast confidence scoring, forecast accuracy tracking, and historical deal pattern analysis. Updated agreement sent that day. Awaiting internal budget approval this week. Signatory: Eran Barak, Mind.io CEO and co-founder.
+
+Mark Buman, CRO at Magaya: CIO Matthew Fotouhi cleared the AI governance review May 4. DPA and pilot services agreement with Magaya legal. May 5 strategy call: Mark committed to running a 30-day free pilot, assigning his most tenured sales leader, RollDog as the CRM write-back target, Microsoft Teams as the transcript source, three-stage pilot deal selection (one early pipeline, one mid-expect, one late commit), and weekly 30-minute check-in cadence. Code review with IT scheduling pending Mark's final coordination with Matthew. Follow-up call May 12.
+
+Brian Krause, CRO at Aware Inc: Coined "Blind Spot" framing on May 1 call. Shipped customer-configured version using his DUCT methodology (Decision Authority, Use Case, Competition, Timing) by May 11. Live dashboard, rep performance benchmarking, closed-loop briefings. Demo is Friday May 15.
+
+Paul Foreman: Committed to deploying DealRipe day-one of his next CRO role. His SCOTSMAN playbook is what the MVP runs against today.
+
+DealRipe, Inc. filed this week through Stripe Atlas as Delaware C Corp.
+How long have each of you been working on this? How much of that has been full-time? Please explain.
+I've been full time on DealRipe since March 23 (6 weeks ago), when I had my first CRO discovery call. Cold outreach started a week before that. I structured my last semester at Berkeley to make this possible. I'm taking 11 units: a 3-unit Deep Reinforcement Learning course taught by Sergey Levine (CS 185), 4 units of UGBA 195 (Intro to Entrepreneurship, in which I'm working on this startup as the coursework), and a 3-unit Startup Decal that meets once a week for a two-hour speaker talk. In earlier semesters, I prioritized technical depth: CS 189 (Machine Learning), Data CS 182 (Deep Neural Networks), EECS 183 (NLP), CS 180 (Computer Vision), EECS C106A (Robotics), CS 162 (Operating Systems), CS 170 (Algorithms), EECS 126 (Probability and Random Processes), EECS 127 (Optimization Models). I built and sold during summer and winter breaks. This semester is the first one deliberately structured to go all in on one startup instead of coursework.
+
+I graduate May 18. From that day on, I have zero school obligations. The plan is to move into SF the day the batch starts.
+
+A typical day is some mix of: discovery and demo calls (1 to 5 per day), follow-up emails to active prospects, working active deals toward paid pilots, and iterating the MVP off the feedback I get on those calls. I track everything using Granola and Claude.
+What tech stack are you using, or planning to use, to build this product? Include AI models and AI coding tools you use.
+Next.js 14 with TypeScript and Tailwind, deployed on Vercel. Single LLM dependency: the Anthropic SDK calling Claude Sonnet 4.6, used across seven API route handlers (extract-scotsman, prepare-briefing, score-call, coaching, activity-basis, persona, questions). Persistence is a multi-tenant Supabase Postgres with 22 row-level security policies, tenant-isolation triggers (enforce_tenant_alignment, prevent_tenant_id_change), and per-call audit trails (extraction_runs, briefing_runs tables). The MVP runs against ingested call transcripts and seed pipeline data. Salesforce write-back and Microsoft Teams transcript ingestion are the next two builds, sequenced against the May pilots with Mike Rogers (Mind.io) and Mark Buman (Magaya). For Magaya specifically, the CIO governance review cleared on May 4 and the DPA and pilot services agreement are with their legal team. Code review with their CIO and IT team is scheduled for May 11, which determines final deployment shape. I write the code with Claude Code. No non-founder has touched the codebase.
+Are people using your product?
+No
+When will you have a version people can use?
+The product is live and runs end-to-end. It ingests a sales call transcript, extracts qualification fields against the team's framework (SCOTSMAN, MEDDIC, or MEDDPICC) with quote-level evidence, and generates a pre-call briefing for the rep's next meeting on that deal. I've demoed it on 8 CRO calls so far. The first paid pilot starts the week of May 11, gated on Mike Rogers (Mind.io) closing internal budget approval after our second call on May 6. Magaya's pilot is on a separate track. Their CIO governance review cleared on May 4. The DPA and pilot services agreement are with Magaya's legal team as of today. Code review with their CIO and IT team is scheduled for May 11. Paul Foreman starts as a third pilot when his new CRO role begins. Next call May 8.
+
+Update as of May 11:
+Demoed to 13 CRO total now (+5). Three pilots in active close motion: Mind.io contract sent and awaiting internal budget approval, Magaya pilot scope agreed (RollDog write-back, Microsoft Teams transcript source), Aware demo Friday May 15 with their DUCT methodology already baked in. Paul Foreman as fourth pilot when his next CRO role begins.
+Do you have revenue?
+no
+If you are applying with the same idea as a previous batch, did anything change? If you applied with a different idea, why did you pivot and what did you learn from the last idea?
+In late January my co-founder and I won the 13Hacks UC Berkeley x United Sikh Movement hackathon with an engineering onboarding tool. We took the prize money, validated the problem with VPs of Engineering at Oscar Health, Google, and Amazon, and built a working MVP that auto-generated active-learning courses from any GitHub repo. We skipped school to demo at Developer Week. Five demo calls converted zero customers because the teams we hit were too small to feel the pain.
+Then Anthropic shipped MCP, which solved the same data-ingestion problem we'd built our differentiation around. That was the moment we knew the idea was dead. Four lessons I learned:
+1. Selling developer tools to developers is selling meal prep to chefs. If the pain is real, they build it themselves over a weekend.
+2. Engineering onboarding happens once per hire. Deal inspection happens on every deal, every week, forever. The recurring-pain shape is structurally better.
+3. We were talking to one to two customers per week. That simply wasn’t enough volume to make meaningful progress. I now talk to one to five CROs per day.
+4. Solving hard problems is what motivates me, independent of the specific problem. That gave me permission to pivot without feeling like I was abandoning a mission.
+
+I pivoted to sales on March 23. After 15 CRO discovery calls, the problem crystallized: rep-incentive bias is the root cause of bad CRM data, and bad CRM data breaks every AI sales tool downstream. That's DealRipe.
+If you have already participated or committed to participate in an incubator, "accelerator" or "pre-accelerator" program, please tell us about it.
+N/A
+Idea
+Why did you pick this idea to work on? Do you have domain expertise in this area? How do you know people need what you’re making?
+Why this idea?
+
+Sales is the only function in a company where the work product is a conversation. I learned that when running my marketing agency at 19. I lived in cold outreach, discovery calls, and the pain of qualifying a deal before I'd done enough enterprise sales coursework to know what qualifying meant. The reps and CROs I'm building for now are running the same loops I ran, just at a scale where the loop runs ten thousand times a quarter and the CRO can't see most of them. That gap between "what the rep said happened" and "what the customer actually said" is the problem I want to spend ten years on.
+
+I picked DealRipe after fifteen discovery calls with CROs and VPs of Sales between March 23 and early April. The same pattern surfaced unprompted across most of them: reps have happy ears, they bias deal data optimistically or forget to log it, qualification fields stay manual and stale, and by the time a CRO realizes a deal isn't real, weeks of pipeline value are gone. As teams scale past ten reps, forecast accuracy drops sharply because the qualification gaps compound. CROs spend their one-on-ones with reps gathering data when those calls should be about unblocking deals. Gong has the recordings. The time to listen to them doesn't exist. No CRO has 40 hours a quarter to listen to 100 calls. DealRipe is the layer that does the listening for them. What sealed it: three independent CROs (Mike Rogers at Mind.io, Joe Dillon at Cayosoft, Kevin Brooks at Procurant) named close-date prediction as the single AI output they'd pay for, in three separate calls. Mike Rogers built a v0 of DealRipe himself in 24 hours using Claude before our second call. He demoed his version to me. He's still buying mine because his runs on his laptop and won't scale to his team.
+
+Domain expertise
+I sold B2B before I started DealRipe. On a gap year after my freshman year at Berkeley, I built a marketing agency for medical spas to $11,558 peak MRR ($138K ARR) in six months at age 19, closing 90-day contracts at $1,500 to $2,000 per month. I sent 100+ cold emails a week, ran my own discovery, and learned where deals die: usually because I hadn't qualified budget, pain, authority, or timeline early enough. The same root cause that killed my deals at 19 is what CROs are paying their reps to surface today. I've been on both sides of the qualification framework: the rep trying to look better than the deal is, and now the founder building the tool that catches it.
+
+How do I know people need this?
+Three pilot commitments in eight demos. Nine more CROs mid-funnel. And one CRO who built the same product himself before deciding to buy mine.
+Who are your competitors? What do you understand about your business that they don’t?
+The most-named competitor in my demos is Gong. Every CRO I talk to is either using Gong or has used it. Gong is reactive and post-call. It transcribes, summarizes, and lets a CRO ask questions of the recording after the meeting. That's useful, but it inherits the same root problem every AI sales tool inherits. If the rep didn't ask the right qualification question on the call, no amount of post-call summary recovers the answer. Gong is summarizing data the rep failed to surface.
+
+DealRipe sits one step upstream. Before the rep takes the call, the agent reads the team's qualification framework (SCOTSMAN, MEDDIC, MEDDPICC, or a custom one), reads the deal's history, identifies the gaps, and generates the three situational questions the rep needs to ask on this specific deal to unblock it. After the call, the agent extracts the answers from the transcript with verbatim quote evidence and writes them back to the CRM. The CRO inspects deals against fields that came from the customer's words, not the rep's interpretation.
+
+Gong gives a CRO 100 recordings to listen to. DealRipe gives them the answer. The other comparisons that come up are Clari (forecasting, downstream of where I sit) and Salesforce Einstein (the native AI layer). Both consume CRM data and trust what's there. I don't.
+
+The competitor most CROs underestimate is themselves. Three of the CROs I've demoed to have built or are building a version of DealRipe internally using Claude or Perplexity. Mike Rogers at Mind.io built his version in 24 hours and demoed it to me on the call. He's still buying mine. The reason is everything around the prompt: multi-tenant deployment, framework configurability across teams, Salesforce write-back, and a system the CRO doesn't have to maintain on his laptop.
+How do or will you make money? How much could you make?
+Pricing:
+Founder pricing for the first five customers: $7,500 setup fee plus $200/rep/mo, annual contract. A ten-rep team pays roughly $32,000 in year one. Standard pricing scales to $10,000 setup plus $300 per rep per month once we have ten paying customers and case studies. Mike Rogers at Mind.io has committed at $4,000 setup, below the founder rate, locked in early. Mark Buman at Magaya is on a free 30-day pilot converting to an annual contract at founder pricing if he hits success criteria.
+
+Market and the path:
+Gong does $300 million in ARR across 5,000 customers and was valued at $7.25 billion at peak, $4.5 billion in current secondary trading. Clari is at $2.6 billion. Outreach is at $4.4 billion. Revenue intelligence is large enough to support multiple multi-billion-dollar outcomes, and that's before agentic AI changes what a "rep" looks like. DealRipe sits one layer upstream of Gong. Our market is every B2B SaaS company with ten or more reps and multiple sales managers, which is roughly 30,000 companies globally. At an average $35,000 ACV (the midpoint between a 10-rep team and a 30-rep team at our pricing), capturing just 3% of this market produces $30M ARR. 10% capture produces $100M ARR, which is roughly Gong's customer count today. Gong did $300M ARR in fiscal 2025 and traded at $7.25B at peak. We do not need to dominate the category to be a billion-dollar outcome. We need to be one layer of the revenue intelligence stack that CROs trust and pay for.
+
+Why this expands
+Every closed-won and closed-lost deal that flows through DealRipe makes the next deal's qualification scoring smarter. Once a CRO trusts the input data DealRipe surfaces, the natural expansion is into adjacent sales functions: rep ramp, deal-level forecasting (which we currently feed but don't own), territory planning, and rep performance benchmarking. What we sell first is a qualification audit. What we become is the place a company keeps its real deal data.
+Which category best applies to your company?
+Sales Enablement
+If you had any other ideas you considered applying with, please list them. One may be something we’ve been waiting for. Often when we fund people it’s to do something they list here and not in the main application.
+1. ChefGini. A smart kitchen scale that pairs with a marketplace of private chefs. Recreational bodybuilders and physique athletes set a target body composition (lean mass, body fat, weekly weight delta) and the scale-plus-app feeds those numbers to our app to calculate their goal macros/calories and make their meal plan/grocery list. We then connect them to a chef who meal-preps their week to exact macros with groceries delivered to them by us. The starting product is the weight scale plus the goal. The bigger business is the chef marketplace. I noticed this gap during my gap year running a marketing agency for med spas. Fitness clients had budgets for $1,000+/month chef services, but the matching layer didn't exist.
+
+2. Suvonian. An upsell SMS agent for e-commerce stores. The agent ingests the store's product catalog, identifies/creates the highest-margin subscription offer, and texts past one-time buyers with a personalized monthly subscription pitch and books sales calls with them. Cold outreach SMS to a warm list. Margins beat any acquisition channel.
+
+3. Channel intelligence for cybersecurity vendors. When an inbound lead hits a vendor's website, surface within seconds whether that prospect has a warm path through any of the vendor's existing resellers or partners. Came up as the strongest unprompted pain in my call with Richard Benigno, CRO at Morphisec.
+Equity
+Have you formed ANY legal entity yet?
+yes
+Please list all legal entities you have and in what state or country each was formed (e.g. Delaware C Corp, Mexican SAPI, Singapore Pvt Ltd, etc.).
+Avonian LLC, formed in California in 2022. This was the operating entity for the med spa marketing agency I ran during my gap year. I stopped taking new clients at the end of 2023 to return to Berkeley and focus full-time on my technical coursework in AI, ML, NLP and CV. The entity has been dormant since. There are no employees, no outstanding liabilities, no investors, and no contractual obligations that would conflict with DealRipe. DealRipe is not yet incorporated. I plan to form a Delaware C Corp on acceptance to YC, structured to receive the YC SAFE.
+Please describe the breakdown of the equity ownership in percentages among the founders, employees and any other stockholders. If there are multiple founders, be sure to give the equity ownership of each founder and founder title (e.g. CEO).
+DealRipe is not yet incorporated. I am the sole founder and am incorporating DealRipe Inc as a Delaware C Corp this week (target: filed by May 7) to support the first paid customer transaction with Mind.io and to be ready for Magaya's pilot conversion after their AI governance review on May 4. Founding cap table on incorporation:
+Maanit Sharma, Founder and CEO: 90%
+Option pool reserved for future hires: 10%
+
+No other equity has been issued, promised, or implied. There are no other stockholders, advisors with equity, or vesting schedules in place. My prior co-founder departed before incorporation and has no equity claim, no IP claim, and no contractual obligation to DealRipe.
+On a future co-founder hire, I would carve out 20% to 35% from the founder share, depending on timing and contribution.
+Have you taken any investment yet?
+no
+Are you currently fundraising?
+no
+Curious
+What convinced you to apply to Y Combinator? Did someone encourage you to apply? Have you been to any YC events?
+Vince Kohli convinced me to apply. Vince has been a Strategic Advisor at Y Combinator for eleven years. I met him at Developer Week 2026 in San Jose when I was demoing the engineering onboarding tool that didn't work. He told me my pitch was too long and made me redo it until I could explain the company in seven seconds. We've stayed in touch since. He pushed me to apply for the Summer 2026 batch when DealRipe started showing real pull.
+
+Mickala Wallingford, who led GTM at Arc (YC W22) and now runs startup partnerships at Orrick, has been an operational advisor during the customer conversations. She's the reason I declined Tyson Hempel's equity overtures cleanly. The way I run discovery calls is the part of YC's playbook I've leaned on hardest. On every CRO call I open with the same question: "walk me through the last deal that slipped, and when did you first know it was in trouble." Past behavior, not opinions. All three CROs who've committed to a pilot self-identified the exact pain DealRipe solves before I'd said a word about the product. I'm applying to YC because the company I'm trying to build has more in common with the YC alumni I've talked to than with the founders I meet anywhere else.
+How did you hear about Y Combinator?
+My roommate during my sophomore year at Berkeley invited me to a speaker event on campus in 2023. The speaker was Michael Seibel.
+Batch Preference
+What batch do you want to apply for?
+current
+Invited
+List each founder’s citizenship(s).
+Maanit Sharma: United States.
+Are any of the founders covered by noncompetes or intellectual property agreements that overlap with your project? If so, please explain.
+No.
+Is there anything else we should know about your company? Pending lawsuits, cofounders who have left, etc.
+My prior co-founder from a previous pivot (DevRipe, an engineering onboarding tool from January 2026) departed before I started DealRipe. He has no equity claim, no IP claim, and no contractual obligation to DealRipe. We remain on good terms. No pending lawsuits. No outstanding obligations from Avonian LLC (dormant since end of 2023). DealRipe, Inc. is filing this week through Stripe Atlas as a Delaware C Corp.
+About
+People
+Blog
+Resources
+Legal
+Notice at Collection
+Contact

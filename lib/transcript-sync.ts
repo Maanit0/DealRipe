@@ -47,6 +47,7 @@ import { sendPostCallSummary } from "./post-call-notify";
 import { writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
+import { classifyMeetingType } from "./meeting-classify";
 import { supabaseAdmin } from "./supabase";
 
 export type TranscriptSyncCounts = {
@@ -450,6 +451,15 @@ async function processRow(
       console.error(`[transcript-sync] outcome=captured mark failed for call ${callId}: ${outc.error.message}`);
     }
 
+    // Classify the meeting once and persist it, so the pipeline and digest can
+    // drop non-opportunity (customer/internal) meetings out of the sales view.
+    // Reused by the recap below so it isn't classified twice.
+    const meetingType = await classifyMeetingType(transcript);
+    const mt = await db.from("calls").update({ meeting_type: meetingType }).eq("id", callId);
+    if (mt.error) {
+      console.error(`[transcript-sync] meeting_type update failed for call ${callId}: ${mt.error.message}`);
+    }
+
     // Best-effort: email the rep their post-call summary. Fully isolated in
     // its own try/catch so a mail failure can never affect ingest status or
     // the media-delete step below.
@@ -459,6 +469,7 @@ async function processRow(
         dealExternalId: ingestResult.dealExternalId,
         extraction: ingestResult.extraction as unknown as ExtractionMap,
         transcript,
+        meetingType,
       });
       if (!notify.sent) {
         console.warn(

@@ -74,7 +74,7 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
     db.from("deals").select("id, account, external_id, stage_key, rep_email, rolldog_opportunity_id").eq("tenant_id", tenantId),
     db.from("field_extractions").select("deal_id, status").eq("tenant_id", tenantId),
     db.from("contacts").select("deal_id, name, role, relationship, last_contacted_at").eq("tenant_id", tenantId),
-    db.from("calls").select("deal_id, outcome, scheduled_start, call_date").eq("tenant_id", tenantId),
+    db.from("calls").select("deal_id, outcome, scheduled_start, call_date, meeting_type").eq("tenant_id", tenantId),
   ]);
 
   const feBy = group((fe.data ?? []) as Array<Row & { deal_id: string }>);
@@ -99,6 +99,17 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
     stage_key: string | null;
     rep_email: string | null;
   }>) {
+    // Skip non-opportunity meetings (existing customer / internal): they get a
+    // recap, but they are not sales pipeline and shouldn't appear in the digest.
+    // A deal is excluded only when every classified call is non-opportunity;
+    // unclassified calls default to keeping it (safe).
+    const classifiedTypes = (callsBy[d.id] ?? [])
+      .map((c) => c.meeting_type)
+      .filter((t): t is string => !!t);
+    if (classifiedTypes.length > 0 && classifiedTypes.every((t) => t !== "new_opportunity")) {
+      continue;
+    }
+
     const account = DISPLAY_NAMES[d.external_id ?? ""] ?? d.account;
     const rep = REP_NAMES[d.rep_email ?? ""] ?? "the rep";
     const gates = (feBy[d.id] ?? []).filter((x) => x.status === "Yes").length;

@@ -15,6 +15,7 @@ config({ path: ".env.local" });
 
 import { extractAndStore } from "../lib/transcript-ingest";
 import { extractContactsFromTranscript, upsertDealContacts } from "../lib/contacts-extract";
+import { classifyMeetingType } from "../lib/meeting-classify";
 import { sendPostCallSummary } from "../lib/post-call-notify";
 import type { ExtractionMap } from "../lib/briefing-magaya";
 import { getDealExtraction } from "../lib/supabase-queries";
@@ -64,11 +65,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let picked: { callExternalId: string; body: string; callDate: string | null } | null = null;
+  let picked: { callId: string; callExternalId: string; body: string; callDate: string | null } | null = null;
   for (const c of calls.data ?? []) {
     const t = await db.from("transcripts").select("body").eq("call_id", c.id).maybeSingle();
     if (t.data?.body && c.external_id) {
-      picked = { callExternalId: c.external_id, body: t.data.body, callDate: c.scheduled_start ?? null };
+      picked = { callId: c.id, callExternalId: c.external_id, body: t.data.body, callDate: c.scheduled_start ?? null };
       break;
     }
   }
@@ -102,12 +103,20 @@ async function main(): Promise<void> {
   });
   console.log(`Contacts: ${cres.inserted} added, ${cres.skipped} skipped.`);
 
+  // Classify the meeting and persist it, so the pipeline and digest exclude
+  // non-opportunity (customer/internal) meetings. Reused by the recap below.
+  const meetingType = await classifyMeetingType(picked.body);
+  const mtUpd = await db.from("calls").update({ meeting_type: meetingType }).eq("id", picked.callId);
+  if (mtUpd.error) console.error(`meeting_type update failed: ${mtUpd.error.message}`);
+  console.log(`Meeting type: ${meetingType}.`);
+
   if (resend || preview) {
     const res = await sendPostCallSummary({
       tenantId,
       dealExternalId: ext,
       extraction: rolled as unknown as ExtractionMap,
       transcript: picked.body,
+      meetingType,
       dryRun: preview,
     });
     if (preview) {

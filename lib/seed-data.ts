@@ -32,6 +32,9 @@ export type CallRecord = {
   // Call outcome: captured | no_conversation | no_show | rescheduled |
   // placeholder. Undefined/null for seed calls and in-progress rows.
   outcome?: string | null;
+  // Meeting type: new_opportunity | existing_customer | internal. Null until
+  // classified. Non-opportunity meetings are excluded from the sales pipeline.
+  meetingType?: string | null;
 };
 
 export type Deal = {

@@ -67,7 +67,14 @@ export function MagayaPipeline({
   repActivityByDealId?: Record<string, string | null>;
   lastCallByDealId?: Record<string, string | null>;
 }) {
-  const rows: Row[] = framework ? deals.map((deal) => buildRow(deal, framework)) : [];
+  // Exclude non-opportunity meetings (existing customer / internal): they get a
+  // recap but are not sales pipeline. A deal is dropped only when every
+  // classified call is non-opportunity; unclassified calls keep it (safe).
+  const salesDeals = deals.filter((deal) => {
+    const classified = deal.calls.map((c) => c.meetingType).filter((t): t is string => !!t);
+    return !(classified.length > 0 && classified.every((t) => t !== "new_opportunity"));
+  });
+  const rows: Row[] = framework ? salesDeals.map((deal) => buildRow(deal, framework)) : [];
 
   rows.sort((a, b) => {
     const order = { at_risk: 0, stalled: 1, healthy: 2 };

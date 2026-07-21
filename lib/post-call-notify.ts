@@ -14,7 +14,7 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { renderGeneralRecapEmail } from "./emails/general-recap";
 import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
-import { classifyMeetingType, generateGeneralRecap } from "./meeting-classify";
+import { classifyMeetingType, generateGeneralRecap, type MeetingType } from "./meeting-classify";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { repEmailForDeal } from "./pilot-config";
@@ -30,6 +30,9 @@ export async function sendPostCallSummary(args: {
   dealExternalId: string;
   extraction: ExtractionMap;
   transcript: string;
+  /** Pre-computed meeting type (from transcript-sync, which persists it). When
+   *  omitted, this classifies from the transcript. */
+  meetingType?: MeetingType;
   /** When true, render and archive the recap into sent_messages so the deal
    *  page can display the new-framework format, but do NOT actually send an
    *  email. Used to refresh the recap after a framework repoint without
@@ -70,7 +73,7 @@ export async function sendPostCallSummary(args: {
   // every call is a new-opportunity sales call. A customer or internal meeting
   // gets a plain takeaways + next-steps recap instead of the qualification one
   // (which would be the wrong shape and read as noise, per Eduardo's feedback).
-  const meetingType = await classifyMeetingType(args.transcript);
+  const meetingType = args.meetingType ?? (await classifyMeetingType(args.transcript));
   let email: ReturnType<typeof renderPostCallSummaryEmail> | null = null;
 
   if (meetingType !== "new_opportunity") {

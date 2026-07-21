@@ -1,0 +1,18 @@
+YC - DealRipe
+External
+Inbox
+
+Raphael Schaad <raphael@ycombinator.com>
+Wed, May 13, 11:37 PM
+to maanitsharma21, me
+
+Hi Maanit,
+
+Unfortunately, we’ve decided not to fund DealRipe for the S26 YC batch. This was a tough decision as we are impressed by the pace you've moved at over the last six weeks — CRO discovery calls, pilots in late-stage motion, and the MindIO commitment, all stand out. Your instinct to pivot and to throw yourself into customer conversations rather than into more code, is exactly the kind of judgment we look for.
+
+When we pushed on the product in the interview, the depth wasn't quite where we hoped. Today the system reads as a thoughtful orchestration of a single LLM against transcripts and a qualification framework, and we weren't sure we heard a clear answer for what makes this defensible once e.g. Gong catches up. We were specifically hoping you'd push harder on the closed-loop forecasting and decision-making layer — the part where DealRipe stops being a better extraction tool and becomes the system of record CROs actually run their pipeline reviews against.
+
+We hope this feedback is useful as you continue to refine the idea and build traction. We know we’re often wrong in our assessments, and we encourage you to keep building. If you’re able to make significant progress, we would be excited to hear from you again for a future batch.
+
+Best,
+Raphael
