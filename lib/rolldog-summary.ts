@@ -13,6 +13,7 @@ export type RolldogSummary = {
   score: string | null;
   qRank: string | null;
   forecastCategory: string | null;
+  closeDate: string | null;
   stageName: string | null;
   // CRM process timestamps (ISO). These are rep/CRM-driven, not written by
   // DealRipe (except updatedAt, which any write bumps — see repLastActivityIso).
@@ -32,6 +33,7 @@ export function summaryFromCore(core: Record<string, unknown>): RolldogSummary {
     score: str(core["score"]),
     qRank: str(core["q-rank"]),
     forecastCategory: str(core["forecast-category"]),
+    closeDate: str(core["close-date"]),
     stageName: str(core["stage-name"]),
     createdAt: str(core["created-at"]),
     currentStageDate: str(core["current-stage-date"]),

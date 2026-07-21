@@ -7,6 +7,7 @@
  */
 
 import { isMeaningfulContact } from "./contacts-extract";
+import { getRolldogSummary } from "./rolldog-summary";
 import { supabaseAdmin } from "./supabase";
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
@@ -29,14 +30,18 @@ const REP_NAMES: Record<string, string> = {
   "ebencomo@magaya.com": "Eduardo",
 };
 
+// The rep's Rolldog forecast, for setting next to DealRipe's evidence read.
+export type RepForecast = { category: string | null; closeDate: string | null };
+
 export type DigestAttention = {
   dealId: string;
   account: string;
   headline: string; // short, specific
   detail: string; // one flowing paragraph: context, why it matters, the action
   priority: number;
+  repForecast?: RepForecast;
 };
-export type DigestMovement = { dealId: string; account: string; note: string };
+export type DigestMovement = { dealId: string; account: string; note: string; repForecast?: RepForecast };
 export type DigestNoShow = { dealId: string; account: string; note: string };
 export type WeeklyDigestData = {
   attention: DigestAttention[];
@@ -66,7 +71,7 @@ function shortDate(iso: string | null | undefined): string {
 export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDigestData> {
   const db = supabaseAdmin();
   const [deals, fe, contacts, calls] = await Promise.all([
-    db.from("deals").select("id, account, external_id, stage_key, rep_email").eq("tenant_id", tenantId),
+    db.from("deals").select("id, account, external_id, stage_key, rep_email, rolldog_opportunity_id").eq("tenant_id", tenantId),
     db.from("field_extractions").select("deal_id, status").eq("tenant_id", tenantId),
     db.from("contacts").select("deal_id, name, role, relationship, last_contacted_at").eq("tenant_id", tenantId),
     db.from("calls").select("deal_id, outcome, scheduled_start, call_date").eq("tenant_id", tenantId),
@@ -75,6 +80,12 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
   const feBy = group((fe.data ?? []) as Array<Row & { deal_id: string }>);
   const contactsBy = group((contacts.data ?? []) as Array<Row & { deal_id: string }>);
   const callsBy = group((calls.data ?? []) as Array<Row & { deal_id: string }>);
+
+  // Each deal's linked Rolldog opp, for the rep-forecast enrichment below.
+  const oppByDeal = new Map<string, string>();
+  for (const d of (deals.data ?? []) as Array<{ id: string; rolldog_opportunity_id: string | null }>) {
+    if (d.rolldog_opportunity_id) oppByDeal.set(d.id, d.rolldog_opportunity_id);
+  }
 
   const attention: DigestAttention[] = [];
   const movement: DigestMovement[] = [];
@@ -178,5 +189,21 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
   }
 
   attention.sort((a, b) => b.priority - a.priority);
+
+  // Set the rep's Rolldog forecast (category + close date) next to the evidence,
+  // for the surfaced deals that are linked. Best-effort per deal; a Rolldog read
+  // failure just omits the rep-forecast line. Only the few surfaced+linked deals
+  // are read, not every deal.
+  await Promise.all(
+    [...attention, ...movement].map(async (item) => {
+      const opp = oppByDeal.get(item.dealId);
+      if (!opp) return;
+      const sum = await getRolldogSummary(opp);
+      if (sum && (sum.forecastCategory || sum.closeDate)) {
+        item.repForecast = { category: sum.forecastCategory, closeDate: sum.closeDate };
+      }
+    }),
+  );
+
   return { attention, movement, noShows };
 }

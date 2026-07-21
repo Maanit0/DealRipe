@@ -24,6 +24,22 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// The rep's Rolldog forecast, compact: "Commit · close Dec 8".
+function fmtForecast(f: { category: string | null; closeDate: string | null }): string {
+  const parts: string[] = [];
+  if (f.category) parts.push(f.category);
+  if (f.closeDate) {
+    try {
+      parts.push(
+        `close ${new Date(f.closeDate).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`,
+      );
+    } catch {
+      /* skip bad date */
+    }
+  }
+  return parts.join(" · ");
+}
+
 export function renderWeeklyDigestEmail(args: {
   attention: DigestAttention[];
   movement: DigestMovement[];
@@ -53,6 +69,11 @@ export function renderWeeklyDigestEmail(args: {
       (e, i) => `
       <div style="${i === 0 ? "" : `margin-top:18px;padding-top:18px;border-top:1px solid ${BORDER};`}">
         <div style="font-family:${SANS};font-size:16px;font-weight:600;color:${NAVY};line-height:23px;">${i + 1}. ${name(e.account, e.dealId)} &nbsp;&middot;&nbsp; ${esc(e.headline)}</div>
+        ${
+          e.repForecast && fmtForecast(e.repForecast)
+            ? `<div style="font-family:${SANS};font-size:12px;color:${MUTED};margin-top:4px;">Rep forecast: <span style="color:${INK};font-weight:600;">${esc(fmtForecast(e.repForecast))}</span></div>`
+            : ""
+        }
         <div style="font-family:${SANS};font-size:15px;line-height:24px;color:${INK};margin-top:8px;">${esc(e.detail)}</div>
       </div>`,
     )
