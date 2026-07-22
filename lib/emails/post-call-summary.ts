@@ -57,7 +57,8 @@ function listRow(marker: string, markerColor: string, inner: string, first: bool
 function buildFlags(summary: PostCallSummary): string[] {
   const flags: string[] = [];
   if (summary.noFollowupBooked) {
-    const what = summary.nextStepCommitment ? `You agreed to ${summary.nextStepCommitment}, but` : "You expected a next meeting, but";
+    const commit = summary.nextStepCommitment?.replace(/^(?:juan|eduardo)\s+to\s+/i, "").replace(/[.,;:\s]+$/, "");
+    const what = commit ? `You agreed to ${commit}, but` : "You expected a next meeting, but";
     flags.push(`No follow-up booked. ${what} nothing is on the calendar yet. Book it before it slips.`);
   }
   if (summary.nda) {

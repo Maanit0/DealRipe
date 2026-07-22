@@ -114,8 +114,8 @@ Rules:
 4. "recap": 2 to 3 short sentences, each at most about 16 words, on what actually happened, what the customer said, what moved or was deferred. Concrete, not generic. Brief and scannable, no run-ons.
 5. "suggestedNextStep": ONE specific next action for the rep, at most about 18 words. Name the person or action. One tight sentence.
 6. Write for the rep's eyes. Second person is fine ("you").
-7. "nextStepCommitment": the concrete follow-up both sides actually agreed to (e.g. "send product videos", "reconvene after their board meets"), at most about 14 words, or null if none was set.
-8. "followUpMeetingExpected": true only if the call implies a next meeting should be booked (a demo, a follow-up call, a reconvene) and it was NOT clearly already scheduled on the call. false if the deal is dead, purely async (just sending materials), or a meeting was already booked.
+7. "nextStepCommitment": the concrete next action from the rep's side, phrased as a short imperative fragment with NO trailing period and NOT starting with the rep's own name (e.g. "send Ely the product videos and datasheet", "reconvene after their board meets"). At most about 14 words, or null if none was set.
+8. "followUpMeetingExpected": true ONLY if a specific next meeting, call, or demo was agreed and could be booked now with both sides ready. Set it FALSE if the immediate next step is asynchronous (sending materials, waiting on the customer's internal review or an RFI), if the next meeting is gated on a prerequisite like a signed NDA, if a meeting was already scheduled on the call, or if the deal is dead. When in doubt, false.
 9. "nda": about Magaya's rule of a signed mutual NDA before a demo. Return null if NDAs never came up and no demo is near. Otherwise an object:
    { "demoIsNext": boolean (a demo or presentation is the agreed or imminent next step),
      "ndaInPlace": boolean (a mutual NDA is signed or was explicitly agreed on this call),
