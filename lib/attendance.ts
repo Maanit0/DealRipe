@@ -56,12 +56,17 @@ async function computeCallAttendance(
   // Split on the first colon (not ": "), drop any " | COMPANY" suffix, keep the
   // individual name words as tokens.
   const t = await db.from("transcripts").select("body").eq("call_id", call.id).maybeSingle();
+  const body = t.data?.body ?? "";
+  // No transcript yet (call still processing, or not captured): we cannot tell
+  // who spoke, so we must NOT render a premature all-no-show verdict. Skip this
+  // call until a real transcript exists.
+  if (body.trim().length < 20) return null;
   const speakerTokens = new Set<string>();
   // External guests carry a " | ORG" suffix in Teams transcripts (Magaya reps do
   // not); keep each external speaker's name + org so we can surface a stakeholder
   // who joined and spoke but was never on the invite.
   const externalSpeakers = new Map<string, string>(); // normalized name -> org (lowercased)
-  for (const raw of (t.data?.body ?? "").split("\n")) {
+  for (const raw of body.split("\n")) {
     const line = raw.trim();
     const idx = line.indexOf(":");
     if (idx <= 0 || idx > 60) continue;
