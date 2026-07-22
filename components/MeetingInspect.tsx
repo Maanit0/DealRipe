@@ -7,6 +7,7 @@ import { AttendanceCard } from "./AttendanceCard";
 import { ContactsCard } from "./ContactsCard";
 import { TranscriptView } from "./TranscriptView";
 import type { CallAttendance } from "@/lib/attendance";
+import { callSubtypeLabel } from "@/lib/meeting-classify";
 import type { MeetingDetail } from "@/lib/meetings";
 import type { Contact } from "@/lib/seed-data";
 
@@ -15,6 +16,8 @@ const TYPE_LABEL: Record<string, string> = {
   existing_customer: "Customer meeting",
   internal: "Internal",
 };
+
+const OPP_SUBTYPES = new Set(["discovery", "demo", "proposal", "follow_up"]);
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -44,7 +47,14 @@ export function MeetingInspect({
   recapHtml: string | null;
 }) {
   const [tab, setTab] = useState<Tab>("summary");
-  const typeLabel = meeting.meetingType ? TYPE_LABEL[meeting.meetingType] ?? meeting.meetingType : null;
+  const typeLabel =
+    callSubtypeLabel(meeting.callSubtype) ??
+    (meeting.meetingType ? TYPE_LABEL[meeting.meetingType] ?? meeting.meetingType : null);
+  const isOpp =
+    (meeting.callSubtype ? OPP_SUBTYPES.has(meeting.callSubtype) : false) ||
+    meeting.meetingType === "new_opportunity";
+  const headerTitle = meeting.title?.trim() || meeting.account;
+  const showAccountSub = headerTitle !== meeting.account;
 
   return (
     <div className="space-y-5">
@@ -52,14 +62,12 @@ export function MeetingInspect({
       <div className="bg-white rounded-xl2 shadow-card border border-line px-6 py-5">
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[20px] font-semibold text-ink">{meeting.account}</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-[20px] font-semibold text-ink">{headerTitle}</h1>
               {typeLabel && (
                 <span
                   className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
-                    meeting.meetingType === "new_opportunity"
-                      ? "bg-accent/10 text-accent"
-                      : "bg-ink/[0.06] text-muted"
+                    isOpp ? "bg-accent/10 text-accent" : "bg-ink/[0.06] text-muted"
                   }`}
                 >
                   {typeLabel}
@@ -67,6 +75,7 @@ export function MeetingInspect({
               )}
             </div>
             <p className="text-[13px] text-muted mt-1">
+              {showAccountSub ? `${meeting.account} · ` : ""}
               {fmtDate(meeting.date)}
               {meeting.durationMin != null ? ` · ${meeting.durationMin} min` : ""}
               {meeting.rep ? ` · ${meeting.rep}'s deal` : ""}

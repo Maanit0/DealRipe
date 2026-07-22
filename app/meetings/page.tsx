@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AppShell } from "@/components/AppShell";
 import { MeetingsFilterBar } from "@/components/MeetingsFilterBar";
+import { callSubtypeLabel } from "@/lib/meeting-classify";
 import { getMeetings, getUpcomingMeetings, type MeetingListItem } from "@/lib/meetings";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
@@ -12,6 +13,18 @@ const TYPE_LABEL: Record<string, string> = {
   existing_customer: "Customer",
   internal: "Internal",
 };
+
+const OPP_SUBTYPES = new Set(["discovery", "demo", "proposal", "follow_up"]);
+
+function typeLabel(m: MeetingListItem): string | null {
+  return callSubtypeLabel(m.callSubtype) ?? (m.meetingType ? TYPE_LABEL[m.meetingType] : null);
+}
+function isOppType(m: MeetingListItem): boolean {
+  return (m.callSubtype ? OPP_SUBTYPES.has(m.callSubtype) : false) || m.meetingType === "new_opportunity";
+}
+function meetingLabel(m: MeetingListItem): string {
+  return m.title?.trim() || participantLabel(m.participants);
+}
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled"]);
 
@@ -56,7 +69,7 @@ function applyFilters(list: MeetingListItem[], sp: SP): MeetingListItem[] {
     sp.range === "7d" ? 7 : sp.range === "30d" ? 30 : sp.range === "90d" ? 90 : null;
   const q = (sp.q ?? "").toLowerCase().trim();
   return list.filter((m) => {
-    if (sp.type && m.meetingType !== sp.type) return false;
+    if (sp.type && m.callSubtype !== sp.type && m.meetingType !== sp.type) return false;
     if (sp.rep && (m.rep ?? "") !== sp.rep) return false;
     if (sp.deal && m.dealId !== sp.deal) return false;
     if (sp.status === "noshow" && !isNoShow(m)) return false;
@@ -140,32 +153,29 @@ export default async function MeetingsPage({ searchParams }: { searchParams: SP 
                             href={`/meetings/${m.callId}`}
                             className="text-[14px] font-semibold text-ink hover:text-accent transition"
                           >
-                            {participantLabel(m.participants)}
+                            {meetingLabel(m)}
                           </Link>
                         ) : (
-                          <span className="text-[14px] font-semibold text-ink">
-                            {participantLabel(m.participants)}
-                          </span>
+                          <span className="text-[14px] font-semibold text-ink">{meetingLabel(m)}</span>
                         )}
                         {isNoShow(m) && (
                           <span className="ml-2 text-[10px] uppercase tracking-wider font-bold text-danger">
                             No-show
                           </span>
                         )}
-                        <div className="text-[11px] text-muted mt-0.5">
+                        <div className="text-[11px] text-muted mt-0.5 truncate max-w-[380px]">
+                          {m.participants.length > 0 ? participantLabel(m.participants) + " · " : ""}
                           {m.rep ? `${m.rep}'s call` : "Unassigned"}
                         </div>
                       </td>
                       <td className="py-3.5 align-top text-[12px]">
-                        {m.meetingType ? (
+                        {typeLabel(m) ? (
                           <span
                             className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
-                              m.meetingType === "new_opportunity"
-                                ? "bg-accent/10 text-accent"
-                                : "bg-ink/[0.06] text-muted"
+                              isOppType(m) ? "bg-accent/10 text-accent" : "bg-ink/[0.06] text-muted"
                             }`}
                           >
-                            {TYPE_LABEL[m.meetingType] ?? m.meetingType}
+                            {typeLabel(m)}
                           </span>
                         ) : (
                           <span className="text-muted">{view === "upcoming" ? "Scheduled" : "—"}</span>

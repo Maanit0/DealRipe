@@ -449,6 +449,7 @@ async function processEvent(
         scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
         source: "recall_ai",
+        title: ev.subject,
       })
       .select("id")
       .single();

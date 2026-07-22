@@ -42,6 +42,60 @@ export async function classifyMeetingType(transcript: string): Promise<MeetingTy
   }
 }
 
+export type CallSubtype = "discovery" | "demo" | "proposal" | "follow_up" | "customer" | "internal";
+
+const SUBTYPE_LABEL: Record<CallSubtype, string> = {
+  discovery: "Discovery",
+  demo: "Demo",
+  proposal: "Proposal",
+  follow_up: "Follow-up",
+  customer: "Customer",
+  internal: "Internal",
+};
+
+export function callSubtypeLabel(s: string | null | undefined): string | null {
+  if (!s) return null;
+  return SUBTYPE_LABEL[s as CallSubtype] ?? null;
+}
+
+/**
+ * Finer purpose of a call. Existing-customer and internal meetings map straight
+ * from the meeting type; new-opportunity calls are classified from the transcript
+ * into discovery / demo / proposal / follow_up so Mark can see what each meeting
+ * was about. Defaults to "discovery" for an opportunity call on any failure.
+ */
+export async function classifyCallSubtype(args: {
+  transcript: string;
+  meetingType: MeetingType;
+}): Promise<CallSubtype> {
+  if (args.meetingType === "existing_customer") return "customer";
+  if (args.meetingType === "internal") return "internal";
+  if (!process.env.ANTHROPIC_API_KEY || args.transcript.trim().length < 50) return "discovery";
+
+  const system = `Classify a B2B sales call's PURPOSE into exactly one label. Reply with ONLY the label word, nothing else.
+- discovery: fact-finding about the prospect's operations, needs, and current tools. Early stage, no in-depth product shown.
+- demo: a product demonstration or presentation is the main activity.
+- proposal: pricing, a proposal/quote, terms, or negotiation is the main activity.
+- follow_up: a follow-up or check-in on an already-progressing opportunity (recap, next steps, waiting on the customer), not primarily discovery, demo, or proposal.
+Pick the label that best fits what the call was mostly about.`;
+  try {
+    const resp = await getAnthropicClient().messages.create({
+      model: getAnthropicModel(),
+      max_tokens: 10,
+      temperature: 0,
+      system,
+      messages: [{ role: "user", content: `Transcript:\n\n${args.transcript.slice(0, MAX_CHARS)}` }],
+    });
+    const text = resp.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
+    if (text.includes("demo")) return "demo";
+    if (text.includes("proposal")) return "proposal";
+    if (text.includes("follow")) return "follow_up";
+    return "discovery";
+  } catch {
+    return "discovery";
+  }
+}
+
 export type GeneralRecap = {
   summary: string;
   takeaways: string[];

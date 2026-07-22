@@ -48,7 +48,7 @@ import { sendNoShowFollowup } from "./no-show-followup";
 import { writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
-import { classifyMeetingType } from "./meeting-classify";
+import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
 import { supabaseAdmin } from "./supabase";
 
 export type TranscriptSyncCounts = {
@@ -492,7 +492,11 @@ async function processRow(
     // drop non-opportunity (customer/internal) meetings out of the sales view.
     // Reused by the recap below so it isn't classified twice.
     const meetingType = await classifyMeetingType(transcript);
-    const mt = await db.from("calls").update({ meeting_type: meetingType }).eq("id", callId);
+    const callSubtype = await classifyCallSubtype({ transcript, meetingType }).catch(() => null);
+    const mt = await db
+      .from("calls")
+      .update({ meeting_type: meetingType, call_subtype: callSubtype })
+      .eq("id", callId);
     if (mt.error) {
       console.error(`[transcript-sync] meeting_type update failed for call ${callId}: ${mt.error.message}`);
     }

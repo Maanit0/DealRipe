@@ -172,6 +172,8 @@ export type Database = {
           scheduled_start: string | null;
           outcome: string | null;
           meeting_type: string | null;
+          title: string | null;
+          call_subtype: string | null;
           created_at: string;
         };
         Insert: {
@@ -191,6 +193,8 @@ export type Database = {
           scheduled_start?: string | null;
           outcome?: string | null;
           meeting_type?: string | null;
+          title?: string | null;
+          call_subtype?: string | null;
           created_at?: string;
         };
         Update: {
@@ -210,6 +214,8 @@ export type Database = {
           scheduled_start?: string | null;
           outcome?: string | null;
           meeting_type?: string | null;
+          title?: string | null;
+          call_subtype?: string | null;
           created_at?: string;
         };
         Relationships: [];

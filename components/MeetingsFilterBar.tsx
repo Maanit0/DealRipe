@@ -9,7 +9,10 @@ export type FilterOptions = {
 
 const TYPE_OPTS = [
   { v: "", label: "All types" },
-  { v: "new_opportunity", label: "New opportunity" },
+  { v: "discovery", label: "Discovery" },
+  { v: "demo", label: "Demo" },
+  { v: "proposal", label: "Proposal" },
+  { v: "follow_up", label: "Follow-up" },
   { v: "existing_customer", label: "Customer" },
   { v: "internal", label: "Internal" },
 ];

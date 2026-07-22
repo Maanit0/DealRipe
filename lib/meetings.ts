@@ -19,6 +19,10 @@ export type MeetingListItem = {
   date: string | null;
   durationMin: number | null;
   meetingType: string | null;
+  /** Finer call purpose: discovery | demo | proposal | follow_up | customer | internal. */
+  callSubtype: string | null;
+  /** Calendar event subject, if captured. */
+  title: string | null;
   outcome: string | null;
   /** Customer-side attendee names (non-Magaya), for the meeting label. */
   participants: string[];
@@ -59,7 +63,7 @@ export async function getMeetings(tenantId: string): Promise<MeetingListItem[]> 
   const [callsRes, dealsRes] = await Promise.all([
     db
       .from("calls")
-      .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, has_been_extracted, participants")
+      .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, call_subtype, title, has_been_extracted, participants")
       .eq("tenant_id", tenantId)
       .order("scheduled_start", { ascending: false }),
     db.from("deals").select("id, account, external_id, rep_email").eq("tenant_id", tenantId),
@@ -80,6 +84,8 @@ export async function getMeetings(tenantId: string): Promise<MeetingListItem[]> 
     duration_minutes: number | null;
     outcome: string | null;
     meeting_type: string | null;
+    call_subtype: string | null;
+    title: string | null;
     has_been_extracted: boolean;
     participants: unknown;
   }>) {
@@ -97,6 +103,8 @@ export async function getMeetings(tenantId: string): Promise<MeetingListItem[]> 
       date: c.scheduled_start ?? c.call_date,
       durationMin: c.duration_minutes,
       meetingType: c.meeting_type,
+      callSubtype: c.call_subtype,
+      title: c.title,
       outcome: c.outcome,
       participants: customerNames(c.participants),
     });
@@ -111,7 +119,7 @@ export async function getUpcomingMeetings(tenantId: string): Promise<MeetingList
   const [callsRes, dealsRes] = await Promise.all([
     db
       .from("calls")
-      .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, participants")
+      .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, call_subtype, title, participants")
       .eq("tenant_id", tenantId)
       .gt("scheduled_start", nowIso)
       .order("scheduled_start", { ascending: true }),
@@ -133,6 +141,8 @@ export async function getUpcomingMeetings(tenantId: string): Promise<MeetingList
     duration_minutes: number | null;
     outcome: string | null;
     meeting_type: string | null;
+    call_subtype: string | null;
+    title: string | null;
     participants: unknown;
   }>) {
     if (!c.deal_id) continue;
@@ -148,6 +158,8 @@ export async function getUpcomingMeetings(tenantId: string): Promise<MeetingList
       date: c.scheduled_start ?? c.call_date,
       durationMin: null,
       meetingType: c.meeting_type,
+      callSubtype: c.call_subtype,
+      title: c.title,
       outcome: c.outcome,
       participants: customerNames(c.participants),
     });
@@ -164,6 +176,8 @@ export type MeetingDetail = {
   date: string | null;
   durationMin: number | null;
   meetingType: string | null;
+  callSubtype: string | null;
+  title: string | null;
   outcome: string | null;
   transcript: string;
 };
@@ -175,7 +189,7 @@ export async function getMeetingDetail(
   const db = supabaseAdmin();
   const call = await db
     .from("calls")
-    .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type")
+    .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, call_subtype, title")
     .eq("tenant_id", tenantId)
     .eq("id", callId)
     .maybeSingle();
@@ -200,6 +214,8 @@ export async function getMeetingDetail(
     date: call.data.scheduled_start ?? call.data.call_date,
     durationMin: call.data.duration_minutes,
     meetingType: call.data.meeting_type,
+    callSubtype: call.data.call_subtype,
+    title: call.data.title,
     outcome: call.data.outcome,
     transcript: tr.data?.body ?? "",
   };
