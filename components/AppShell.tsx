@@ -1,11 +1,12 @@
 import Link from "next/link";
 
-export type NavKey = "deals" | "meetings" | "actions" | "review" | "audit";
+export type NavKey = "deals" | "meetings" | "actions" | "activity" | "review" | "audit";
 
 const ITEMS: { key: NavKey; label: string; href: string }[] = [
   { key: "deals", label: "Deals", href: "/pipeline?tenant=magaya" },
   { key: "meetings", label: "Meetings", href: "/meetings" },
   { key: "actions", label: "Actions", href: "/actions" },
+  { key: "activity", label: "Activity", href: "/activity" },
   { key: "review", label: "Review", href: "/review" },
 ];
 
