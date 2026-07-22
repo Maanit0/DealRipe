@@ -32,6 +32,7 @@ export type WriteBackResult = {
 export async function writeBackDealToRolldog(
   tenantSlug: string,
   dealExternalId: string,
+  opts: { nextAction?: string } = {},
 ): Promise<WriteBackResult> {
   const tenantId = await resolveTenantId(tenantSlug);
   const db = supabaseAdmin();
@@ -81,6 +82,7 @@ export async function writeBackDealToRolldog(
         tenantSlug,
         dealId,
         rolldogOpportunityId: opp,
+        nextAction: opts.nextAction,
       }),
     );
     // Stamp when DealRipe last wrote this record so the "rep last activity"

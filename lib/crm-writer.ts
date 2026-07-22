@@ -53,6 +53,7 @@ import {
 import {
   writeBudget,
   writeCompetitionNotes,
+  writeOpportunity,
   writeParticipantNotes,
   writeSituation,
   writeTimeline,
@@ -90,6 +91,11 @@ export type SyncDealToRolldogOpts = {
   /** When true, compose payloads and return status="preview" WITHOUT writing
    *  to Rolldog. Use to validate the mapping before enabling live writes. */
   dryRun?: boolean;
+  /** The recap's recommended next action to write to the opportunity's next
+   *  step. Composed always; the LIVE write is additionally gated behind the
+   *  ROLLDOG_WRITE_NEXT_STEP env flag (default off) until the Rolldog target is
+   *  confirmed, so it previews without touching the CRM. */
+  nextAction?: string;
 };
 
 /**
@@ -378,6 +384,39 @@ export async function syncDealToRolldog(
       status: "skipped",
       fieldsWritten: [],
     });
+  }
+
+  // writeNextStep: the recap's recommended next action -> the opportunity's next
+  // step. Composed here so it can be previewed, but the LIVE write stays gated
+  // behind ROLLDOG_WRITE_NEXT_STEP (default off) until the Rolldog target is
+  // confirmed, so a normal pipeline run previews it rather than writing it.
+  const action = opts.nextAction?.trim();
+  if (action) {
+    const note = capNote(`${stamp} Next step: ${action}`);
+    const liveAllowed = process.env.ROLLDOG_WRITE_NEXT_STEP === "1";
+    if (dryRun || !liveAllowed) {
+      results.push({
+        method: "writeNextStep",
+        status: "preview",
+        fieldsWritten: ["suggested_next_step"],
+        payload: `next_step (-> opportunity notes):\n${note}${dryRun ? "" : "\n(live write gated: set ROLLDOG_WRITE_NEXT_STEP=1 to enable)"}`,
+      });
+    } else {
+      try {
+        await writeOpportunity(opts.rolldogOpportunityId, { next_step: note });
+        results.push({ method: "writeNextStep", status: "ok", fieldsWritten: ["suggested_next_step"] });
+      } catch (err) {
+        if (err instanceof ScopeViolationError) throw err;
+        results.push({
+          method: "writeNextStep",
+          status: "error",
+          fieldsWritten: ["suggested_next_step"],
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  } else {
+    results.push({ method: "writeNextStep", status: "skipped", fieldsWritten: [] });
   }
 
   return results;

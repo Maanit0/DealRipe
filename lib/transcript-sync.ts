@@ -479,6 +479,7 @@ async function processRow(
     // Best-effort: email the rep their post-call summary. Fully isolated in
     // its own try/catch so a mail failure can never affect ingest status or
     // the media-delete step below.
+    let recapNextAction: string | undefined;
     try {
       const notify = await sendPostCallSummary({
         tenantId,
@@ -487,6 +488,7 @@ async function processRow(
         transcript,
         meetingType,
       });
+      recapNextAction = notify.nextAction;
       if (!notify.sent) {
         console.warn(
           `[transcript-sync] post-call summary not sent for call ${callId}: ${notify.reason}`,
@@ -503,7 +505,9 @@ async function processRow(
     // no-ops until the deal's opportunity id is mapped (pilot-config) and
     // allowlisted (crm-scope). Never affects ingest.
     try {
-      const wb = await writeBackDealToRolldog("magaya", ingestResult.dealExternalId);
+      const wb = await writeBackDealToRolldog("magaya", ingestResult.dealExternalId, {
+        nextAction: recapNextAction,
+      });
       if (!wb.written) {
         console.warn(
           `[transcript-sync] rolldog write-back skipped for call ${callId}: ${wb.reason}`,

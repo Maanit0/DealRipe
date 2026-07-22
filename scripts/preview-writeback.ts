@@ -52,6 +52,9 @@ async function main(): Promise<void> {
   const dealIdx = argv.indexOf("--deal");
   const slug = dealIdx !== -1 ? argv[dealIdx + 1] : "morneau";
   const real = argv.includes("--real");
+  const nsIdx = argv.indexOf("--next-step");
+  const nextAction =
+    nsIdx !== -1 ? argv[nsIdx + 1] : real ? undefined : "Send Ely the product videos and datasheet, then confirm review and get the NDA signed before the demo.";
 
   const tenantId = await resolveTenantId(SLUG);
   const db = supabaseAdmin();
@@ -116,6 +119,7 @@ async function main(): Promise<void> {
       dealId,
       rolldogOpportunityId: oppId ?? "PREVIEW",
       dryRun: true,
+      nextAction,
     });
 
     console.log("");

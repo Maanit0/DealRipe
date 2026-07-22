@@ -23,7 +23,14 @@ import { recordSentMessage } from "./sent-messages";
 import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 
-export type NotifyResult = { sent: boolean; to?: string; reason?: string };
+export type NotifyResult = {
+  sent: boolean;
+  to?: string;
+  reason?: string;
+  /** The recap's recommended next action, for Rolldog next-step write-back.
+   *  Set only for new-opportunity (qualification) recaps. */
+  nextAction?: string;
+};
 
 export async function sendPostCallSummary(args: {
   tenantId: string;
@@ -75,6 +82,9 @@ export async function sendPostCallSummary(args: {
   // (which would be the wrong shape and read as noise, per Eduardo's feedback).
   const meetingType = args.meetingType ?? (await classifyMeetingType(args.transcript));
   let email: ReturnType<typeof renderPostCallSummaryEmail> | null = null;
+  // The recommended next action, surfaced for Rolldog next-step write-back. Only
+  // set on the qualification recap (new opportunity), never a general recap.
+  let nextAction: string | undefined;
 
   if (meetingType !== "new_opportunity") {
     const general = await generateGeneralRecap({
@@ -146,6 +156,7 @@ export async function sendPostCallSummary(args: {
     }
 
     email = renderPostCallSummaryEmail(summary);
+    nextAction = summary.nextStepCommitment ?? summary.suggestedNextStep;
   }
 
   if (args.dryRun) {
@@ -162,7 +173,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: null,
     });
-    return { sent: false, to, reason: "dry-run: recap archived, email skipped" };
+    return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction };
   }
 
   try {
@@ -183,7 +194,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: res.id || null,
     });
-    return { sent: true, to, reason: `resend id ${res.id}` };
+    return { sent: true, to, reason: `resend id ${res.id}`, nextAction };
   } catch (err) {
     if (err instanceof MailerConfigError) {
       return { sent: false, to, reason: `mailer not configured: ${err.message}` };
