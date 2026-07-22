@@ -53,9 +53,42 @@ function listRow(marker: string, markerColor: string, inner: string, first: bool
   </tr>`;
 }
 
+/** Action flags read from the call: no follow-up booked, NDA-before-demo. */
+function buildFlags(summary: PostCallSummary): string[] {
+  const flags: string[] = [];
+  if (summary.noFollowupBooked) {
+    const what = summary.nextStepCommitment ? `You agreed to ${summary.nextStepCommitment}, but` : "You expected a next meeting, but";
+    flags.push(`No follow-up booked. ${what} nothing is on the calendar yet. Book it before it slips.`);
+  }
+  if (summary.nda) {
+    if (summary.nda.demoIsNext && !summary.nda.ndaInPlace) {
+      flags.push("NDA before demo. A demo is the next step but no signed NDA yet. Magaya's process wants a mutual NDA first.");
+    }
+    if (summary.nda.customerResisted) {
+      flags.push("NDA pushback. The customer hesitated on signing an NDA. Worth watching as a seriousness signal.");
+    }
+  }
+  return flags;
+}
+
 export function renderPostCallSummaryEmail(summary: PostCallSummary): RenderedEmail {
   const stageLabel = STAGE_LABELS[summary.stageKey] ?? summary.stageKey;
   const subject = `Recap: ${summary.account} call. ${summary.captured.length} captured, ${summary.stillOpen.length} still open`;
+  const flags = buildFlags(summary);
+
+  const flagsCard =
+    flags.length === 0
+      ? ""
+      : card(
+          `${label("Flags to act on", AMBER)}
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${flags
+             .map((f, i) => listRow("&#9650;", AMBER, `<span style="color:${INK};">${escapeHtml(f)}</span>`, i === 0))
+             .join("")}</table>`,
+        );
+
+  const coachingCard = summary.coaching
+    ? card(`${label("Coaching", MUTED)}${bodyText(summary.coaching)}`)
+    : "";
 
   const capturedRows =
     summary.captured.length === 0
@@ -115,7 +148,11 @@ export function renderPostCallSummaryEmail(summary: PostCallSummary): RenderedEm
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${openRows}</table>`,
         )}
 
+        ${flagsCard}
+
         ${card(`${label("Suggested next step", MUTED)}${bodyText(summary.suggestedNextStep)}`)}
+
+        ${coachingCard}
 
         <div style="font-family:${SANS};font-size:12px;line-height:19px;color:${MUTED};margin:6px 2px 0 2px;">
           DealRipe wrote this from your call so you don't have to. Reply to flag anything that looks wrong and I'll fix it.
@@ -147,8 +184,19 @@ function renderText(summary: PostCallSummary, stageLabel: string): string {
   if (summary.stillOpen.length === 0) lines.push("- No open gaps for this stage.");
   else for (const o of summary.stillOpen) lines.push(`- ${o.label}. ${o.question}`);
   lines.push("");
+  const flags = buildFlags(summary);
+  if (flags.length > 0) {
+    lines.push("FLAGS TO ACT ON");
+    for (const f of flags) lines.push(`- ${f}`);
+    lines.push("");
+  }
   lines.push("SUGGESTED NEXT STEP");
   lines.push(summary.suggestedNextStep);
+  if (summary.coaching) {
+    lines.push("");
+    lines.push("COACHING");
+    lines.push(summary.coaching);
+  }
   lines.push("");
   lines.push("DealRipe wrote this from your call. Reply to flag anything wrong.");
   return lines.join("\n");

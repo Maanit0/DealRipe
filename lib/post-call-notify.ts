@@ -20,7 +20,7 @@ import { getDealContext } from "./deal-context";
 import { repEmailForDeal } from "./pilot-config";
 import { generatePostCallSummary } from "./post-call-summary";
 import { recordSentMessage } from "./sent-messages";
-import { getDealExtraction } from "./supabase-queries";
+import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 
 export type NotifyResult = { sent: boolean; to?: string; reason?: string };
@@ -127,6 +127,23 @@ export async function sendPostCallSummary(args: {
       gapExtraction,
       transcript: args.transcript,
     });
+
+    // "Next step agreed but no meeting booked": if the call implies a follow-up
+    // meeting and the calendar has no upcoming call for this deal, flag it so the
+    // rep books it now instead of letting it slip. Best-effort; a read failure
+    // just leaves the flag off.
+    if (summary.followUpMeetingExpected) {
+      try {
+        const upcoming = await getUpcomingCallForDeal(args.tenantId, dealRow.data.id);
+        summary.noFollowupBooked = !upcoming;
+      } catch (err) {
+        console.warn(
+          `[post-call] upcoming-call check failed for ${args.dealExternalId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
 
     email = renderPostCallSummaryEmail(summary);
   }
