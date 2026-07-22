@@ -214,6 +214,9 @@ export async function getDealsForTenant(tenantId: string): Promise<Deal[]> {
   }
   const callsByDeal = new Map<string, CallRecord[]>();
   for (const c of callsRes.data ?? []) {
+    // A capture failure (our bot never recorded) is hidden from every deal view;
+    // it isn't a real call anyone should see. Operators inspect it via scripts.
+    if (c.outcome === "capture_failed") continue;
     const list = callsByDeal.get(c.deal_id) ?? [];
     list.push(rowToCall(c));
     callsByDeal.set(c.deal_id, list);
@@ -278,7 +281,8 @@ export async function getDealForTenant(
   return rowToDeal(
     d,
     (contactsRes.data ?? []).map(rowToContact),
-    (callsRes.data ?? []).map(rowToCall),
+    // Hide capture failures (our bot never recorded) from every deal view.
+    (callsRes.data ?? []).filter((c) => c.outcome !== "capture_failed").map(rowToCall),
     buildExtraction(fxRes.data ?? []),
   );
 }

@@ -104,7 +104,7 @@ async function loadMagayaPipeline() {
     // per deal. This is real activity Rolldog often can't see (deals with no
     // opportunity, or a rep who never logged the meeting), so it's shown next
     // to the rep's CRM staleness rather than merged into it.
-    const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+    const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
     const lastCall: Record<string, string | null> = {};
     try {
       const nowIso = new Date().toISOString();

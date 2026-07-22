@@ -16,7 +16,7 @@ const RECAP_MIN = 10; // manual note-writing after a call
 const BRIEFING_MIN = 15; // pre-call prep + research
 const FIELD_MIN = 1; // manual CRM field entry
 
-const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
 const BUYER_RE = /budget|cfo|chief financ|owner|final|economic|controller/i;
 
 export type ImpactBreakdown = { label: string; count: number; minEach: number; hours: number };

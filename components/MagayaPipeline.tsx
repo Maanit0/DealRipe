@@ -362,7 +362,7 @@ function buildRow(deal: Deal, framework: Framework): Row {
   // DealRipe evidence-based risk flags, from what the calls actually captured.
   const ds = deriveDealState(framework, deal.extraction, deal.stageKey);
   const reachedRank = ds.reachedStageKey ? stageRank(ds.reachedStageKey) : -1;
-  const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+  const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
 
   const unengagedEB = deal.contacts.some(
     (c) => c.relationship === "economic_buyer" && !c.lastContactedAt,

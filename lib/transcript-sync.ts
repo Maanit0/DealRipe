@@ -305,10 +305,31 @@ async function processRow(
 
   if (bot.status === "fatal") {
     counts.fatal += 1;
+    // A fatal bot (e.g. Recall insufficient credit, or a join failure) never
+    // recorded, so this is OUR capture failure, not a customer no-show. Mark it
+    // as such and resolve it: capture_failed is filtered out of every rep/CRO
+    // view, and it must never trigger a no-show follow-up (the customer may well
+    // have attended, we just failed to record). Operators still see it via logs.
+    await db
+      .from("calls")
+      .update({ outcome: "capture_failed", has_been_extracted: true })
+      .eq("id", callId);
     await writeIngestError(
       callId,
-      `bot terminated fatal (status=${bot.rawStatusCode})`,
+      `bot terminated fatal (status=${bot.rawStatusCode}); marked capture_failed`,
     );
+    emit({ kind: "fatal", callId, recallBotId, rawStatus: bot.rawStatusCode });
+    return;
+  }
+
+  // Bot finished but its media is gone (expired / never uploaded): same as a
+  // fatal capture failure for our purposes, we have no recording to work from.
+  if (bot.status === "done" && !bot.hasMedia) {
+    await db
+      .from("calls")
+      .update({ outcome: "capture_failed", has_been_extracted: true })
+      .eq("id", callId);
+    await writeIngestError(callId, "bot done but media unavailable; marked capture_failed");
     emit({ kind: "fatal", callId, recallBotId, rawStatus: bot.rawStatusCode });
     return;
   }

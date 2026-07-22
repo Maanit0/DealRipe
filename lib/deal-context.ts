@@ -25,7 +25,7 @@ import type { Contact } from "./seed-data";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 
-const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
 
 export type DealContext = {
   dealId: string;

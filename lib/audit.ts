@@ -19,7 +19,7 @@ import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-ex
 import { repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
 import { supabaseAdmin } from "./supabase";
 
-const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
 
 export type AuditSeverity = "info" | "warn" | "error";
 

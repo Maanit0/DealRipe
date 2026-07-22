@@ -14,7 +14,12 @@
 
 import { supabaseAdmin } from "./supabase";
 
-const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder"]);
+const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
+
+// Free/personal email providers, where the local part is a handle that rarely
+// matches the person's spoken name. Used to safely merge a personal-email
+// no-show with the single person who actually spoke.
+const FREE_EMAIL = /@(gmail|googlemail|outlook|hotmail|live|msn|yahoo|ymail|icloud|me|mac|aol|proton|protonmail|gmx|zoho)\./i;
 
 export type Invitee = {
   name: string | null;
@@ -164,6 +169,20 @@ async function computeCallAttendance(
       const display = spName.replace(/\b\w/g, (c) => c.toUpperCase());
       invitees.push({ name: display, email: null, responseStatus: null, spoke: true, onInvite: false });
     }
+  }
+
+  // Merge a personal-email no-show with a single spoke-extra: they are almost
+  // certainly the same person invited under a personal address whose handle does
+  // not resemble their spoken name (e.g. qqgregory@gmail.com = "Quincy"), so we
+  // must not double-count them. Gated to free-email domains so a real corporate
+  // no-show is never wrongly merged with a colleague who joined uninvited.
+  const noShow = invitees.filter((i) => i.onInvite && !i.spoke);
+  const spokeExtras = invitees.filter((i) => !i.onInvite && i.spoke);
+  if (noShow.length === 1 && spokeExtras.length === 1 && FREE_EMAIL.test(noShow[0].email ?? "")) {
+    noShow[0].spoke = true;
+    noShow[0].name = spokeExtras[0].name ?? noShow[0].name;
+    const idx = invitees.indexOf(spokeExtras[0]);
+    if (idx >= 0) invitees.splice(idx, 1);
   }
 
   if (invitees.length === 0) return null;
