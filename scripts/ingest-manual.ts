@@ -26,7 +26,8 @@ import { readFileSync } from "node:fs";
 import { extractContactsFromTranscript, upsertDealContacts } from "../lib/contacts-extract";
 import type { ExtractionMap } from "../lib/briefing-magaya";
 import { getFrameworkForDeal } from "../lib/framework";
-import { classifyCallSubtype, classifyMeetingType } from "../lib/meeting-classify";
+import { classifyCallSubtype, classifyMeetingType, type MeetingType } from "../lib/meeting-classify";
+import { rolldogOppIdForDeal } from "../lib/pilot-config";
 import { sendPostCallSummary } from "../lib/post-call-notify";
 import { recordDealSnapshot } from "../lib/snapshot";
 import { supabaseAdmin } from "../lib/supabase";
@@ -60,7 +61,7 @@ async function main(): Promise<void> {
 
   const deal = await db
     .from("deals")
-    .select("id, account, external_id")
+    .select("id, account, external_id, rolldog_opportunity_id")
     .eq("tenant_id", tenantId)
     .eq("external_id", ext)
     .maybeSingle();
@@ -135,11 +136,17 @@ async function main(): Promise<void> {
   });
   console.log(`[3/6] Contacts: ${cres.inserted} added, ${cres.skipped} skipped.`);
 
-  // 4. Classify meeting type + sub-type.
-  const meetingType = await classifyMeetingType(transcript);
-  const subtype = await classifyCallSubtype({ transcript, meetingType });
+  // 4. Classify meeting type + sub-type. Overridable, since a transcript-only
+  //    classifier can misread a sales demo to an existing-tool customer as an
+  //    existing-customer meeting; the deal's own stage is the tiebreaker.
+  const mtOverride = arg("--meeting-type") as MeetingType | undefined;
+  const stOverride = arg("--subtype");
+  const trackedOpportunity =
+    !!rolldogOppIdForDeal(ext) || !!deal.data.rolldog_opportunity_id;
+  const meetingType = mtOverride ?? (await classifyMeetingType(transcript, { trackedOpportunity }));
+  const subtype = stOverride ?? (await classifyCallSubtype({ transcript, meetingType }));
   await db.from("calls").update({ meeting_type: meetingType, call_subtype: subtype }).eq("id", call.id);
-  console.log(`[4/6] Meeting: ${meetingType} / ${subtype}.`);
+  console.log(`[4/6] Meeting: ${meetingType} / ${subtype}${mtOverride || stOverride ? " (override)" : ""}.`);
 
   // 5. Snapshot.
   try {

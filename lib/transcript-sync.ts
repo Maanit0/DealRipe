@@ -49,6 +49,7 @@ import { writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
 import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
+import { rolldogOppIdForDeal } from "./pilot-config";
 import { supabaseAdmin } from "./supabase";
 
 export type TranscriptSyncCounts = {
@@ -491,7 +492,17 @@ async function processRow(
     // Classify the meeting once and persist it, so the pipeline and digest can
     // drop non-opportunity (customer/internal) meetings out of the sales view.
     // Reused by the recap below so it isn't classified twice.
-    const meetingType = await classifyMeetingType(transcript);
+    // Deal context: a deal with a Rolldog opportunity is a tracked, open sales
+    // opportunity, so customer-facing calls are sales calls (never existing-customer).
+    const dealLink = await db
+      .from("deals")
+      .select("rolldog_opportunity_id")
+      .eq("tenant_id", tenantId)
+      .eq("external_id", ingestResult.dealExternalId)
+      .maybeSingle();
+    const trackedOpportunity =
+      !!rolldogOppIdForDeal(ingestResult.dealExternalId) || !!dealLink.data?.rolldog_opportunity_id;
+    const meetingType = await classifyMeetingType(transcript, { trackedOpportunity });
     const callSubtype = await classifyCallSubtype({ transcript, meetingType }).catch(() => null);
     const mt = await db
       .from("calls")

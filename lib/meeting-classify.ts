@@ -18,10 +18,28 @@ export type MeetingType = "new_opportunity" | "existing_customer" | "internal";
 
 const MAX_CHARS = 14000; // enough signal for classification/summary, keeps cost low
 
-/** Classify a call transcript. Defaults to "new_opportunity" on any failure. */
-export async function classifyMeetingType(transcript: string): Promise<MeetingType> {
+/**
+ * Classify a call transcript. Defaults to "new_opportunity" on any failure.
+ *
+ * `trackedOpportunity` is the deal-context tiebreaker: when the deal is an active,
+ * open sales opportunity in the CRM (it has a Rolldog opportunity), any
+ * customer-facing call on it is a sales call, never an existing-customer support
+ * call, no matter how much a deep product demo sounds like one. Without that
+ * signal a transcript-only read misclassifies expansion/analytics demos as
+ * existing-customer meetings and drops the deal out of the pipeline.
+ */
+export async function classifyMeetingType(
+  transcript: string,
+  opts?: { trackedOpportunity?: boolean },
+): Promise<MeetingType> {
   if (!process.env.ANTHROPIC_API_KEY || transcript.trim().length < 50) return "new_opportunity";
-  const system = `Classify a B2B call transcript into exactly one type. Reply with ONLY the type word, nothing else.
+  const tracked = opts?.trackedOpportunity === true;
+  const system = tracked
+    ? `Classify a B2B call transcript for a deal that is a TRACKED, OPEN sales opportunity in the CRM. Because this deal is an active opportunity being sold, a call with the customer is a SALES call, not an existing-customer support call, even if a deep product demo makes it sound like one. Reply with ONLY the type word, nothing else.
+- new_opportunity: a customer or prospect is on the call (discovery, demo, qualification, evaluation, pricing, negotiation). This is the default for any customer-facing call on this deal.
+- internal: ONLY the seller's own team is present, with no customer or prospect voice at all.
+Do NOT answer existing_customer for this deal.`
+    : `Classify a B2B call transcript into exactly one type. Reply with ONLY the type word, nothing else.
 - new_opportunity: a sales call with a prospect or a not-yet-closed deal (discovery, demo, qualification, evaluation, pricing).
 - existing_customer: a call with a CURRENT customer already using or implementing the product (support, account management, onboarding, expansion of an already-won deal).
 - internal: a call among the seller's own team with no customer/prospect present.`;
@@ -34,8 +52,8 @@ export async function classifyMeetingType(transcript: string): Promise<MeetingTy
       messages: [{ role: "user", content: `Transcript:\n\n${transcript.slice(0, MAX_CHARS)}` }],
     });
     const text = resp.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
-    if (text.includes("existing_customer")) return "existing_customer";
     if (text.includes("internal")) return "internal";
+    if (!tracked && text.includes("existing_customer")) return "existing_customer";
     return "new_opportunity";
   } catch {
     return "new_opportunity";
