@@ -27,10 +27,16 @@ export function SentCommsCard({ messages }: { messages: SentMessage[] }) {
                     className={`text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded ${
                       m.kind === "briefing"
                         ? "bg-accent/10 text-accent"
-                        : "bg-ink/[0.06] text-ink"
+                        : m.kind === "no_show_draft"
+                          ? "bg-warn/10 text-warn"
+                          : "bg-ink/[0.06] text-ink"
                     }`}
                   >
-                    {m.kind === "briefing" ? "Pre-call" : "Recap"}
+                    {m.kind === "briefing"
+                      ? "Pre-call"
+                      : m.kind === "no_show_draft"
+                        ? "No-show draft"
+                        : "Recap"}
                   </span>
                   <span className="text-[13px] text-ink truncate">{m.subject}</span>
                 </span>

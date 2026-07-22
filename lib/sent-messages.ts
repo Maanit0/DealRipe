@@ -9,7 +9,7 @@
 
 import { supabaseAdmin } from "./supabase";
 
-export type SentMessageKind = "briefing" | "recap";
+export type SentMessageKind = "briefing" | "recap" | "no_show_draft";
 
 export type SentMessage = {
   id: string;
@@ -135,7 +135,7 @@ export async function getSentMessages(dealId: string): Promise<SentMessage[]> {
   if (res.error || !res.data) return [];
   return res.data.map((r) => ({
     id: r.id,
-    kind: (r.kind === "recap" ? "recap" : "briefing") as SentMessageKind,
+    kind: (r.kind === "recap" || r.kind === "no_show_draft" ? r.kind : "briefing") as SentMessageKind,
     toEmail: r.to_email,
     subject: r.subject,
     bodyHtml: r.body_html,

@@ -116,10 +116,11 @@ Rules:
 6. Write for the rep's eyes. Second person is fine ("you").
 7. "nextStepCommitment": the concrete next action from the rep's side, phrased as a short imperative fragment with NO trailing period and NOT starting with the rep's own name (e.g. "send Ely the product videos and datasheet", "reconvene after their board meets"). At most about 14 words, or null if none was set.
 8. "followUpMeetingExpected": true ONLY if a specific next meeting, call, or demo was agreed and could be booked now with both sides ready. Set it FALSE if the immediate next step is asynchronous (sending materials, waiting on the customer's internal review or an RFI), if the next meeting is gated on a prerequisite like a signed NDA, if a meeting was already scheduled on the call, or if the deal is dead. When in doubt, false.
-9. "nda": about Magaya's rule of a signed mutual NDA before a demo. Return null if NDAs never came up and no demo is near. Otherwise an object:
-   { "demoIsNext": boolean (a demo or presentation is the agreed or imminent next step),
-     "ndaInPlace": boolean (a mutual NDA is signed or was explicitly agreed on this call),
+9. "nda": about Magaya's rule of a signed mutual NDA before a demo. Return null ONLY if a demo/presentation is nowhere in the deal's path and NDAs never came up. Otherwise an object:
+   { "demoIsNext": boolean (a demo or presentation is an agreed or upcoming step, even if it is gated behind other steps first),
+     "ndaInPlace": boolean (a mutual NDA is ACTUALLY SIGNED or confirmed in place; a rep merely offering or promising to send an NDA is NOT in place, so this is false),
      "customerResisted": boolean (the customer questioned or pushed back on signing an NDA) }
+   The rep wants an over-reminder here: if a demo is coming and the NDA is not yet signed, demoIsNext true + ndaInPlace false is correct even when the rep has said they will send it.
 10. "coaching": ONE short, kind, specific coaching note for the rep IF and only if the transcript clearly shows the rep moved off a pain point too quickly or dominated the talking when the customer should have. At most about 20 words, second person. null if the rep ran the call well. Do not invent a critique.
 
 Return a single JSON object, no prose, no markdown fences:

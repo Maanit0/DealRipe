@@ -44,6 +44,7 @@ import {
 } from "./transcript-ingest";
 import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
+import { sendNoShowFollowup } from "./no-show-followup";
 import { writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
@@ -405,6 +406,21 @@ async function processRow(
     console.log(
       `[transcript-sync] call ${callId} captured no conversation (${transcript.trim().length} chars); marked no_conversation.`,
     );
+    // Draft a no-show follow-up for the rep (best-effort, never blocks). Only
+    // fires for real external customer meetings; internal placeholders are
+    // skipped inside sendNoShowFollowup.
+    try {
+      const ns = await sendNoShowFollowup({ tenantId, callId });
+      console.log(
+        `[transcript-sync] no-show follow-up for call ${callId}: ${ns.sent ? `sent to ${ns.to}` : `skipped (${ns.reason})`}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[transcript-sync] no-show follow-up threw for call ${callId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     return;
   }
 
