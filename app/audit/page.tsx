@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AppShell } from "@/components/AppShell";
 import { runDailyAudit, type AuditFinding, type AuditReport } from "@/lib/audit";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
@@ -25,7 +26,8 @@ export default async function AuditPage() {
   const info = report?.findings.filter((f) => f.severity === "info") ?? [];
 
   return (
-    <div className="min-h-screen bg-bg">
+    <AppShell active="audit">
+      <div className="min-h-screen bg-bg">
       <main className="max-w-[900px] mx-auto px-6 py-7">
         <Link
           href="/pipeline?tenant=magaya"
@@ -78,7 +80,8 @@ export default async function AuditPage() {
           </>
         )}
       </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
 

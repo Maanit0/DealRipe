@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AppShell } from "@/components/AppShell";
 import { DealView } from "@/components/DealView";
 import { MagayaDealView } from "@/components/MagayaDealView";
 import { getDealAttendanceHistory, type CallAttendance } from "@/lib/attendance";
@@ -118,17 +119,26 @@ export default async function DealPage({ params }: { params: { id: string } }) {
     body = <DealView deal={deal} stage={stage} />;
   }
 
-  return (
-    <div className="min-h-screen bg-bg">
-      <main className="max-w-[1200px] mx-auto px-6 py-7">
-        <Link
-          href={live ? "/pipeline?tenant=magaya" : "/pipeline"}
-          className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink transition mb-5"
-        >
-          <span className="text-base leading-none">←</span> Back to pipeline
-        </Link>
-        {body}
-      </main>
-    </div>
+  const inner = (
+    <main className="max-w-[1200px] mx-auto px-6 py-7">
+      <Link
+        href={live ? "/pipeline?tenant=magaya" : "/pipeline"}
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink transition mb-5"
+      >
+        <span className="text-base leading-none">←</span> Back to pipeline
+      </Link>
+      {body}
+    </main>
   );
+
+  // Live Magaya deals sit inside the app shell (sidebar); the TopSort demo keeps
+  // its standalone full-page layout.
+  if (live) {
+    return (
+      <AppShell active="deals">
+        <div className="min-h-screen bg-bg">{inner}</div>
+      </AppShell>
+    );
+  }
+  return <div className="min-h-screen bg-bg">{inner}</div>;
 }

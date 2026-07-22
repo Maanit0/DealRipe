@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AppShell } from "@/components/AppShell";
 import { MagayaPipeline } from "@/components/MagayaPipeline";
 import { getPilotDigest } from "@/lib/digest";
 import { getFrameworkForDeal } from "@/lib/framework";
@@ -161,16 +162,18 @@ export default async function PipelinePage({
     const live = await loadMagayaPipeline();
     if (live)
       return (
-        <MagayaPipeline
-          deals={live.deals}
-          framework={live.framework}
-          digest={live.digest}
-          upcomingByDealId={live.upcoming}
-          summariesByDealId={live.summaries}
-          repActivityByDealId={live.repActivity}
-          lastCallByDealId={live.lastCall}
-          repFilter={searchParams.rep ? searchParams.rep.toLowerCase() : null}
-        />
+        <AppShell active="deals">
+          <MagayaPipeline
+            deals={live.deals}
+            framework={live.framework}
+            digest={live.digest}
+            upcomingByDealId={live.upcoming}
+            summariesByDealId={live.summaries}
+            repActivityByDealId={live.repActivity}
+            lastCallByDealId={live.lastCall}
+            repFilter={searchParams.rep ? searchParams.rep.toLowerCase() : null}
+          />
+        </AppShell>
       );
     // Do NOT fall back to the demo for the Magaya tenant; show the failure
     // so it is obvious something threw (see the dev server terminal).
