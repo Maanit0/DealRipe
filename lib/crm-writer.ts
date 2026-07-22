@@ -51,9 +51,9 @@ import {
   type Framework,
 } from "./framework";
 import {
+  createActivity,
   writeBudget,
   writeCompetitionNotes,
-  writeOpportunity,
   writeParticipantNotes,
   writeSituation,
   writeTimeline,
@@ -386,24 +386,26 @@ export async function syncDealToRolldog(
     });
   }
 
-  // writeNextStep: the recap's recommended next action -> the opportunity's next
-  // step. Composed here so it can be previewed, but the LIVE write stays gated
-  // behind ROLLDOG_WRITE_NEXT_STEP (default off) until the Rolldog target is
-  // confirmed, so a normal pipeline run previews it rather than writing it.
+  // writeNextStep: the recap's recommended next action -> a to-do in the
+  // opportunity's interactions tab (an `activities` record, is-complete false).
+  // Composed here so it can be previewed; the LIVE create stays gated behind
+  // ROLLDOG_WRITE_NEXT_STEP (default off) so a normal pipeline run previews it
+  // until you flip the flag after confirming it renders in the interactions tab.
   const action = opts.nextAction?.trim();
   if (action) {
-    const note = capNote(`${stamp} Next step: ${action}`);
+    const title = capNote(`Next step: ${action}`);
+    const notes = `${stamp} DealRipe next-step recommendation from the call.`;
     const liveAllowed = process.env.ROLLDOG_WRITE_NEXT_STEP === "1";
     if (dryRun || !liveAllowed) {
       results.push({
         method: "writeNextStep",
         status: "preview",
         fieldsWritten: ["suggested_next_step"],
-        payload: `next_step (-> opportunity notes):\n${note}${dryRun ? "" : "\n(live write gated: set ROLLDOG_WRITE_NEXT_STEP=1 to enable)"}`,
+        payload: `activity (-> interactions tab):\n  [DealRipe] ${title}\n  notes: ${notes}${dryRun ? "" : "\n(live create gated: set ROLLDOG_WRITE_NEXT_STEP=1 to enable)"}`,
       });
     } else {
       try {
-        await writeOpportunity(opts.rolldogOpportunityId, { next_step: note });
+        await createActivity(opts.rolldogOpportunityId, { title, notes });
         results.push({ method: "writeNextStep", status: "ok", fieldsWritten: ["suggested_next_step"] });
       } catch (err) {
         if (err instanceof ScopeViolationError) throw err;
