@@ -20,7 +20,23 @@ export type MeetingListItem = {
   durationMin: number | null;
   meetingType: string | null;
   outcome: string | null;
+  /** Customer-side attendee names (non-Magaya), for the meeting label. */
+  participants: string[];
 };
+
+/** Customer-side attendee names from a call's participants JSON. */
+function customerNames(participants: unknown): string[] {
+  if (!Array.isArray(participants)) return [];
+  const names: string[] = [];
+  for (const p of participants as Array<Record<string, unknown>>) {
+    const email = typeof p.email === "string" ? p.email : "";
+    const domain = email.split("@")[1]?.toLowerCase();
+    if (domain === "magaya.com") continue;
+    const name = typeof p.name === "string" && p.name ? p.name : email ? email.split("@")[0] : "";
+    if (name) names.push(name);
+  }
+  return Array.from(new Set(names));
+}
 
 const DISPLAY: Record<string, string> = {
   Corelogistics: "Core Logistics",
@@ -43,7 +59,7 @@ export async function getMeetings(tenantId: string): Promise<MeetingListItem[]> 
   const [callsRes, dealsRes] = await Promise.all([
     db
       .from("calls")
-      .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, has_been_extracted")
+      .select("id, deal_id, scheduled_start, call_date, duration_minutes, outcome, meeting_type, has_been_extracted, participants")
       .eq("tenant_id", tenantId)
       .order("scheduled_start", { ascending: false }),
     db.from("deals").select("id, account, external_id, rep_email").eq("tenant_id", tenantId),
@@ -65,6 +81,7 @@ export async function getMeetings(tenantId: string): Promise<MeetingListItem[]> 
     outcome: string | null;
     meeting_type: string | null;
     has_been_extracted: boolean;
+    participants: unknown;
   }>) {
     if (!c.deal_id) continue;
     if (c.outcome && HIDDEN.has(c.outcome)) continue;
@@ -81,6 +98,7 @@ export async function getMeetings(tenantId: string): Promise<MeetingListItem[]> 
       durationMin: c.duration_minutes,
       meetingType: c.meeting_type,
       outcome: c.outcome,
+      participants: customerNames(c.participants),
     });
   }
   return out;

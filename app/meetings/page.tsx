@@ -25,6 +25,25 @@ function fmtDate(iso: string | null): string {
   }
 }
 
+function fmtTime(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function participantLabel(names: string[]): string {
+  if (names.length === 0) return "No customer attendees";
+  if (names.length <= 2) return names.join(", ");
+  return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+}
+
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled"]);
 
 export default async function MeetingsPage() {
@@ -55,35 +74,40 @@ export default async function MeetingsPage() {
               <thead>
                 <tr className="border-b border-line">
                   <Th className="pl-5">Date</Th>
-                  <Th>Account</Th>
-                  <Th>Rep</Th>
+                  <Th>Meeting</Th>
                   <Th>Type</Th>
-                  <Th className="text-right pr-5">Length</Th>
+                  <Th className="pr-5">Deal</Th>
                 </tr>
               </thead>
               <tbody>
                 {meetings.map((m, i) => {
                   const noContent = m.outcome ? NO_CONTENT.has(m.outcome) : false;
+                  const meta = [fmtTime(m.date), m.durationMin != null ? `${m.durationMin} min` : ""]
+                    .filter(Boolean)
+                    .join(" · ");
                   return (
                     <tr key={m.callId} className={i < meetings.length - 1 ? "border-b border-line" : undefined}>
-                      <td className="pl-5 py-3.5 text-[12px] text-muted whitespace-nowrap">
-                        {fmtDate(m.date)}
+                      <td className="pl-5 py-3.5 align-top whitespace-nowrap">
+                        <div className="text-[13px] font-medium text-ink">{fmtDate(m.date)}</div>
+                        {meta && <div className="text-[11px] text-muted mt-0.5">{meta}</div>}
                       </td>
-                      <td className="py-3.5">
+                      <td className="py-3.5 align-top">
                         <Link
                           href={`/meetings/${m.callId}`}
                           className="text-[14px] font-semibold text-ink hover:text-accent transition"
                         >
-                          {m.account}
+                          {participantLabel(m.participants)}
                         </Link>
                         {noContent && (
                           <span className="ml-2 text-[10px] uppercase tracking-wider font-bold text-danger">
                             No-show
                           </span>
                         )}
+                        <div className="text-[11px] text-muted mt-0.5">
+                          {m.rep ? `${m.rep}'s call` : "Unassigned"}
+                        </div>
                       </td>
-                      <td className="py-3.5 text-[12px] text-ink">{m.rep ?? "—"}</td>
-                      <td className="py-3.5 text-[12px]">
+                      <td className="py-3.5 align-top text-[12px]">
                         {m.meetingType ? (
                           <span
                             className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
@@ -98,8 +122,13 @@ export default async function MeetingsPage() {
                           <span className="text-muted">—</span>
                         )}
                       </td>
-                      <td className="py-3.5 text-right pr-5 text-[12px] text-muted whitespace-nowrap">
-                        {m.durationMin != null ? `${m.durationMin} min` : "—"}
+                      <td className="py-3.5 align-top pr-5">
+                        <Link
+                          href={`/deals/${m.dealId}`}
+                          className="text-[13px] text-ink hover:text-accent transition"
+                        >
+                          {m.account}
+                        </Link>
                       </td>
                     </tr>
                   );
