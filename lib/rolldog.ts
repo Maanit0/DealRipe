@@ -164,6 +164,51 @@ export async function writeOpportunity(
   }
 }
 
+/**
+ * Create an activity (interactions-tab record) on a Rolldog opportunity. Used to
+ * write DealRipe's recommended next action as an open to-do the rep and Mark see
+ * in the interactions tab, rather than overwriting the opportunity notes.
+ *
+ * The activity's headline goes in the `activities` attribute (tagged
+ * [DealRipe]); detail goes in `notes`; `is-complete` is false so it reads as an
+ * open task. Related to the opportunity via a JSON:API relationship.
+ *
+ * Scope-gated on the "activities" write field. Throws ScopeViolationError on
+ * assert failure, RolldogPendingError when creds are absent, RolldogApiError on
+ * non-2xx (the body carries the JSON:API errors, e.g. a 422 naming a missing
+ * required attribute, which is how we iterate the payload safely).
+ */
+export async function createActivity(
+  opportunityId: string,
+  args: { title: string; notes?: string },
+): Promise<unknown> {
+  assertScopedWrite(PILOT_TENANT_SLUG, opportunityId, ["activities"]);
+
+  const config = readRolldogConfig();
+  ensureCredentials(config, opportunityId, "write");
+
+  const attributes: Record<string, unknown> = {
+    activities: tagWithDealRipe(args.title),
+    "is-complete": false,
+  };
+  if (args.notes) attributes.notes = args.notes;
+
+  const body = JSON.stringify({
+    data: {
+      type: "activities",
+      attributes,
+      relationships: {
+        opportunity: { data: { type: "opportunities", id: opportunityId } },
+      },
+    },
+  });
+  const res = await rolldogFetch(config, "/activities", { method: "POST", body });
+  if (!res.ok) {
+    throw new RolldogApiError(res.status, "/activities", await safeBody(res));
+  }
+  return safeBody(res);
+}
+
 // ---------------------------------------------------------------------
 // Config and errors
 // ---------------------------------------------------------------------

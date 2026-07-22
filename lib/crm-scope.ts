@@ -113,6 +113,8 @@ export const ROLLDOG_WRITE_FIELDS: readonly string[] = Object.freeze([
   "budget",
   "competitors",
   "situation",
+  // Interactions tab: a next-action task written as an `activities` record.
+  "activities",
 ]);
 
 // ---------------------------------------------------------------------
