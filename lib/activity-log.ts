@@ -19,6 +19,14 @@ export type ActivityEntry = {
   account: string | null;
   title: string;
   detail: string | null;
+  /** The exact email HTML that was sent (recap / briefing / draft / digest). */
+  bodyHtml: string | null;
+  /** For a Rolldog write: the fields that were updated. */
+  fields: string | null;
+  /** The call this activity relates to (nearest in time on the deal), for
+   *  showing when the call was and linking to the meeting. */
+  callId: string | null;
+  callDate: string | null;
 };
 
 const KIND_TITLE: Record<Exclude<ActivityKind, "rolldog_write">, string> = {
@@ -45,11 +53,11 @@ function pretty(a: string): string {
 
 export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]> {
   const db = supabaseAdmin();
-  const [dealsRes, sentRes, crmRes] = await Promise.all([
+  const [dealsRes, sentRes, crmRes, callsRes] = await Promise.all([
     db.from("deals").select("id, account, external_id, rolldog_opportunity_id").eq("tenant_id", tenantId),
     db
       .from("sent_messages")
-      .select("id, deal_id, kind, subject, to_email, sent_at")
+      .select("id, deal_id, kind, subject, to_email, sent_at, body_html")
       .eq("tenant_id", tenantId)
       .order("sent_at", { ascending: false }),
     db
@@ -59,7 +67,42 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       .eq("operation", "write")
       .eq("allowed", true)
       .order("created_at", { ascending: false }),
+    db.from("calls").select("id, deal_id, scheduled_start, call_date").eq("tenant_id", tenantId),
   ]);
+
+  // Calls per deal, for tying each activity to the call it relates to (nearest
+  // in time on that deal): a recap follows a call, a briefing precedes one.
+  const callsByDeal = new Map<string, Array<{ id: string; date: string }>>();
+  for (const c of (callsRes.data ?? []) as Array<{
+    id: string;
+    deal_id: string | null;
+    scheduled_start: string | null;
+    call_date: string | null;
+  }>) {
+    const date = c.scheduled_start ?? c.call_date;
+    if (!c.deal_id || !date) continue;
+    const list = callsByDeal.get(c.deal_id) ?? [];
+    list.push({ id: c.id, date });
+    callsByDeal.set(c.deal_id, list);
+  }
+  const nearestCall = (dealId: string | null, at: string): { id: string; date: string } | null => {
+    if (!dealId) return null;
+    const calls = callsByDeal.get(dealId);
+    if (!calls || calls.length === 0) return null;
+    const t = Date.parse(at);
+    let best: { id: string; date: string } | null = null;
+    let bestDiff = Infinity;
+    for (const c of calls) {
+      const ct = Date.parse(c.date);
+      if (!Number.isFinite(ct)) continue;
+      const d = Math.abs(ct - t);
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = c;
+      }
+    }
+    return best;
+  };
 
   const deals = (dealsRes.data ?? []) as Array<{
     id: string;
@@ -84,8 +127,10 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     subject: string | null;
     to_email: string | null;
     sent_at: string;
+    body_html: string | null;
   }>) {
     const kind = (["briefing", "recap", "no_show_draft", "digest"].includes(m.kind) ? m.kind : "recap") as Exclude<ActivityKind, "rolldog_write">;
+    const call = kind === "digest" ? null : nearestCall(m.deal_id, m.sent_at);
     out.push({
       id: `sm-${m.id}`,
       at: m.sent_at,
@@ -94,6 +139,10 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       account: m.deal_id ? dealById.get(m.deal_id) ?? null : null,
       title: KIND_TITLE[kind],
       detail: m.to_email ? `To ${m.to_email}` : m.subject,
+      bodyHtml: m.body_html,
+      fields: null,
+      callId: call?.id ?? null,
+      callDate: call?.date ?? null,
     });
   }
 
@@ -105,6 +154,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
   }>) {
     const resolved = oppToDeal.get(String(c.opportunity_external_id));
     const fields = Array.isArray(c.fields) ? (c.fields as string[]).join(", ") : "";
+    const call = nearestCall(resolved?.id ?? null, c.created_at);
     out.push({
       id: `crm-${c.id}`,
       at: c.created_at,
@@ -113,6 +163,10 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       account: resolved?.account ?? `Opp ${c.opportunity_external_id}`,
       title: "Wrote to Rolldog",
       detail: fields ? `Updated ${fields}` : null,
+      bodyHtml: null,
+      fields: fields || null,
+      callId: call?.id ?? null,
+      callDate: call?.date ?? null,
     });
   }
 

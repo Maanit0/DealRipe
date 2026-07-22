@@ -28,10 +28,12 @@ function meetingLabel(m: MeetingListItem): string {
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled"]);
 
+const TZ = "America/Chicago"; // pilot (Magaya) timezone; UTC made times look hours late
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
   } catch {
     return "—";
   }
@@ -39,7 +41,7 @@ function fmtDate(iso: string | null): string {
 function fmtTime(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+    return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
   } catch {
     return "";
   }

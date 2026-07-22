@@ -26,7 +26,7 @@ function fmtDate(iso: string | null): string {
       month: "short",
       day: "numeric",
       year: "numeric",
-      timeZone: "UTC",
+      timeZone: "America/Chicago",
     });
   } catch {
     return "—";
