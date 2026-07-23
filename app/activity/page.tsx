@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { CoverageFilterBar } from "@/components/CoverageFilterBar";
 import { CoverageList } from "@/components/CoverageList";
 import { getActivityLog, type ActivityEntry, type ActivityKind } from "@/lib/activity-log";
+import { getRolldogWritePreview, getRolldogWritePreviewByDeals, type RolldogFieldWrite } from "@/lib/crm-preview";
 import { resolveRange, RANGE_LABELS, type RangeKey } from "@/lib/date-range";
 import { getMeetingCoverage, type MeetingCoverage } from "@/lib/meeting-coverage";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
@@ -45,6 +46,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
 
   let coverage: MeetingCoverage[] = [];
   let entries: ActivityEntry[] = [];
+  const writesByDeal = new Map<string, RolldogFieldWrite[]>();
   try {
     const tenantId = await resolveTenantId("magaya");
     if (view === "coverage") {
@@ -52,8 +54,23 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
         getMeetingCoverage(tenantId, { sinceIso: range.sinceIso, untilIso: range.untilIso }),
         getActivityLog(tenantId),
       ]);
+      // Fetch the exact composed Rolldog content for each linked deal in view, so
+      // the write-back cards can show precisely what DealRipe wrote and where.
+      const linked = new Map<string, string>();
+      for (const m of coverage) {
+        if (m.dealId && m.rolldogOpportunityId && !m.isNoShow) linked.set(m.dealId, m.rolldogOpportunityId);
+      }
+      await Promise.all(
+        Array.from(linked.entries()).map(async ([dealId, opp]) => {
+          writesByDeal.set(dealId, await getRolldogWritePreview("magaya", dealId, opp));
+        }),
+      );
     } else {
       entries = await getActivityLog(tenantId);
+      // Exact write content for the Rolldog entries in the raw log.
+      const dealIds = entries.filter((e) => e.kind === "rolldog_write" && e.dealId).map((e) => e.dealId as string);
+      const map = await getRolldogWritePreviewByDeals("magaya", dealIds);
+      for (const [k, v] of map) writesByDeal.set(k, v);
     }
   } catch (err) {
     console.error("[activity] load failed:", err);
@@ -117,7 +134,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
 
         {view === "coverage" ? (
           <>
-            <CoverageList meetings={coverage} />
+            <CoverageList meetings={coverage} writesByDeal={writesByDeal} />
 
             <div className="mt-8">
               <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-2">
@@ -153,14 +170,22 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
             </div>
           </>
         ) : (
-          <RawLog rows={rawRows} searchParams={searchParams} />
+          <RawLog rows={rawRows} searchParams={searchParams} writesByDeal={writesByDeal} />
         )}
       </div>
     </AppShell>
   );
 }
 
-function RawLog({ rows, searchParams }: { rows: ActivityEntry[]; searchParams: SP }) {
+function RawLog({
+  rows,
+  searchParams,
+  writesByDeal,
+}: {
+  rows: ActivityEntry[];
+  searchParams: SP;
+  writesByDeal: Map<string, RolldogFieldWrite[]>;
+}) {
   const kinds: Array<[string, string]> = [
     ["", "All"],
     ["briefing", "Briefings"],
@@ -267,15 +292,33 @@ function RawLog({ rows, searchParams }: { rows: ActivityEntry[]; searchParams: S
                     />
                   ) : (
                     <div className="rounded-lg border border-line bg-bg px-4 py-3 text-[13px] text-ink">
-                      Updated in Rolldog: <span className="font-medium">{e.fields ?? "fields"}</span>.
-                      {e.dealId && (
-                        <>
-                          {" "}
-                          <Link href={`/deals/${e.dealId}`} className="text-accent hover:underline">
-                            Open the deal
-                          </Link>{" "}
-                          to see the current values.
-                        </>
+                      <div>
+                        Updated in Rolldog: <span className="font-medium">{e.fields ?? "fields"}</span>.
+                        {e.dealId && (
+                          <>
+                            {" "}
+                            <Link href={`/deals/${e.dealId}`} className="text-accent hover:underline">
+                              Open the deal
+                            </Link>
+                            .
+                          </>
+                        )}
+                      </div>
+                      {e.dealId && (writesByDeal.get(e.dealId)?.length ?? 0) > 0 && (
+                        <div className="mt-2 space-y-2">
+                          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">Exact content written</div>
+                          {writesByDeal.get(e.dealId)!.map((w) => (
+                            <div key={w.subResource} className="rounded-md border border-line bg-white overflow-hidden">
+                              <div className="px-3 py-1.5 border-b border-line bg-bg/60 flex items-center justify-between">
+                                <span className="text-[11px] font-semibold text-ink">{w.label}</span>
+                                <span className="text-[10px] text-muted">{w.target}</span>
+                              </div>
+                              <pre className="px-3 py-2 text-[11px] leading-relaxed text-ink whitespace-pre-wrap break-words font-mono">
+                                {w.payload}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   )}

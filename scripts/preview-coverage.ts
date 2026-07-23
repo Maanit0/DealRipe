@@ -58,12 +58,17 @@ async function main(): Promise<void> {
   for (const m of coverage) {
     const raw = m.dealId ? sentByDeal.get(m.dealId) : undefined;
     const rawNote = raw ? ` [deal has ${raw.b}b/${raw.r}r, ${raw.linked} call-linked]` : "";
+    // No-show rows report the two no-show steps in the recap/write-back columns.
+    const col2 = m.isNoShow ? `ns-followup:${m.noShowFollowup.status}` : m.recap.status;
+    const col3 = m.isNoShow
+      ? `ns-log:${m.noShowLog.status}`
+      : `${m.writeback.status}${m.writeback.missed.length ? ` miss:${m.writeback.missed.join(",")}` : ""}`;
     console.log(
       pad(m.title || m.account || "—", 26),
-      pad(m.callSubtype || m.meetingType || "—", 14),
+      pad((m.isNoShow ? "no-show" : m.callSubtype || m.meetingType) || "—", 14),
       pad(`${m.briefing.status}`, 16),
-      pad(`${m.recap.status}`, 16),
-      pad(`${m.writeback.status}${m.writeback.missed.length ? ` miss:${m.writeback.missed.join(",")}` : ""}`, 18),
+      pad(col2, 18),
+      pad(col3, 20),
       rawNote,
     );
   }

@@ -56,11 +56,21 @@ export type MeetingCoverage = {
   meetingType: string | null;
   callSubtype: string | null;
   outcome: string | null;
+  /** The Rolldog opportunity this deal writes to, if linked. Lets the view fetch
+   *  the exact composed write content. */
+  rolldogOpportunityId: string | null;
   /** True when DealRipe's briefing/recap/write-back steps apply to this call. */
   isOpportunity: boolean;
+  /** True when the call was a no-show (bot joined, no conversation). No-show rows
+   *  swap recap/write-back for the two no-show steps below. */
+  isNoShow: boolean;
   briefing: CoverageStep;
   recap: CoverageStep;
   writeback: WritebackCoverage;
+  /** No-show follow-up drafted to the rep. Only meaningful when isNoShow. */
+  noShowFollowup: CoverageStep;
+  /** No-show logged to Rolldog's interactions tab. Only meaningful when isNoShow. */
+  noShowLog: CoverageStep;
   /** Human summary of everything wrong, for the header chip. Empty = all good. */
   issues: string[];
 };
@@ -98,9 +108,11 @@ export function subResourceLabel(s: string): string {
   return SUBRESOURCE_LABEL[s] ?? s;
 }
 
-// Calls DealRipe never handles end-to-end (no transcript / lost capture). These
-// never carry briefing/recap/write-back expectations.
-const NO_CONTENT = new Set(["no_show", "no_conversation", "capture_failed", "placeholder"]);
+// Calls DealRipe never surfaces at all: a lost capture (billing/media failure,
+// hidden from every view) or an empty placeholder. No-shows ARE surfaced now,
+// with their own two steps, so they are deliberately not excluded here.
+const EXCLUDE_OUTCOMES = new Set(["capture_failed", "placeholder"]);
+const NOSHOW_OUTCOMES = new Set(["no_show", "no_conversation"]);
 
 const MINUTE = 60000;
 
@@ -223,7 +235,7 @@ export async function getMeetingCoverage(
     meeting_type: string | null;
     call_subtype: string | null;
     title: string | null;
-  }>).filter((c) => !NO_CONTENT.has(c.outcome ?? ""));
+  }>).filter((c) => !EXCLUDE_OUTCOMES.has(c.outcome ?? ""));
 
   if (calls.length === 0) return [];
 
@@ -271,11 +283,16 @@ export async function getMeetingCoverage(
   const rolldogLinkedByDeal = new Map(
     deals.map((d) => [d.id, !!(d.external_id && rolldogOppIdForDeal(d.external_id)) || !!d.rolldog_opportunity_id] as const),
   );
-  // opportunity id -> deal id, for attributing legacy write rows with no call_id.
+  // opportunity id -> deal id (for attributing legacy write rows with no
+  // call_id) and deal id -> opportunity id (for fetching the write preview).
   const oppToDeal = new Map<string, string>();
+  const oppByDeal = new Map<string, string>();
   for (const d of deals) {
     const opp = (d.external_id ? rolldogOppIdForDeal(d.external_id) : null) ?? d.rolldog_opportunity_id;
-    if (opp) oppToDeal.set(String(opp), d.id);
+    if (opp) {
+      oppToDeal.set(String(opp), d.id);
+      oppByDeal.set(d.id, String(opp));
+    }
   }
 
   // Every call per deal (sorted by date) + a call -> deal lookup, for the
@@ -324,7 +341,7 @@ export async function getMeetingCoverage(
   // dry-run archive (format refresh or re-ingest) has a null provider_id and was
   // never sent to the rep, so it must not inflate the send count into a "sent
   // twice" duplicate.
-  const sentByCall = new Map<string, { briefing: string[]; recap: string[] }>();
+  const sentByCall = new Map<string, { briefing: string[]; recap: string[]; noShow: string[] }>();
   for (const m of (sentRes.data ?? []) as Array<{
     deal_id: string | null;
     call_id: string | null;
@@ -332,13 +349,14 @@ export async function getMeetingCoverage(
     sent_at: string;
     provider_id: string | null;
   }>) {
-    if (m.kind !== "briefing" && m.kind !== "recap") continue;
+    if (m.kind !== "briefing" && m.kind !== "recap" && m.kind !== "no_show_draft") continue;
     if (!m.provider_id) continue; // archived but not emailed
     const cid = attribute(m.deal_id, m.call_id, m.sent_at);
     if (!cid) continue;
-    const g = sentByCall.get(cid) ?? { briefing: [], recap: [] };
+    const g = sentByCall.get(cid) ?? { briefing: [], recap: [], noShow: [] };
     if (m.kind === "briefing") g.briefing.push(m.sent_at);
-    else g.recap.push(m.sent_at);
+    else if (m.kind === "recap") g.recap.push(m.sent_at);
+    else g.noShow.push(m.sent_at);
     sentByCall.set(cid, g);
   }
 
@@ -402,10 +420,11 @@ export async function getMeetingCoverage(
     const durMin = c.duration_minutes ?? 0;
     const end = start ? new Date(Date.parse(start) + durMin * MINUTE).toISOString() : null;
     const isOpp = c.meeting_type === "new_opportunity";
+    const isNoShow = NOSHOW_OUTCOMES.has(c.outcome ?? "");
     const hasDeal = !!c.deal_id;
     const rolldogLinked = c.deal_id ? rolldogLinkedByDeal.get(c.deal_id) ?? false : false;
 
-    const sent = sentByCall.get(c.id) ?? { briefing: [], recap: [] };
+    const sent = sentByCall.get(c.id) ?? { briefing: [], recap: [], noShow: [] };
 
     // Briefing + recap apply to every customer-facing deal meeting DealRipe
     // handles (discovery, demo, follow-up, existing-customer). They do NOT apply
@@ -413,14 +432,30 @@ export async function getMeetingCoverage(
     // (unknown type = we can't assert DealRipe should have briefed/recapped it).
     const dealMeeting =
       hasDeal && (c.meeting_type === "new_opportunity" || c.meeting_type === "existing_customer");
-    const briefing = dealMeeting ? scoreBriefing(sent.briefing, start, now) : notExpected();
-    const recap = dealMeeting ? scoreAfter(sent.recap, end, now) : notExpected();
+    // A briefing goes out before the call, so it applies to a no-show on a deal
+    // too (we could not have known it would be a no-show). A recap never applies
+    // to a no-show (no conversation to recap).
+    const briefing = dealMeeting || (isNoShow && hasDeal) ? scoreBriefing(sent.briefing, start, now) : notExpected();
+    const recap = dealMeeting && !isNoShow ? scoreAfter(sent.recap, end, now) : notExpected();
 
-    // Write-back applies only when there's something to push (an opportunity call)
-    // AND the deal is linked to a Rolldog opportunity. Not linked, or not an
-    // opportunity meeting (existing customer / internal), means N/A, not a miss.
+    // No-show steps: the follow-up draft to the rep, and the Rolldog no-show log
+    // (only expected when the deal is Rolldog-linked). Both fire right after the
+    // no-show, so the anchor is the (empty) call end.
+    let noShowFollowup: CoverageStep;
+    let noShowLog: CoverageStep;
+    if (isNoShow && hasDeal) {
+      noShowFollowup = scoreAfter(sent.noShow, end, now);
+      const w = writesByCall.get(c.id);
+      noShowLog = rolldogLinked ? scoreAfter(clusterRuns(w?.ats ?? []), end, now) : notExpected();
+    } else {
+      noShowFollowup = notExpected();
+      noShowLog = notExpected();
+    }
+
+    // Write-back applies only when there's something to push (a real opportunity
+    // call, not a no-show) AND the deal is linked to a Rolldog opportunity.
     let writeback: WritebackCoverage;
-    if (isOpp && rolldogLinked) {
+    if (isOpp && rolldogLinked && !isNoShow) {
       const w = writesByCall.get(c.id);
       // One write-back run emits ~6 audit rows (one per sub-resource). Collapse
       // rows into runs (gap > 15 min = a separate run) so a single successful
@@ -470,10 +505,15 @@ export async function getMeetingCoverage(
       else if (s.status === "early") issues.push(`${name} early (${s.detail})`);
     };
     flag(briefing, "Briefing");
-    flag(recap, "Recap");
-    flag(writeback, "Write-back");
-    if (writeback.missed.length > 0) {
-      issues.push(`Write-back missed ${writeback.missed.map(subResourceLabel).join(", ")}`);
+    if (isNoShow) {
+      flag(noShowFollowup, "No-show follow-up");
+      flag(noShowLog, "No-show log");
+    } else {
+      flag(recap, "Recap");
+      flag(writeback, "Write-back");
+      if (writeback.missed.length > 0) {
+        issues.push(`Write-back missed ${writeback.missed.map(subResourceLabel).join(", ")}`);
+      }
     }
 
     out.push({
@@ -486,10 +526,14 @@ export async function getMeetingCoverage(
       meetingType: c.meeting_type,
       callSubtype: c.call_subtype,
       outcome: c.outcome,
+      rolldogOpportunityId: c.deal_id ? oppByDeal.get(c.deal_id) ?? null : null,
       isOpportunity: isOpp,
+      isNoShow,
       briefing,
       recap,
       writeback,
+      noShowFollowup,
+      noShowLog,
       issues,
     });
   }

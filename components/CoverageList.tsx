@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import type { RolldogFieldWrite } from "@/lib/crm-preview";
 import { TZ } from "@/lib/date-range";
 import { subResourceLabel, type CoverageStep, type MeetingCoverage } from "@/lib/meeting-coverage";
 
@@ -57,7 +58,13 @@ const TYPE_LABEL: Record<string, string> = {
   internal: "Internal",
 };
 
-export function CoverageList({ meetings }: { meetings: MeetingCoverage[] }) {
+export function CoverageList({
+  meetings,
+  writesByDeal,
+}: {
+  meetings: MeetingCoverage[];
+  writesByDeal?: Map<string, RolldogFieldWrite[]>;
+}) {
   if (meetings.length === 0) {
     return (
       <div className="mt-5 bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">
@@ -79,6 +86,7 @@ export function CoverageList({ meetings }: { meetings: MeetingCoverage[] }) {
       {meetings.map((m) => {
         const clean = m.issues.length === 0;
         const wb = m.writeback;
+        const writes = m.dealId ? writesByDeal?.get(m.dealId) ?? [] : [];
         const showWbDetail = wb.written.length > 0 || wb.missed.length > 0 || wb.nextStep !== "none";
         return (
           <div key={m.callId} className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
@@ -104,6 +112,11 @@ export function CoverageList({ meetings }: { meetings: MeetingCoverage[] }) {
                 <div className="text-[11px] text-muted mt-0.5">
                   {fmt(m.callDate)}
                   {m.callSubtype && TYPE_LABEL[m.callSubtype] ? ` · ${TYPE_LABEL[m.callSubtype]}` : ""}
+                  {m.isNoShow && (
+                    <span className="ml-1.5 text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded-full bg-warn/10 text-warn">
+                      No-show
+                    </span>
+                  )}
                 </div>
               </div>
               <span
@@ -117,8 +130,17 @@ export function CoverageList({ meetings }: { meetings: MeetingCoverage[] }) {
 
             <div className="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-3">
               <StepChip label="Briefing" step={m.briefing} />
-              <StepChip label="Recap" step={m.recap} />
-              <StepChip label="Rolldog write-back" step={m.writeback} />
+              {m.isNoShow ? (
+                <>
+                  <StepChip label="No-show follow-up" step={m.noShowFollowup} />
+                  <StepChip label="No-show logged to Rolldog" step={m.noShowLog} />
+                </>
+              ) : (
+                <>
+                  <StepChip label="Recap" step={m.recap} />
+                  <StepChip label="Rolldog write-back" step={m.writeback} />
+                </>
+              )}
             </div>
 
             {(showWbDetail || !clean) && (
@@ -145,6 +167,28 @@ export function CoverageList({ meetings }: { meetings: MeetingCoverage[] }) {
                           ? "composed, live write gated (ROLLDOG_WRITE_NEXT_STEP off)"
                           : "none"}
                     </div>
+
+                    {writes.length > 0 && (
+                      <details className="group mt-2 pt-2 border-t border-line">
+                        <summary className="cursor-pointer list-none text-accent hover:underline flex items-center gap-1">
+                          <span>Show exactly what was written to Rolldog</span>
+                          <span className="group-open:rotate-180 transition-transform">⌄</span>
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {writes.map((w) => (
+                            <div key={w.subResource} className="rounded-md border border-line bg-white overflow-hidden">
+                              <div className="px-3 py-1.5 border-b border-line bg-bg/60 flex items-center justify-between">
+                                <span className="text-[11px] font-semibold text-ink">{w.label}</span>
+                                <span className="text-[10px] text-muted">{w.target}</span>
+                              </div>
+                              <pre className="px-3 py-2 text-[11px] leading-relaxed text-ink whitespace-pre-wrap break-words font-mono">
+                                {w.payload}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )}
                 {!clean && (
