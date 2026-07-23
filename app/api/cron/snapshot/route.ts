@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getFrameworkForDeal } from "@/lib/framework";
-import { recordDealSnapshot } from "@/lib/snapshot";
+import { recordDealSnapshot, resolveRolldogSnapshots } from "@/lib/snapshot";
 import { getDealsForTenant } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
@@ -38,11 +38,14 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   try {
     const tenantId = await resolveTenantId(PILOT_TENANT_SLUG);
     const deals = await getDealsForTenant(tenantId);
+    // Live Rolldog state per deal, so each day's snapshot records the rep-entered
+    // stage/forecast/close/size and the digest can diff real week-over-week moves.
+    const rolldogByDeal = await resolveRolldogSnapshots(tenantId, deals.map((d) => d.id));
     let written = 0;
     for (const deal of deals) {
       const framework = await getFrameworkForDeal(deal.id);
       if (!framework) continue;
-      await recordDealSnapshot(tenantId, deal, framework);
+      await recordDealSnapshot(tenantId, deal, framework, rolldogByDeal.get(deal.id) ?? null);
       written += 1;
     }
     return NextResponse.json({ ok: true, written });

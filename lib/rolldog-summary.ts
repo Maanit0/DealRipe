@@ -15,6 +15,19 @@ export type RolldogSummary = {
   forecastCategory: string | null;
   closeDate: string | null;
   stageName: string | null;
+  // Won/lost + removed. status carries the open/won/lost state; statusReason the
+  // loss reason Mark cares about; archived flags a dropped opportunity.
+  status: string | null;
+  statusReason: string | null;
+  archived: boolean;
+  // Net-new vs renewal, for Mark's triage (he ignores renewals). Rolldog carries
+  // both a deal-kind and an opportunity-type-name; either can carry "renewal".
+  dealKind: string | null;
+  opportunityType: string | null;
+  // The account's real name from Rolldog, so we don't hardcode display names.
+  accountName: string | null;
+  nextStep: string | null;
+  percentage: number | null;
   // CRM process timestamps (ISO). These are rep/CRM-driven, not written by
   // DealRipe (except updatedAt, which any write bumps — see repLastActivityIso).
   createdAt: string | null;
@@ -28,6 +41,7 @@ export function summaryFromCore(core: Record<string, unknown>): RolldogSummary {
     typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : null;
   const str = (v: unknown): string | null =>
     typeof v === "string" && v.trim() !== "" ? v : typeof v === "number" ? String(v) : null;
+  const bool = (v: unknown): boolean => v === true || v === "true" || v === 1 || v === "1";
   return {
     dealSize: num(core["deal-size"]),
     score: str(core["score"]),
@@ -35,6 +49,14 @@ export function summaryFromCore(core: Record<string, unknown>): RolldogSummary {
     forecastCategory: str(core["forecast-category"]),
     closeDate: str(core["close-date"]),
     stageName: str(core["stage-name"]),
+    status: str(core["status"]),
+    statusReason: str(core["status-reason"]),
+    archived: bool(core["archived"]),
+    dealKind: str(core["deal-kind"]),
+    opportunityType: str(core["opportunity-type-name"]),
+    accountName: str(core["account-name"]),
+    nextStep: str(core["next-step"]),
+    percentage: num(core["percentage"]),
     createdAt: str(core["created-at"]),
     currentStageDate: str(core["current-stage-date"]),
     updatedAt: str(core["updated-at"]),

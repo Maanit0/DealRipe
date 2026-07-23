@@ -10,7 +10,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { getFrameworkForDeal } from "../lib/framework";
-import { recordDealSnapshot } from "../lib/snapshot";
+import { recordDealSnapshot, resolveRolldogSnapshots } from "../lib/snapshot";
 import { getDealsForTenant } from "../lib/supabase-queries";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
@@ -22,6 +22,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Live Rolldog state per deal, so the snapshot anchors real week-over-week moves.
+  const rolldogByDeal = await resolveRolldogSnapshots(tenantId, deals.map((d) => d.id));
+
   let written = 0;
   for (const deal of deals) {
     const framework = await getFrameworkForDeal(deal.id);
@@ -29,9 +32,10 @@ async function main(): Promise<void> {
       console.warn(`  skip ${deal.account}: no framework`);
       continue;
     }
-    await recordDealSnapshot(tenantId, deal, framework);
+    const rd = rolldogByDeal.get(deal.id) ?? null;
+    await recordDealSnapshot(tenantId, deal, framework, rd);
     written += 1;
-    console.log(`  snapshot: ${deal.account} (${deal.stageKey})`);
+    console.log(`  snapshot: ${deal.account} (${rd?.stageName ?? deal.stageKey}${rd?.forecastCategory ? ` · ${rd.forecastCategory}` : ""})`);
   }
   console.log(`snapshot-magaya complete: ${written} deal(s).`);
 }

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { renderWeeklyDigestEmail } from "@/lib/emails/weekly-digest";
+import { attachDoThis } from "@/lib/digest-synthesis";
+import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
+import { getPipelineChanges } from "@/lib/pipeline-changes";
 import { sendEmail } from "@/lib/mailer";
 import { recordDigestSend } from "@/lib/sent-messages";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
-import { buildWeeklyDigestData } from "@/lib/weekly-digest-data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,16 +50,18 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
   try {
     const tenantId = await resolveTenantId(PILOT_TENANT_SLUG);
-    const { attention, movement, noShows } = await buildWeeklyDigestData(tenantId);
+    // Trailing 7 days: "what changed this week" before Mark's pipeline review.
+    const untilIso = new Date().toISOString();
+    const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
+    await attachDoThis(pc.deals);
     const weekLabel = new Date().toLocaleDateString("en-US", {
       month: "long",
       day: "numeric",
       timeZone: "America/Chicago",
     });
-    const email = renderWeeklyDigestEmail({
-      attention,
-      movement,
-      noShows,
+    const email = renderPipelineDigestEmail({
+      pc,
       weekLabel,
       recipientName: process.env.DIGEST_TO_NAME ?? "Mark Buman",
       baseUrl: process.env.DEALRIPE_APP_URL,
@@ -82,9 +85,9 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       ok: true,
       to,
       sentId: res.id,
-      attention: attention.length,
-      movement: movement.length,
-      noShows: noShows.length,
+      deals: pc.deals.length,
+      needAttention: pc.headline.dealsNeedingAttention,
+      changed: pc.headline.dealsChanged,
     });
   } catch (err) {
     console.error("[cron/digest] error:", err);

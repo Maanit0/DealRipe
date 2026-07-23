@@ -22,6 +22,8 @@ import {
   frameworkStages,
   stageGateStatus,
 } from "./framework-stages";
+import { rolldogOppIdForDeal } from "./pilot-config";
+import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import type { Deal } from "./seed-data";
 import { supabaseAdmin } from "./supabase";
 
@@ -29,6 +31,23 @@ export type StageGateSnapshot = {
   met: number;
   total: number;
   open: string[];
+};
+
+/**
+ * Rolldog's OWN state for the deal on the snapshot day, captured verbatim. This
+ * is what makes "did this deal move since last week" real: the digest diffs this
+ * block across the window (stage advanced, forecast raised, close pulled in),
+ * instead of inferring stage from calls (which overshoots). Null on snapshots
+ * written before this was wired, or when the Rolldog read failed that day.
+ */
+export type RolldogSnapshot = {
+  stageName: string | null;
+  stageKey: string | null;
+  forecastCategory: string | null;
+  dealSizeMonthly: number | null;
+  closeDate: string | null;
+  status: string | null;
+  score: string | null;
 };
 
 export type DealSignals = {
@@ -40,12 +59,61 @@ export type DealSignals = {
   gatesDealripe: Record<string, StageGateSnapshot>;
   // Rep-ticked gate state from Rolldog. Null until the live read is wired.
   gatesRolldog: Record<string, StageGateSnapshot> | null;
+  // Rolldog's own current state this day (for real week-over-week movement).
+  rolldog?: RolldogSnapshot | null;
   // Per-field answered state (Yes only; for diffing what newly answered).
   answered: string[];
   // Coarse risk flags computed from the signals.
   risks: string[];
   capturedAt: string;
 };
+
+/**
+ * Resolve each deal's live Rolldog state for the day's snapshot. One core read
+ * per Rolldog-linked deal, best-effort: a deal that is not in Rolldog (or whose
+ * read fails) maps to null and its snapshot simply carries no rolldog block.
+ * Opp resolution mirrors the digest engine: the static pilot map wins, else the
+ * stored column (statically-mapped pilot deals don't carry the column).
+ */
+export async function resolveRolldogSnapshots(
+  tenantId: string,
+  dealIds: string[],
+): Promise<Map<string, RolldogSnapshot | null>> {
+  const out = new Map<string, RolldogSnapshot | null>();
+  if (dealIds.length === 0) return out;
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("deals")
+    .select("id, external_id, rolldog_opportunity_id")
+    .eq("tenant_id", tenantId)
+    .in("id", dealIds);
+  const rows = (data ?? []) as Array<{ id: string; external_id: string | null; rolldog_opportunity_id: string | null }>;
+  await Promise.all(
+    rows.map(async (r) => {
+      const opp = (r.external_id ? rolldogOppIdForDeal(r.external_id) : null) ?? r.rolldog_opportunity_id;
+      if (!opp) {
+        out.set(r.id, null);
+        return;
+      }
+      const s = await getRolldogSummary(String(opp));
+      out.set(
+        r.id,
+        s
+          ? {
+              stageName: s.stageName,
+              stageKey: stageKeyFromSummary(s),
+              forecastCategory: s.forecastCategory,
+              dealSizeMonthly: s.dealSize,
+              closeDate: s.closeDate,
+              status: s.status,
+              score: s.score,
+            }
+          : null,
+      );
+    }),
+  );
+  return out;
+}
 
 function computeRisks(deal: Deal, framework: Framework): string[] {
   const risks: string[] = [];
@@ -69,7 +137,11 @@ function computeRisks(deal: Deal, framework: Framework): string[] {
   return risks;
 }
 
-export function buildSignals(deal: Deal, framework: Framework): DealSignals {
+export function buildSignals(
+  deal: Deal,
+  framework: Framework,
+  rolldog?: RolldogSnapshot | null,
+): DealSignals {
   const stages = frameworkStages(framework);
   const gatesDealripe: Record<string, StageGateSnapshot> = {};
   for (const s of stages) {
@@ -90,6 +162,7 @@ export function buildSignals(deal: Deal, framework: Framework): DealSignals {
     daysInStage: deal.daysInStage,
     gatesDealripe,
     gatesRolldog: null,
+    rolldog: rolldog ?? null,
     answered,
     risks: computeRisks(deal, framework),
     capturedAt: new Date().toISOString(),
@@ -104,11 +177,12 @@ export async function recordDealSnapshot(
   tenantId: string,
   deal: Deal,
   framework: Framework,
+  rolldog?: RolldogSnapshot | null,
 ): Promise<void> {
   const db = supabaseAdmin();
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
   const completion = total > 0 ? confirmed / total : 0;
-  const signals = buildSignals(deal, framework);
+  const signals = buildSignals(deal, framework, rolldog);
   const snapshotDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
   const res = await db.from("deal_signal_snapshots").upsert(
