@@ -19,6 +19,7 @@
 import { runWithAuthorizedOpportunities, runWithCallContext, ScopeViolationError } from "./crm-scope";
 import { syncDealToRolldog, type SyncResult } from "./crm-writer";
 import { rolldogOppIdForDeal } from "./pilot-config";
+import { createActivity } from "./rolldog";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
@@ -28,6 +29,104 @@ export type WriteBackResult = {
   reason?: string;
   results?: SyncResult[];
 };
+
+/**
+ * Log a no-show to Rolldog as a single activity in the interactions tab, so the
+ * CRM records that a scheduled meeting did not happen. Same gating as the deal
+ * write-back (only a confirmed/high Rolldog-linked opportunity), scope-enforced
+ * via createActivity, and call-linked so it surfaces in coverage. Idempotent:
+ * if an activity was already written for this call it does nothing, so a
+ * re-ingest of the same no-show never double-logs. Best-effort, never throws.
+ */
+export async function logNoShowToRolldog(
+  tenantSlug: string,
+  opts: { callId: string },
+): Promise<WriteBackResult> {
+  const tenantId = await resolveTenantId(tenantSlug);
+  const db = supabaseAdmin();
+
+  // Resolve the deal (and call date) from the call itself, so this works in the
+  // no-conversation branch before the extraction result exists.
+  const callRow = await db
+    .from("calls")
+    .select("deal_id, scheduled_start, call_date")
+    .eq("tenant_id", tenantId)
+    .eq("id", opts.callId)
+    .maybeSingle();
+  if (callRow.error || !callRow.data?.deal_id) {
+    return { written: false, reason: `call ${opts.callId} not found or has no deal` };
+  }
+  const callDate = callRow.data.scheduled_start ?? callRow.data.call_date ?? null;
+
+  const dealRow = await db
+    .from("deals")
+    .select("id, external_id, rolldog_opportunity_id, rolldog_link_confidence")
+    .eq("tenant_id", tenantId)
+    .eq("id", callRow.data.deal_id)
+    .maybeSingle();
+  if (dealRow.error || !dealRow.data) {
+    return { written: false, reason: `deal for call ${opts.callId} not found` };
+  }
+  const dealExternalId = dealRow.data.external_id ?? "";
+
+  const conf = dealRow.data.rolldog_link_confidence;
+  const staticOpp = rolldogOppIdForDeal(dealExternalId);
+  let opp: string | null = null;
+  let runtimeAuth: readonly string[] = [];
+  if (staticOpp) {
+    opp = staticOpp;
+  } else if (dealRow.data.rolldog_opportunity_id && (conf === "confirmed" || conf === "high")) {
+    opp = dealRow.data.rolldog_opportunity_id;
+    runtimeAuth = [opp];
+  }
+  if (!opp) {
+    return { written: false, reason: `no confirmed Rolldog opportunity for '${dealExternalId}' (link: ${conf ?? "none"})` };
+  }
+
+  // Idempotency: skip if an activity was already written for this call. A
+  // no-show call has no other activity write, so any prior one is this no-show.
+  const prior = await db
+    .from("crm_access_log")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("operation", "write")
+    .eq("allowed", true)
+    .eq("call_id", opts.callId)
+    .contains("fields", ["activities"])
+    .limit(1);
+  if ((prior.data ?? []).length > 0) {
+    return { written: false, opportunityId: opp, reason: "no-show activity already logged for this call" };
+  }
+
+  const dateStr = fmtCallDate(callDate);
+  const title = "No-show: customer did not attend";
+  const notes = `[DealRipe${dateStr ? ` · ${dateStr} call` : ""}] No conversation was captured; the customer did not attend the scheduled meeting. DealRipe drafted a follow-up for the rep.`;
+
+  try {
+    await runWithAuthorizedOpportunities(runtimeAuth, () =>
+      runWithCallContext(opts.callId, () => createActivity(opp as string, { title, notes })),
+    );
+    return { written: true, opportunityId: opp };
+  } catch (err) {
+    if (err instanceof ScopeViolationError) {
+      return { written: false, opportunityId: opp, reason: `scope blocked: '${opp}' not in PILOT_OPPORTUNITY_IDS` };
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/pending|not configured/i.test(msg)) {
+      return { written: false, opportunityId: opp, reason: `Rolldog not configured: ${msg}` };
+    }
+    return { written: false, opportunityId: opp, reason: msg };
+  }
+}
+
+function fmtCallDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  } catch {
+    return "";
+  }
+}
 
 export async function writeBackDealToRolldog(
   tenantSlug: string,

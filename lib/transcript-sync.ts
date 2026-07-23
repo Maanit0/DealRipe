@@ -45,7 +45,7 @@ import {
 import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
 import { sendNoShowFollowup } from "./no-show-followup";
-import { writeBackDealToRolldog } from "./rolldog-writeback";
+import { logNoShowToRolldog, writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
 import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
@@ -439,6 +439,21 @@ async function processRow(
     } catch (err) {
       console.warn(
         `[transcript-sync] no-show follow-up threw for call ${callId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    // Log the no-show to Rolldog so the CRM records that the meeting did not
+    // happen. Gated to Rolldog-linked deals, scope-enforced, idempotent. Never
+    // blocks ingest.
+    try {
+      const wb = await logNoShowToRolldog("magaya", { callId });
+      console.log(
+        `[transcript-sync] no-show Rolldog log for call ${callId}: ${wb.written ? `wrote to opp ${wb.opportunityId}` : `skipped (${wb.reason})`}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[transcript-sync] no-show Rolldog log threw for call ${callId}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
