@@ -170,12 +170,14 @@ async function main(): Promise<void> {
     transcript,
     meetingType,
     dryRun: !send,
+    callId: call.id,
   });
   console.log(`[6/6] Recap ${send ? (notify.sent ? `sent to ${notify.to}` : `not sent: ${notify.reason}`) : "archived (no email)"}.`);
 
   if (writeback) {
     const wb = await writeBackDealToRolldog("magaya", ingest.dealExternalId, {
       nextAction: notify.nextAction,
+      callId: call.id,
     });
     console.log(`Rolldog write-back: ${wb.written ? `wrote to opp ${wb.opportunityId}` : `skipped (${wb.reason})`}`);
   } else {

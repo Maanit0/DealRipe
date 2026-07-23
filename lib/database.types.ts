@@ -379,6 +379,7 @@ export type Database = {
           fields: Json;
           allowed: boolean;
           violation_reason: string | null;
+          call_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -389,6 +390,7 @@ export type Database = {
           fields: Json;
           allowed: boolean;
           violation_reason?: string | null;
+          call_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -399,6 +401,7 @@ export type Database = {
           fields?: Json;
           allowed?: boolean;
           violation_reason?: string | null;
+          call_id?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -700,6 +703,57 @@ export type Database = {
           body_text?: string;
           provider_id?: string | null;
           sent_at?: string;
+        };
+        Relationships: [];
+      };
+      tasks: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string | null;
+          call_id: string | null;
+          title: string;
+          detail: string | null;
+          action_type: string | null;
+          priority: string;
+          deadline: string | null;
+          rep_email: string | null;
+          status: string;
+          source: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id?: string | null;
+          call_id?: string | null;
+          title: string;
+          detail?: string | null;
+          action_type?: string | null;
+          priority?: string;
+          deadline?: string | null;
+          rep_email?: string | null;
+          status?: string;
+          source?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string | null;
+          call_id?: string | null;
+          title?: string;
+          detail?: string | null;
+          action_type?: string | null;
+          priority?: string;
+          deadline?: string | null;
+          rep_email?: string | null;
+          status?: string;
+          source?: string;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };

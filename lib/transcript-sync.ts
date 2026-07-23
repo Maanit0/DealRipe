@@ -523,6 +523,7 @@ async function processRow(
         extraction: ingestResult.extraction as unknown as ExtractionMap,
         transcript,
         meetingType,
+        callId,
       });
       recapNextAction = notify.nextAction;
       if (!notify.sent) {
@@ -543,6 +544,7 @@ async function processRow(
     try {
       const wb = await writeBackDealToRolldog("magaya", ingestResult.dealExternalId, {
         nextAction: recapNextAction,
+        callId,
       });
       if (!wb.written) {
         console.warn(

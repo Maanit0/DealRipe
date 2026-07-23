@@ -174,6 +174,9 @@ export type CrmAccessAuditEntry = {
   allowed: boolean;
   violationReason: string | null;
   at: Date;
+  /** The call this access belongs to, captured from callContextStore at emit
+   *  time. Informational only; null outside a runWithCallContext scope. */
+  callId?: string | null;
 };
 
 /**
@@ -256,6 +259,10 @@ async function writeCrmAccessLogToSupabase(
   // explicitly so the audit row lands under the right tenant_id.
   const tenantId = await resolveTenantId(entry.tenantSlug);
 
+  // Read the call context captured at emit time (see callContextStore). The
+  // store propagates across the deferred import + await above because the audit
+  // promise was created synchronously inside the runWithCallContext scope.
+  const callId = entry.callId ?? null;
   const { error } = await supabaseAdmin().from("crm_access_log").insert({
     tenant_id: tenantId,
     operation: entry.operation,
@@ -263,6 +270,7 @@ async function writeCrmAccessLogToSupabase(
     fields: entry.fields as unknown as string[],
     allowed: entry.allowed,
     violation_reason: entry.violationReason,
+    call_id: callId,
   });
   if (error) {
     throw new Error(`crm_access_log insert failed: ${error.message}`);
@@ -445,6 +453,18 @@ export function runWithAuthorizedOpportunities<T>(
   return authorizedOppsStore.run(new Set(opportunityIds), fn);
 }
 
+// A separate, non-security context carrying the call this write-back belongs
+// to. The audit hook reads it and stamps call_id on the crm_access_log row so
+// the activity log can tie a Rolldog write to its meeting by hard link, not a
+// nearest-in-time guess. Purely informational: it never affects authorization.
+const callContextStore = new AsyncLocalStorage<string>();
+
+/** Run `fn` with `callId` attached to any crm_access_log rows it writes. */
+export function runWithCallContext<T>(callId: string | null | undefined, fn: () => T): T {
+  if (!callId) return fn();
+  return callContextStore.run(callId, fn);
+}
+
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
@@ -495,7 +515,9 @@ function computeViolation(
 
 function emitAudit(entry: CrmAccessAuditEntry): void {
   try {
-    auditHook(entry);
+    // Capture the call context synchronously, before any await in the hook,
+    // so the stamp is reliable regardless of how the hook defers its write.
+    auditHook({ ...entry, callId: entry.callId ?? callContextStore.getStore() ?? null });
   } catch (err) {
     // The audit hook itself must not crash a request. If a test hook
     // throws, log and move on. The assert outcome is unaffected.

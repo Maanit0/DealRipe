@@ -388,20 +388,21 @@ export async function syncDealToRolldog(
 
   // writeNextStep: the recap's recommended next action -> a to-do in the
   // opportunity's interactions tab (an `activities` record, is-complete false).
-  // Composed here so it can be previewed; the LIVE create stays gated behind
-  // ROLLDOG_WRITE_NEXT_STEP (default off) so a normal pipeline run previews it
-  // until you flip the flag after confirming it renders in the interactions tab.
+  // LIVE by default now that the IFF demo confirmed it renders correctly in the
+  // interactions tab. Kill switch: set ROLLDOG_WRITE_NEXT_STEP=0 to fall back to
+  // preview-only without a code change. Still scope-gated (activities field +
+  // PILOT_OPPORTUNITY_IDS), so it only ever writes to allowlisted pilot opps.
   const action = opts.nextAction?.trim();
   if (action) {
     const title = capNote(`Next step: ${action}`);
     const notes = `${stamp} DealRipe next-step recommendation from the call.`;
-    const liveAllowed = process.env.ROLLDOG_WRITE_NEXT_STEP === "1";
+    const liveAllowed = process.env.ROLLDOG_WRITE_NEXT_STEP !== "0";
     if (dryRun || !liveAllowed) {
       results.push({
         method: "writeNextStep",
         status: "preview",
         fieldsWritten: ["suggested_next_step"],
-        payload: `activity (-> interactions tab):\n  [DealRipe] ${title}\n  notes: ${notes}${dryRun ? "" : "\n(live create gated: set ROLLDOG_WRITE_NEXT_STEP=1 to enable)"}`,
+        payload: `activity (-> interactions tab):\n  [DealRipe] ${title}\n  notes: ${notes}${dryRun ? "" : "\n(live create disabled: ROLLDOG_WRITE_NEXT_STEP=0)"}`,
       });
     } else {
       try {

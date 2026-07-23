@@ -5,6 +5,7 @@
  */
 
 import type { PostCallSummary } from "../post-call-summary";
+import type { GeneratedTask } from "../tasks";
 
 const BG = "#F4F6F9";
 const CARD = "#FFFFFF";
@@ -72,10 +73,32 @@ function buildFlags(summary: PostCallSummary): string[] {
   return flags;
 }
 
-export function renderPostCallSummaryEmail(summary: PostCallSummary): RenderedEmail {
+export function renderPostCallSummaryEmail(
+  summary: PostCallSummary,
+  tasks: GeneratedTask[] = [],
+): RenderedEmail {
   const stageLabel = STAGE_LABELS[summary.stageKey] ?? summary.stageKey;
   const subject = `Recap: ${summary.account} call. ${summary.captured.length} captured, ${summary.stillOpen.length} still open`;
   const flags = buildFlags(summary);
+
+  const tasksCard =
+    tasks.length === 0
+      ? ""
+      : card(
+          `${label("Your next actions", NAVY)}
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${tasks
+             .map((t, i) =>
+               listRow(
+                 "&#9744;",
+                 GREEN,
+                 `<strong style="color:${NAVY};font-weight:600;">${escapeHtml(t.title)}</strong>${
+                   t.detail ? ` <span style="color:${MUTED};">${escapeHtml(t.detail)}</span>` : ""
+                 } <span style="color:${MUTED};font-size:12px;">(${escapeHtml(t.priority)}, due in ${t.dueInDays}d)</span>`,
+                 i === 0,
+               ),
+             )
+             .join("")}</table>`,
+        );
 
   const flagsCard =
     flags.length === 0
@@ -148,6 +171,8 @@ export function renderPostCallSummaryEmail(summary: PostCallSummary): RenderedEm
           `${label("Still open", AMBER)}
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${openRows}</table>`,
         )}
+
+        ${tasksCard}
 
         ${flagsCard}
 

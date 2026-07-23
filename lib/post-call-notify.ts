@@ -22,6 +22,7 @@ import { generatePostCallSummary } from "./post-call-summary";
 import { recordSentMessage } from "./sent-messages";
 import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
+import { createTasksForCall, generateTasksFromCall, type GeneratedTask } from "./tasks";
 
 export type NotifyResult = {
   sent: boolean;
@@ -45,6 +46,9 @@ export async function sendPostCallSummary(args: {
    *  email. Used to refresh the recap after a framework repoint without
    *  re-notifying the rep. */
   dryRun?: boolean;
+  /** The call this recap is for. Stored on the archived recap (hard link) and
+   *  used to attach generated tasks to the call. */
+  callId?: string;
 }): Promise<NotifyResult> {
   const db = supabaseAdmin();
   const dealRow = await db
@@ -85,6 +89,7 @@ export async function sendPostCallSummary(args: {
   // The recommended next action, surfaced for Rolldog next-step write-back. Only
   // set on the qualification recap (new opportunity), never a general recap.
   let nextAction: string | undefined;
+  let genTasks: GeneratedTask[] = [];
 
   if (meetingType !== "new_opportunity") {
     const general = await generateGeneralRecap({
@@ -155,7 +160,29 @@ export async function sendPostCallSummary(args: {
       }
     }
 
-    email = renderPostCallSummaryEmail(summary);
+    // Generate the rep's next actions from the call (best-effort), show them in
+    // the recap, and persist them to the Actions tab attached to this call.
+    if (args.callId) {
+      genTasks = await generateTasksFromCall({
+        account: dealRow.data.account,
+        transcript: args.transcript,
+        stageKey,
+        nextStepHint: summary.nextStepCommitment ?? summary.suggestedNextStep,
+      }).catch(() => []);
+      if (genTasks.length > 0) {
+        await createTasksForCall({
+          tenantId: args.tenantId,
+          dealId: dealRow.data.id,
+          callId: args.callId,
+          repEmail: to,
+          tasks: genTasks,
+        }).catch((err) =>
+          console.warn(`[post-call] task create failed: ${err instanceof Error ? err.message : String(err)}`),
+        );
+      }
+    }
+
+    email = renderPostCallSummaryEmail(summary, genTasks);
     nextAction = summary.nextStepCommitment ?? summary.suggestedNextStep;
   }
 
@@ -166,6 +193,7 @@ export async function sendPostCallSummary(args: {
     await recordSentMessage({
       tenantId: args.tenantId,
       dealId: dealRow.data.id,
+      callId: args.callId ?? null,
       kind: "recap",
       toEmail: to,
       subject: email.subject,
@@ -187,6 +215,7 @@ export async function sendPostCallSummary(args: {
     await recordSentMessage({
       tenantId: args.tenantId,
       dealId: dealRow.data.id,
+      callId: args.callId ?? null,
       kind: "recap",
       toEmail: to,
       subject: email.subject,

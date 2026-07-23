@@ -16,7 +16,7 @@
  * to PILOT_OPPORTUNITY_IDS (crm-scope). Both, then deploy.
  */
 
-import { runWithAuthorizedOpportunities, ScopeViolationError } from "./crm-scope";
+import { runWithAuthorizedOpportunities, runWithCallContext, ScopeViolationError } from "./crm-scope";
 import { syncDealToRolldog, type SyncResult } from "./crm-writer";
 import { rolldogOppIdForDeal } from "./pilot-config";
 import { supabaseAdmin } from "./supabase";
@@ -32,7 +32,7 @@ export type WriteBackResult = {
 export async function writeBackDealToRolldog(
   tenantSlug: string,
   dealExternalId: string,
-  opts: { nextAction?: string } = {},
+  opts: { nextAction?: string; callId?: string | null } = {},
 ): Promise<WriteBackResult> {
   const tenantId = await resolveTenantId(tenantSlug);
   const db = supabaseAdmin();
@@ -78,12 +78,14 @@ export async function writeBackDealToRolldog(
 
   try {
     const results = await runWithAuthorizedOpportunities(runtimeAuth, () =>
-      syncDealToRolldog({
-        tenantSlug,
-        dealId,
-        rolldogOpportunityId: opp,
-        nextAction: opts.nextAction,
-      }),
+      runWithCallContext(opts.callId, () =>
+        syncDealToRolldog({
+          tenantSlug,
+          dealId,
+          rolldogOpportunityId: opp,
+          nextAction: opts.nextAction,
+        }),
+      ),
     );
     // Stamp when DealRipe last wrote this record so the "rep last activity"
     // signal can attribute Rolldog's updated-at away from our own writes.
