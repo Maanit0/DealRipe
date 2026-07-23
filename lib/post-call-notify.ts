@@ -49,6 +49,10 @@ export async function sendPostCallSummary(args: {
   /** The call this recap is for. Stored on the archived recap (hard link) and
    *  used to attach generated tasks to the call. */
   callId?: string;
+  /** Bypass the idempotency guard and re-send even if a recap was already
+   *  emailed for this call. Manual recovery scripts set this; the automatic
+   *  pipeline never does, so a re-ingest can't double-send. */
+  force?: boolean;
 }): Promise<NotifyResult> {
   const db = supabaseAdmin();
   const dealRow = await db
@@ -69,6 +73,23 @@ export async function sendPostCallSummary(args: {
   const to = repEmailForDeal(args.dealExternalId) ?? dealRow.data.rep_email ?? undefined;
   if (!to) {
     return { sent: false, reason: `no rep email for deal '${args.dealExternalId}'` };
+  }
+
+  // Idempotency: if a recap was already EMAILED for this call, don't send a
+  // second one on a re-ingest. Dry-run refreshes (provider_id null) don't count
+  // and don't trigger the guard, so archiving a refreshed recap still works.
+  if (!args.dryRun && !args.force && args.callId) {
+    const existing = await db
+      .from("sent_messages")
+      .select("id")
+      .eq("tenant_id", args.tenantId)
+      .eq("call_id", args.callId)
+      .eq("kind", "recap")
+      .not("provider_id", "is", null)
+      .limit(1);
+    if ((existing.data ?? []).length > 0) {
+      return { sent: false, to, reason: "recap already sent for this call (idempotent skip)" };
+    }
   }
 
   if (!dealRow.data.framework_id) {

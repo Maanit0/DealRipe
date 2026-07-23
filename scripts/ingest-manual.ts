@@ -171,6 +171,7 @@ async function main(): Promise<void> {
     meetingType,
     dryRun: !send,
     callId: call.id,
+    force: true, // manual recovery is deliberate; bypass the send-idempotency guard
   });
   console.log(`[6/6] Recap ${send ? (notify.sent ? `sent to ${notify.to}` : `not sent: ${notify.reason}`) : "archived (no email)"}.`);
 
@@ -178,6 +179,7 @@ async function main(): Promise<void> {
     const wb = await writeBackDealToRolldog("magaya", ingest.dealExternalId, {
       nextAction: notify.nextAction,
       callId: call.id,
+      force: true, // manual recovery is deliberate; bypass the write idempotency guard
     });
     console.log(`Rolldog write-back: ${wb.written ? `wrote to opp ${wb.opportunityId}` : `skipped (${wb.reason})`}`);
   } else {

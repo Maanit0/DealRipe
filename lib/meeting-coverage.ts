@@ -361,7 +361,10 @@ export async function getMeetingCoverage(
   }
 
   // crm writes grouped by attributed call: sub-resources written + write times.
-  const writesByCall = new Map<string, { subs: Set<string>; ats: string[] }>();
+  // hardAts are the write times that were HARD-LINKED by call_id (the modern
+  // pipeline). Duplicate detection uses only these, so historical null-call_id
+  // audit rows (test-era re-writes) never read as a duplicate.
+  const writesByCall = new Map<string, { subs: Set<string>; ats: string[]; hardAts: string[] }>();
   for (const w of (crmRes.data ?? []) as Array<{
     call_id: string | null;
     opportunity_external_id: string;
@@ -371,9 +374,10 @@ export async function getMeetingCoverage(
     const dealId = (w.call_id ? dealByCallId.get(w.call_id) : null) ?? oppToDeal.get(String(w.opportunity_external_id)) ?? null;
     const cid = attribute(dealId, w.call_id, w.created_at);
     if (!cid) continue;
-    const g = writesByCall.get(cid) ?? { subs: new Set<string>(), ats: [] };
+    const g = writesByCall.get(cid) ?? { subs: new Set<string>(), ats: [], hardAts: [] };
     for (const f of Array.isArray(w.fields) ? (w.fields as string[]) : []) g.subs.add(f);
     g.ats.push(w.created_at);
+    if (w.call_id) g.hardAts.push(w.created_at);
     writesByCall.set(cid, g);
   }
 
@@ -459,9 +463,12 @@ export async function getMeetingCoverage(
       const w = writesByCall.get(c.id);
       // One write-back run emits ~6 audit rows (one per sub-resource). Collapse
       // rows into runs (gap > 15 min = a separate run) so a single successful
-      // write-back is not mistaken for six duplicates.
+      // write-back is not mistaken for six duplicates. Timing comes from the
+      // earliest run; "duplicate" fires only when two or more HARD-LINKED runs
+      // exist (a real modern double-write), not historical null-call_id rows.
       const runs = clusterRuns(w?.ats ?? []);
-      const base = scoreAfter(runs, end, now);
+      const isDup = clusterRuns(w?.hardAts ?? []).length > 1;
+      const base = scoreAfter(isDup ? runs : runs.slice(0, 1), end, now);
       const written = w ? Array.from(w.subs) : [];
       const nonNext = written.filter((s) => s !== "activities");
 

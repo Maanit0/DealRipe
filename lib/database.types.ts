@@ -51,6 +51,8 @@ export type Database = {
           outcome_label: "won" | "lost" | null;
           outcome_recorded_at: string | null;
           dealripe_last_writeback_at: string | null;
+          dealripe_last_write_hash: string | null;
+          dealripe_last_next_step: string | null;
           rep_email: string | null;
           rolldog_opportunity_id: string | null;
           rolldog_link_confidence: string | null;
@@ -73,6 +75,8 @@ export type Database = {
           outcome_label?: "won" | "lost" | null;
           outcome_recorded_at?: string | null;
           dealripe_last_writeback_at?: string | null;
+          dealripe_last_write_hash?: string | null;
+          dealripe_last_next_step?: string | null;
           rep_email?: string | null;
           rolldog_opportunity_id?: string | null;
           rolldog_link_confidence?: string | null;
@@ -95,6 +99,8 @@ export type Database = {
           outcome_label?: "won" | "lost" | null;
           outcome_recorded_at?: string | null;
           dealripe_last_writeback_at?: string | null;
+          dealripe_last_write_hash?: string | null;
+          dealripe_last_next_step?: string | null;
           rep_email?: string | null;
           rolldog_opportunity_id?: string | null;
           rolldog_link_confidence?: string | null;

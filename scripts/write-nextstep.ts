@@ -129,7 +129,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const wb = await writeBackDealToRolldog("magaya", dealExt, { nextAction, callId: call.id });
+  const wb = await writeBackDealToRolldog("magaya", dealExt, { nextAction, callId: call.id, force: true });
   if (wb.written) {
     console.log(`\nWrote to opp ${wb.opportunityId}.`);
     for (const r of wb.results ?? []) console.log(`  ${r.method}: ${r.status}${r.fieldsWritten.length ? ` (${r.fieldsWritten.join(", ")})` : ""}`);

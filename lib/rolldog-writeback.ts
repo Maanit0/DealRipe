@@ -16,6 +16,8 @@
  * to PILOT_OPPORTUNITY_IDS (crm-scope). Both, then deploy.
  */
 
+import { createHash } from "node:crypto";
+
 import { runWithAuthorizedOpportunities, runWithCallContext, ScopeViolationError } from "./crm-scope";
 import { syncDealToRolldog, type SyncResult } from "./crm-writer";
 import { rolldogOppIdForDeal } from "./pilot-config";
@@ -131,13 +133,13 @@ function fmtCallDate(iso: string | null | undefined): string {
 export async function writeBackDealToRolldog(
   tenantSlug: string,
   dealExternalId: string,
-  opts: { nextAction?: string; callId?: string | null } = {},
+  opts: { nextAction?: string; callId?: string | null; force?: boolean } = {},
 ): Promise<WriteBackResult> {
   const tenantId = await resolveTenantId(tenantSlug);
   const db = supabaseAdmin();
   const dealRow = await db
     .from("deals")
-    .select("id, rolldog_opportunity_id, rolldog_link_confidence")
+    .select("id, rolldog_opportunity_id, rolldog_link_confidence, dealripe_last_write_hash, dealripe_last_next_step")
     .eq("tenant_id", tenantId)
     .eq("external_id", dealExternalId)
     .maybeSingle();
@@ -175,6 +177,38 @@ export async function writeBackDealToRolldog(
     };
   }
 
+  // Change detection: compose (dry-run) to see what WOULD be written, hash the
+  // notes payloads, and compare against the last write. This keeps Rolldog always
+  // up to date, a re-ingest that confirms a new gate writes the delta, while a
+  // re-ingest of the same transcript writes nothing. The next-step activity (an
+  // append, not an overwrite) is re-created only when the recommendation changed,
+  // so we never stack duplicate to-dos. force bypasses all of this.
+  const nextAction = opts.nextAction?.trim() || undefined;
+  const lastHash = dealRow.data.dealripe_last_write_hash ?? "";
+  const lastNextStep = dealRow.data.dealripe_last_next_step ?? "";
+  let notesHash = lastHash;
+  let writeNextStep = true;
+  if (!opts.force) {
+    try {
+      const preview = await syncDealToRolldog({ tenantSlug, dealId, rolldogOpportunityId: opp, dryRun: true, nextAction });
+      const notesBody = preview
+        .filter((r) => r.status === "preview" && r.method !== "writeNextStep" && r.payload)
+        .map((r) => `${r.method}=${r.payload}`)
+        .join("\n");
+      notesHash = createHash("sha1").update(notesBody).digest("hex");
+      const nextChanged = !!nextAction && nextAction !== lastNextStep;
+      if (notesHash === lastHash && !nextChanged) {
+        return { written: false, opportunityId: opp, reason: "no change since last write (idempotent skip)" };
+      }
+      // Only (re)create the next-step activity when it actually changed.
+      writeNextStep = nextChanged;
+    } catch {
+      // If change detection fails, fall through to a normal write (correctness
+      // over de-duplication).
+      writeNextStep = true;
+    }
+  }
+
   try {
     const results = await runWithAuthorizedOpportunities(runtimeAuth, () =>
       runWithCallContext(opts.callId, () =>
@@ -182,20 +216,25 @@ export async function writeBackDealToRolldog(
           tenantSlug,
           dealId,
           rolldogOpportunityId: opp,
-          nextAction: opts.nextAction,
+          // Suppress the next-step create when the recommendation is unchanged, so
+          // an unchanged reprocess never adds a duplicate to-do. force always writes it.
+          nextAction: opts.force || writeNextStep ? nextAction : undefined,
         }),
       ),
     );
-    // Stamp when DealRipe last wrote this record so the "rep last activity"
-    // signal can attribute Rolldog's updated-at away from our own writes.
-    // Best-effort: a failed stamp never fails the write-back.
+    // Record what we wrote so the next reprocess can detect a no-op, and stamp the
+    // write time for the "rep last activity" signal. Best-effort; never fails the write.
     const stamp = await db
       .from("deals")
-      .update({ dealripe_last_writeback_at: new Date().toISOString() })
+      .update({
+        dealripe_last_writeback_at: new Date().toISOString(),
+        dealripe_last_write_hash: notesHash,
+        dealripe_last_next_step: opts.force || writeNextStep ? nextAction ?? lastNextStep : lastNextStep,
+      })
       .eq("id", dealRow.data.id);
     if (stamp.error) {
       console.warn(
-        `[writeback] wrote to opp ${opp} but failed to stamp dealripe_last_writeback_at: ${stamp.error.message}`,
+        `[writeback] wrote to opp ${opp} but failed to stamp write state: ${stamp.error.message}`,
       );
     }
     return { written: true, opportunityId: opp, results };
