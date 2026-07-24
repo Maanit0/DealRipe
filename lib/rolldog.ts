@@ -409,6 +409,61 @@ function tagWithDealRipe(text: string): string {
     : `${DEALRIPE_TAG} ${text}`;
 }
 
+export type OppSummary = {
+  id: string;
+  name: string;
+  accountName: string;
+  externalId: string | null;
+  accountId: string | null;
+  owner: string | null;
+  stageName: string | null;
+  archived: boolean;
+  createdAt: string | null;
+};
+
+/**
+ * List the opportunities collection with an arbitrary JSON:API query string
+ * (filters, sort, paging), for deal->opportunity discovery: finding the Rolldog
+ * opp created after a discovery call for a deal DealRipe already captured.
+ *
+ * Deliberately NOT scoped to PILOT_OPPORTUNITY_IDS: discovery must see candidates
+ * to match against. It returns only summary metadata and never reads a
+ * sub-resource or writes. The actual write-back stays fully scope-gated, so a
+ * match found here can only be written after it is stored on the deal and
+ * authorized via runWithAuthorizedOpportunities.
+ *
+ * `query` is the part after `/opportunities?` (already-encoded). Throws
+ * RolldogApiError on a non-2xx (e.g. an unsupported filter returns 400).
+ */
+export async function listOpportunities(query: string): Promise<OppSummary[]> {
+  const config = readRolldogConfig();
+  ensureCredentials(config, "(list)", "read");
+  const path = `/opportunities?${query}`;
+  const res = await rolldogFetch(config, path, { method: "GET" });
+  if (!res.ok) throw new RolldogApiError(res.status, path, await safeBody(res));
+  const json = (await res.json()) as { data?: Array<{ id: string; attributes?: Record<string, unknown> }> };
+  return (json.data ?? []).map((r) => {
+    const a = r.attributes ?? {};
+    const s = (k: string): string | null => (a[k] != null ? String(a[k]) : null);
+    return {
+      id: r.id,
+      name: s("name") ?? "",
+      accountName: s("account-name") ?? "",
+      externalId: s("external-id"),
+      accountId: s("account-id"),
+      owner: s("user-id"),
+      stageName: s("stage-name"),
+      archived: Boolean(a["archived"]),
+      createdAt: s("created-at"),
+    };
+  });
+}
+
+/** Search opportunities by name/account (JSON:API filter[search]). */
+export async function searchOpportunities(query: string, opts: { pageSize?: number } = {}): Promise<OppSummary[]> {
+  return listOpportunities(`filter[search]=${encodeURIComponent(query)}&page[size]=${opts.pageSize ?? 20}`);
+}
+
 async function getOpportunityCore(
   config: RolldogConfig,
   opportunityId: string,
