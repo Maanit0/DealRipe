@@ -313,7 +313,7 @@ function RawLog({
                                 <span className="text-[11px] font-semibold text-ink">{w.label}</span>
                                 <span className="text-[10px] text-muted">{w.target}</span>
                               </div>
-                              <pre className="px-3 py-2 text-[11px] leading-relaxed text-ink whitespace-pre-wrap break-words font-mono">
+                              <pre className="px-3 py-2 text-[12px] leading-relaxed text-ink whitespace-pre-wrap break-words font-sans">
                                 {w.payload}
                               </pre>
                             </div>

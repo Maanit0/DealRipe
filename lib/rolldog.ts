@@ -764,12 +764,13 @@ export async function addParticipantContact(
 export type SituationWrite = Partial<{
   whyLooking: string;
   whyLookingNow: string;
-  // TODO(existing-systems): the sandbox GET returned this as an array
-  // (e.g. []); the write shape may need to be an array of system names
-  // rather than free text. Treating as string today so the parser can
-  // pass free text from extraction; revisit when we have a sample
-  // PATCH that successfully sets it.
-  existingSystems: string;
+  // existing-systems is a natively array-typed field in Rolldog: an unset
+  // value reads back as [] (empty array), unlike the scalar text fields
+  // above which read back empty. We accept a string (from extraction) or an
+  // explicit array, and always PATCH it as an array so the value matches the
+  // field's native shape. Confirmed via getSubResource: opps DealRipe never
+  // wrote return existing-systems: [], the sibling text fields return empty.
+  existingSystems: string | string[];
   businessStatus: string;
   notes: string;
 }>;
@@ -789,7 +790,10 @@ export async function writeSituation(
     attrs["why-looking-now"] = write.whyLookingNow;
   }
   if (write.existingSystems !== undefined) {
-    attrs["existing-systems"] = write.existingSystems;
+    // Always send an array to match the field's native type. A single string
+    // from extraction becomes a one-element array; empty strings are dropped.
+    const raw = Array.isArray(write.existingSystems) ? write.existingSystems : [write.existingSystems];
+    attrs["existing-systems"] = raw.filter((s) => typeof s === "string" && s.trim().length > 0);
   }
   if (write.businessStatus !== undefined) {
     attrs["business-status"] = write.businessStatus;
