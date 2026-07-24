@@ -10,12 +10,19 @@ import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 export const dynamic = "force-dynamic";
 
 const TZ = "America/Chicago";
-function fmtMoney(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1000)}k`;
-  return `$${Math.round(n)}`;
+function money(n: number | null): string {
+  if (n == null) return "—";
+  return `$${Math.round(n).toLocaleString("en-US")}`;
 }
 function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
+  } catch {
+    return "—";
+  }
+}
+function fmtShortDate(iso: string | null): string {
   if (!iso) return "—";
   try {
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
@@ -23,22 +30,82 @@ function fmtDate(iso: string | null): string {
     return "—";
   }
 }
+function inDays(days: number | null): string {
+  if (days == null) return "";
+  if (days === 0) return "today";
+  if (days > 0) return `in ${days} day${days === 1 ? "" : "s"}`;
+  return `${-days} day${days === -1 ? "" : "s"} ago`;
+}
+
+const HEALTH: Record<DealChangeRecord["dealHealth"], { label: string; chip: string }> = {
+  at_risk: { label: "At Risk", chip: "bg-danger/10 text-danger" },
+  stalled: { label: "Stalled", chip: "bg-warn/10 text-warn" },
+  healthy: { label: "Healthy", chip: "bg-accent/10 text-accent" },
+  no_data: { label: "No calls yet", chip: "bg-ink/[0.06] text-muted" },
+};
+// Mark's triage order: at-risk first, then stalled, then healthy, then untracked;
+// within each tier the biggest deals lead, tiny risks sink to the bottom.
+const TIER: Record<DealChangeRecord["dealHealth"], number> = { at_risk: 0, stalled: 1, healthy: 2, no_data: 3 };
+
+function ageDays(iso: string | null): string {
+  if (!iso) return "—";
+  const d = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  return Number.isFinite(d) ? `${d}d` : "—";
+}
+
 const CHANGE_SECTIONS: Array<{ kind: ChangeEvent["kind"]; title: string }> = [
-  { kind: "stage", title: "Stage changes" },
-  { kind: "forecast", title: "Forecast changes" },
+  { kind: "stage", title: "Stage moves" },
+  { kind: "forecast", title: "Forecast shifts" },
+  { kind: "close_date", title: "Close-date moves" },
   { kind: "amount", title: "Amount changes" },
-  { kind: "close_date", title: "Close date changes" },
   { kind: "new", title: "New opportunities" },
   { kind: "won", title: "Closed won" },
   { kind: "lost", title: "Closed lost" },
 ];
-const MOVE_COLOR: Record<string, string> = { forward: "text-accent", backward: "text-danger", none: "text-muted" };
-const TONE_DOT: Record<string, string> = { up: "bg-accent", down: "bg-danger", neutral: "bg-ink/30" };
 
-type SP = { range?: string; from?: string; to?: string; netnew?: string; noshow?: string; rep?: string };
+type SP = { range?: string; from?: string; to?: string; netnew?: string; noshow?: string; rep?: string; tracked?: string };
+
+function nextStep(d: DealChangeRecord): string {
+  if (d.dealHealth === "no_data") return "—";
+  if (d.doThis) return d.doThis;
+  if (d.verdict.kind === "confirmed") return "Keep momentum and lock the next step.";
+  if (d.verdict.kind === "lags") return "Update the forecast to match, and book the next step.";
+  return d.blockers[0] ?? "Confirm the next step on the next call.";
+}
+
+function clip(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.lastIndexOf(" ", max);
+  return s.slice(0, cut > 20 ? cut : max).replace(/[.,;]$/, "") + "…";
+}
+
+// Cut a long answer to one clean clause: a full sentence if short, else the first
+// natural break (comma / and / which), else a word boundary. Avoids dangling "…".
+function clause(s: string, max = 120): string {
+  const t = s.trim();
+  const dot = t.search(/[.!?](\s|$)/);
+  if (dot >= 0 && dot <= max) return t.slice(0, dot + 1);
+  const comma = t.indexOf(", ", 35);
+  if (comma >= 0 && comma <= max) return t.slice(0, comma);
+  const conj = t.search(/\s(and|which|but|so|because)\s/i);
+  if (conj >= 35 && conj <= max) return t.slice(0, conj);
+  return clip(t, max);
+}
+
+// The up-to-date read for the master table: DealRipe's full captured picture on
+// the deal (competitor, budget, buyer, driver, timeline), not just this week's
+// delta, plus the single biggest blocker. Kept to a glance.
+function readText(d: DealChangeRecord): string {
+  if (d.dealHealth === "no_data") return "No tracked calls yet.";
+  const captured = d.captured.slice(0, 2).map((c) => `${c.label}: ${clause(c.value)}`);
+  const bits: string[] = [];
+  if (captured.length) bits.push(captured.join(" · "));
+  if (d.blockers.length) bits.push(`Blocking: ${d.blockers[0]}`);
+  return bits.length ? bits.join(" · ") : d.verdict.text || "—";
+}
 
 export default async function ReviewPage({ searchParams }: { searchParams: SP }) {
-  const range = resolveRange(searchParams.range ?? "7d", searchParams.from, searchParams.to);
+  const range = resolveRange(searchParams.range ?? "this_week", searchParams.from, searchParams.to);
   const rangeLabel = range.key === "custom" ? `${searchParams.from} to ${searchParams.to}` : RANGE_LABELS[range.key as RangeKey];
 
   let deals: DealChangeRecord[] = [];
@@ -53,20 +120,64 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
     console.error("[review] load failed:", err);
   }
 
-  // Filters.
   const reps = Array.from(new Map(deals.filter((d) => d.repEmail).map((d) => [d.repEmail as string, d.repName])).entries()).map(([email, name]) => ({ email, name }));
   const filtered = deals.filter((d) => {
     if (searchParams.netnew === "1" && d.isRenewal) return false;
     if (searchParams.noshow === "1" && !d.isNoShow) return false;
+    if (searchParams.tracked === "1" && d.dealHealth === "no_data") return false;
     if (searchParams.rep && d.repEmail !== searchParams.rep) return false;
     return true;
   });
-  const attention = filtered.filter((d) => d.needsAttention);
-  const flatChanges = filtered.flatMap((d) => d.changes.map((ev) => ({ account: d.account, dealId: d.dealId, ev })));
+
+  // Master: every substantive deal. Mark's triage order: status tier first (at
+  // risk, then stalled, then healthy, then untracked), biggest deals within each.
+  const master = filtered
+    .filter((d) => d.inRolldog || d.blockers.length > 0 || d.whatChanged.length > 0 || d.isNoShow)
+    .sort((a, b) => TIER[a.dealHealth] - TIER[b.dealHealth] || (b.dealSizeMonthly ?? 0) - (a.dealSizeMonthly ?? 0));
+
+  // Factual scan: CRM changes flattened, grouped by dimension, each sorted by amount.
+  // Only genuine from->to diffs count as "moves". A bare stage entry with no known
+  // prior stage (Rolldog's current-stage-date, no snapshot history yet) is not a
+  // move, so it's excluded rather than shown with an empty From.
+  const recordById = new Map(filtered.map((d) => [d.dealId, d] as const));
+  const isRealChange = (ev: ChangeEvent) => {
+    if (ev.kind === "new" || ev.kind === "won" || ev.kind === "lost" || ev.kind === "removed") return true;
+    return ev.from != null && ev.to != null; // stage/forecast/amount/close need both ends
+  };
+  const flatChanges = filtered.flatMap((d) => d.changes.filter(isRealChange).map((ev) => ({ account: d.account, dealId: d.dealId, ev })));
+
+  // --- KPIs ---
+  const sum = (arr: DealChangeRecord[]) => arr.reduce((n, d) => n + (d.dealSizeMonthly ?? 0), 0);
+  const isClosed = (d: DealChangeRecord) => /won|lost/i.test(d.status ?? "");
+  const openDeals = master.filter((d) => !d.archived && !isClosed(d));
+  const cat = (re: RegExp) => {
+    const ds = openDeals.filter((d) => re.test(d.forecastCategory ?? ""));
+    return { n: ds.length, m: sum(ds) };
+  };
+  const kpiTotal = { n: openDeals.length, m: sum(openDeals) };
+  const kpiCommit = cat(/commit/i);
+  const kpiExpect = cat(/expect/i);
+  const kpiPipeline = cat(/pipeline/i);
+  const kpiOmitted = cat(/omit/i);
+  const wonDeals = filtered.filter((d) => d.changes.some((c) => c.kind === "won"));
+  const kpiWon = { n: wonDeals.length, m: sum(wonDeals) };
+
+  const health = (k: DealChangeRecord["dealHealth"]) => {
+    const ds = master.filter((d) => d.dealHealth === k);
+    return { n: ds.length, m: sum(ds) };
+  };
+  const kpiAtRisk = health("at_risk");
+  const kpiStalled = health("stalled");
+  const kpiHealthy = health("healthy");
+  const kpiNoData = health("no_data");
+
+  const changeCount = (kind: ChangeEvent["kind"]) => flatChanges.filter((c) => c.ev.kind === kind).length;
+  const caughtCount = (re: RegExp) => master.filter((d) => d.whatChanged.some((w) => re.test(w.label ?? ""))).length;
+  const kpiNoShows = master.filter((d) => d.isNoShow).length;
 
   return (
     <AppShell active="review">
-      <div className="max-w-[1050px] mx-auto px-6 py-7">
+      <div className="max-w-[1320px] mx-auto px-6 py-7">
         <div className="flex items-center justify-between">
           <h1 className="text-[24px] font-semibold tracking-tight text-ink">Pipeline changes</h1>
           <div className="flex items-center gap-3 text-[12px]">
@@ -76,163 +187,178 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
           </div>
         </div>
         <p className="text-[13px] text-muted mt-1">
-          What moved on your pipeline, what needs a look before your review, and why. Rolldog fields the
-          reps control, plus what the calls caught that they did not log.
+          Every deal ranked by amount, with the rep&apos;s forecast next to DealRipe&apos;s and the read on each.
         </p>
 
         <ReviewFilterBar reps={reps} />
-        <div className="mt-2 text-[11px] text-muted">Showing {rangeLabel.toLowerCase()}.</div>
+        <div className="mt-2 text-[11px] text-muted">Showing {rangeLabel.toLowerCase()}. Amounts are monthly, as in RollDog.</div>
 
-        {/* Headline */}
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Metric label="Total pipeline" value={fmtMoney(headline.totalPipelineAnnual)} sub="annualized" />
-          <Metric label="Deals changed" value={String(headline.dealsChanged)} sub={`${headline.newOpportunities} new`} />
-          <Metric label="Need attention" value={String(attention.length)} sub="flagged" danger={attention.length > 0} />
-          <Metric label="Won / lost" value={`${headline.closedWon} / ${headline.closedLost}`} sub="this period" />
+        {/* Top KPIs: total + forecast categories + closed won (Kent parity) */}
+        <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-3">
+          <Metric label="Total Pipeline" value={money(kpiTotal.m)} sub={`${kpiTotal.n} deals`} />
+          <Metric label="Commit" value={money(kpiCommit.m)} sub={`${kpiCommit.n} deals`} />
+          <Metric label="Expect" value={money(kpiExpect.m)} sub={`${kpiExpect.n} deals`} />
+          <Metric label="Pipeline" value={money(kpiPipeline.m)} sub={`${kpiPipeline.n} deals`} />
+          <Metric label="Omitted" value={money(kpiOmitted.m)} sub={`${kpiOmitted.n} deals`} />
+          <Metric label="Closed Won" value={money(kpiWon.m)} sub={`${kpiWon.n} deals`} success />
         </div>
-        {headline.forecastMix.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {headline.forecastMix.map((b) => (
-              <span key={b.category} className="text-[11px] px-2 py-1 rounded-full bg-white border border-line text-muted">
-                <span className="text-ink font-medium">{b.category}</span> {b.deals} · {fmtMoney(b.annual)}
-              </span>
-            ))}
-          </div>
-        )}
 
-        {/* Needs attention */}
-        <section className="mt-6">
-          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-2">Deals to look at ({attention.length})</div>
-          {attention.length === 0 ? (
-            <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">Nothing needs attention in this window.</div>
+        {/* Health band: DealRipe's triage at a glance */}
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Metric label="At Risk" value={String(kpiAtRisk.n)} sub={`${money(kpiAtRisk.m)}/mo`} danger={kpiAtRisk.n > 0} />
+          <Metric label="Stalled" value={String(kpiStalled.n)} sub={`${money(kpiStalled.m)}/mo`} warn={kpiStalled.n > 0} />
+          <Metric label="Healthy" value={String(kpiHealthy.n)} sub={`${money(kpiHealthy.m)}/mo`} success />
+          <Metric label="No calls yet" value={String(kpiNoData.n)} sub="untracked" />
+        </div>
+
+        {/* Master table */}
+        <section className="mt-7">
+          <h2 className="text-[17px] font-semibold text-ink mb-3">All deals</h2>
+          {master.length === 0 ? (
+            <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[14px] text-muted">No deals in this window.</div>
           ) : (
-            <div className="space-y-3">
-              {attention.map((d) => (
-                <div key={d.dealId} className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
-                  <div className="px-5 py-3.5 flex items-start gap-4 border-b border-line/70">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[14px] font-medium text-ink">
-                        <Link href={`/deals/${d.dealId}`} className="hover:underline">{d.account}</Link>
-                        {d.isRenewal && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-ink/[0.06] text-muted">Renewal</span>}
-                      </div>
-                      <div className="text-[11px] text-muted mt-0.5">
-                        Rolldog: {d.stageName ?? "—"} · {d.forecastCategory ?? "—"} · closes {fmtDate(d.closeDate)} · {d.dealSizeAnnual ? fmtMoney(d.dealSizeAnnual) + "/yr" : "size —"}
-                        {d.score ? ` · score ${d.score}` : ""} · {d.repName}
-                      </div>
-                    </div>
-                    <span className="shrink-0 text-[11px] text-muted whitespace-nowrap">
-                      {d.daysToClose != null ? `${d.daysToClose}d to close` : ""}
-                    </span>
-                  </div>
-                  <div className="px-5 py-3 space-y-2 text-[13px]">
-                    <div>
-                      <span className="text-ink text-[11px] uppercase tracking-wider font-semibold">Moved this week: </span>
-                      <span className={`font-medium ${MOVE_COLOR[d.movement.direction] ?? "text-ink"}`}>{d.movement.summary}</span>
-                    </div>
-                    {d.whatChanged.length > 0 && (
-                      <ul className="space-y-1">
-                        {d.whatChanged.map((w, i) => (
-                          <li key={i} className="flex items-start gap-2 text-ink">
-                            <span className={`shrink-0 mt-1.5 h-1.5 w-1.5 rounded-full ${TONE_DOT[w.tone] ?? "bg-ink/30"}`} />
-                            <span>{w.label && <span className="font-semibold">{w.label}: </span>}{w.text}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="text-[11px] text-muted">
-                      {d.isNoShow ? (
-                        <span className="text-warn">Last meeting {fmtDate(d.lastConversationAt) || "recently"} · no-show</span>
-                      ) : d.lastConversationAt ? (
-                        <span>Last call {fmtDate(d.lastConversationAt)}</span>
-                      ) : null}
-                    </div>
-                    {d.primaryContact && (
-                      <div className="text-[11px] text-muted">
-                        Main contact: <span className="text-ink">{d.primaryContact.name}</span>
-                        {d.primaryContact.role ? ` · ${d.primaryContact.role}` : ""}
-                        {d.primaryContact.relationship ? ` · ${d.primaryContact.relationship}` : ""}
-                      </div>
-                    )}
-                    {d.lastConversationAt && !d.isNoShow && (
-                      <div>
-                        <span className="text-ink text-[11px] uppercase tracking-wider font-semibold">On the {fmtDate(d.lastConversationAt)} call: </span>
-                        {d.agreedNextStep ? (
-                          <span className="text-ink">
-                            {d.agreedNextStep}
-                            {d.nextStepIsMeeting && (
-                              <span className={`font-medium ${d.nextMeetingBooked ? "text-accent" : "text-danger"}`}>
-                                {d.nextMeetingBooked ? " The call is on the calendar." : " But no call has been booked on the calendar."}
-                              </span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-danger font-medium">No next step was agreed on this call.</span>
-                        )}
-                      </div>
-                    )}
-                    {d.captured.length > 0 && (
-                      <div className="text-ink">
-                        <span className="text-ink text-[11px] uppercase tracking-wider font-semibold">Captured: </span>
-                        {d.captured.map((c) => `${c.label}: ${c.value}`).join(" · ")}
-                      </div>
-                    )}
-                    {d.missing.length > 0 && (
-                      <div className="text-ink">
-                        <span className="text-ink text-[11px] uppercase tracking-wider font-semibold">Missing: </span>
-                        {d.missing.join(", ")}
-                      </div>
-                    )}
-                    {d.blockers.length > 0 && (
-                      <div>
-                        <div className="text-ink text-[11px] uppercase tracking-wider font-semibold mb-1">What&apos;s blocking</div>
-                        <ul className="space-y-1">
-                          {d.blockers.map((b, i) => (
-                            <li key={i} className="flex items-start gap-2 text-ink">
-                              <span className="shrink-0 mt-1.5 h-1.5 w-1.5 rounded-full bg-danger" />
-                              <span>{b}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {d.doThis && (
-                      <div className="pt-1">
-                        <span className="text-ink text-[11px] uppercase tracking-wider font-semibold">Rep&apos;s next move: </span>
-                        <span className="text-ink">{d.doThis}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+            <div className="bg-white rounded-xl2 shadow-card border border-line overflow-x-auto">
+              <table className="w-full text-[13px] min-w-[1180px]">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wider font-semibold text-muted border-b border-line bg-bg/40">
+                    <th className="px-4 py-3">Account</th>
+                    <th className="px-2 py-3">Stage</th>
+                    <th className="px-2 py-3 text-right">Amount</th>
+                    <th className="px-2 py-3">Close Date</th>
+                    <th className="px-2 py-3">Rep Category</th>
+                    <th className="px-2 py-3">DealRipe Category</th>
+                    <th className="px-2 py-3">Status</th>
+                    <th className="px-2 py-3">Score</th>
+                    <th className="px-2 py-3">Last Update</th>
+                    <th className="px-2 py-3">DealRipe Read</th>
+                    <th className="px-2 py-3">DealRipe Next Step</th>
+                    <th className="px-4 py-3">Rep</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {master.map((d) => {
+                    const h = HEALTH[d.dealHealth];
+                    return (
+                      <tr key={d.dealId} className="align-top hover:bg-bg/40">
+                        <td className="px-4 py-3.5">
+                          <Link href={`/deals/${d.dealId}`} className="font-medium text-ink hover:underline">{d.account}</Link>
+                        </td>
+                        <td className="px-2 py-3.5 text-ink">{d.stageName ?? "—"}</td>
+                        <td className="px-2 py-3.5 text-right font-medium text-ink whitespace-nowrap">{money(d.dealSizeMonthly)}</td>
+                        <td className="px-2 py-3.5 whitespace-nowrap">
+                          <div className="text-ink">{fmtDate(d.closeDate)}</div>
+                          {d.daysToClose != null && <div className="text-[11px] text-muted">{inDays(d.daysToClose)}</div>}
+                        </td>
+                        <td className="px-2 py-3.5 text-ink">{d.forecastCategory ?? "—"}</td>
+                        <td className="px-2 py-3.5 text-ink font-medium">{d.dealRipeCategory ?? "—"}</td>
+                        <td className="px-2 py-3.5"><span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded ${h.chip} whitespace-nowrap`}>{h.label}</span></td>
+                        <td className="px-2 py-3.5 text-ink">{d.score ?? "—"}</td>
+                        <td className="px-2 py-3.5 text-muted whitespace-nowrap">{fmtShortDate(d.lastUpdatedAt)}</td>
+                        <td className="px-2 py-3.5 text-ink leading-relaxed min-w-[280px]">{readText(d)}</td>
+                        <td className="px-2 py-3.5 leading-relaxed min-w-[220px]">
+                          {d.dealHealth === "no_data" ? (
+                            <span className="text-muted">—</span>
+                          ) : (
+                            <Link href={`/actions?deal=${d.dealId}`} className="text-ink hover:text-accent hover:underline">
+                              {clause(nextStep(d), 200)}
+                            </Link>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5 text-ink whitespace-nowrap">{d.repName}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted">
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-danger align-[1px]" /> At Risk — DealRipe below the rep, or a blocker</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-warn align-[1px]" /> Stalled — sitting too long or no next step</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-accent align-[1px]" /> Healthy — aligned and progressing</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-ink/30 align-[1px]" /> No calls yet — DealRipe hasn&apos;t joined a call</span>
+          </div>
         </section>
 
-        {/* What changed (Kent grid) */}
-        <section className="mt-8">
-          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-2">What moved ({flatChanges.length})</div>
+        {/* Factual scan: per-change-type tables (Kent style) */}
+        <section className="mt-10">
+          <h2 className="text-[17px] font-semibold text-ink">What changed</h2>
+          <p className="text-[13px] text-muted mt-0.5 mb-4">Per dimension, sorted by amount. From = value at the start of the window, to = now.</p>
+
+          {/* CRM change counts (Kent parity), 4 per row */}
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">Logged in RollDog</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <CountCard label="Closed Won" value={kpiWon.n} sub="won" color="text-accent" />
+            <CountCard label="Closed Lost" value={headline.closedLost} sub="lost" color="text-danger" />
+            <CountCard label="Stage Changes" value={changeCount("stage")} sub="moved stage" />
+            <CountCard label="Forecast Changes" value={changeCount("forecast")} sub="category shifts" />
+            <CountCard label="Amount Changes" value={changeCount("amount")} sub="re-valued" />
+            <CountCard label="Date Changes" value={changeCount("close_date")} sub="close moved" />
+            <CountCard label="New Opportunities" value={changeCount("new")} sub="new pipeline" />
+            <CountCard label="Removed" value={changeCount("removed")} sub="dropped" />
+          </div>
+
+          {/* DealRipe-caught counts (the edge) */}
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">Caught by DealRipe on calls</div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+            <CountCard label="Competitor" value={caughtCount(/compet/i)} sub="identified" color="text-accent" />
+            <CountCard label="Budget" value={caughtCount(/budget/i)} sub="surfaced" color="text-accent" />
+            <CountCard label="Economic Buyer" value={caughtCount(/buyer|economic|authority|decision/i)} sub="named" color="text-accent" />
+            <CountCard label="Drivers" value={caughtCount(/why|driver|situation/i)} sub="captured" color="text-accent" />
+            <CountCard label="No-shows" value={kpiNoShows} sub="missed" color="text-danger" />
+          </div>
+
           {flatChanges.length === 0 ? (
-            <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">No field changes in this window.</div>
+            <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[14px] text-muted">No field changes in this window yet. Rolldog deltas fill in as daily snapshots accrue.</div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {CHANGE_SECTIONS.map(({ kind, title }) => {
-                const rows = flatChanges.filter((c) => c.ev.kind === kind);
+                const rows = flatChanges
+                  .filter((c) => c.ev.kind === kind)
+                  .sort((a, b) => (recordById.get(b.dealId)?.dealSizeMonthly ?? 0) - (recordById.get(a.dealId)?.dealSizeMonthly ?? 0));
                 if (rows.length === 0) return null;
                 return (
                   <div key={kind}>
-                    <div className="text-[12px] font-medium text-ink mb-1">{title} ({rows.length})</div>
-                    <div className="bg-white rounded-xl2 shadow-card border border-line divide-y divide-line overflow-hidden">
-                      {rows.map((c, i) => (
-                        <div key={i} className="px-5 py-2.5 flex items-center gap-3 text-[13px]">
-                          <Link href={`/deals/${c.dealId}`} className="text-accent hover:underline min-w-[140px]">{c.account}</Link>
-                          <span className="text-ink">
-                            {c.ev.from ? `${c.ev.from} → ${c.ev.to}` : c.ev.to ?? ""}
-                          </span>
-                          <span className="ml-auto text-[11px] text-muted">
-                            {c.ev.source === "rolldog" ? "logged" : "caught on call"} · {fmtDate(c.ev.at)}
-                          </span>
-                        </div>
-                      ))}
+                    <div className="text-[14px] font-semibold text-ink mb-1.5">{title} ({rows.length})</div>
+                    <div className="bg-white rounded-xl2 shadow-card border border-line overflow-x-auto">
+                      <table className="w-full text-[13px] min-w-[980px]">
+                        <thead>
+                          <tr className="text-left text-[11px] uppercase tracking-wider font-semibold text-muted border-b border-line bg-bg/40">
+                            <th className="px-4 py-2.5">Changed</th>
+                            <th className="px-2 py-2.5">Account</th>
+                            <th className="px-2 py-2.5">Stage</th>
+                            <th className="px-2 py-2.5">From</th>
+                            <th className="px-2 py-2.5">To</th>
+                            <th className="px-2 py-2.5 text-right">Amount</th>
+                            <th className="px-2 py-2.5">Close Date</th>
+                            <th className="px-2 py-2.5">Category</th>
+                            <th className="px-2 py-2.5">Age</th>
+                            <th className="px-4 py-2.5">Rep</th>
+                            <th className="px-4 py-2.5">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-line">
+                          {rows.map((c, i) => {
+                            const d = recordById.get(c.dealId);
+                            const h = d ? HEALTH[d.dealHealth] : null;
+                            return (
+                              <tr key={i} className="align-top hover:bg-bg/40">
+                                <td className="px-4 py-3 text-muted whitespace-nowrap">{fmtDate(c.ev.at)}</td>
+                                <td className="px-2 py-3"><Link href={`/deals/${c.dealId}`} className="font-medium text-ink hover:underline">{c.account}</Link></td>
+                                <td className="px-2 py-3 text-ink">{d?.stageName ?? "—"}</td>
+                                <td className="px-2 py-3 text-muted whitespace-nowrap">{c.ev.from ?? "—"}</td>
+                                <td className="px-2 py-3 text-ink font-medium whitespace-nowrap">{c.ev.to ?? "—"}</td>
+                                <td className="px-2 py-3 text-right text-ink whitespace-nowrap">{money(d?.dealSizeMonthly ?? null)}</td>
+                                <td className="px-2 py-3 text-ink whitespace-nowrap">{fmtShortDate(d?.closeDate ?? null)}</td>
+                                <td className="px-2 py-3 text-ink">{d?.forecastCategory ?? "—"}</td>
+                                <td className="px-2 py-3 text-muted whitespace-nowrap">{ageDays(d?.createdAt ?? null)}</td>
+                                <td className="px-4 py-3 text-ink whitespace-nowrap">{d?.repName ?? "—"}</td>
+                                <td className="px-4 py-3">{h && <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${h.chip} whitespace-nowrap`}>{h.label}</span>}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 );
@@ -245,12 +371,23 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
   );
 }
 
-function Metric({ label, value, sub, danger }: { label: string; value: string; sub?: string; danger?: boolean }) {
+function Metric({ label, value, sub, danger, warn, success }: { label: string; value: string; sub?: string; danger?: boolean; warn?: boolean; success?: boolean }) {
+  const color = danger ? "text-danger" : warn ? "text-warn" : success ? "text-accent" : "text-ink";
   return (
-    <div className="bg-white rounded-xl2 shadow-card border border-line px-4 py-3">
-      <div className="text-[11px] text-muted">{label}</div>
-      <div className={`text-[20px] font-semibold ${danger ? "text-danger" : "text-ink"}`}>{value}</div>
-      {sub && <div className="text-[11px] text-muted">{sub}</div>}
+    <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+      <div className="text-[13px] text-muted">{label}</div>
+      <div className={`text-[28px] font-semibold leading-tight mt-0.5 ${color}`}>{value}</div>
+      {sub && <div className="text-[12px] text-muted mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function CountCard({ label, value, sub, color }: { label: string; value: number; sub: string; color?: string }) {
+  return (
+    <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+      <div className="text-[13px] text-muted">{label}</div>
+      <div className={`text-[30px] font-semibold leading-tight mt-0.5 ${color ?? "text-ink"}`}>{value}</div>
+      <div className="text-[12px] text-muted mt-0.5">{sub}</div>
     </div>
   );
 }

@@ -62,6 +62,21 @@ export type Movement = {
  */
 export type WeekChange = { label?: string; text: string; tone: "up" | "down" | "neutral" };
 
+/** The rep's primary CRM change this window, as a from -> to (the fields the rep
+ * owns and DealRipe does not write: forecast, stage, close date, amount, new opp). */
+export type RepChange = { label: string; from: string | null; to: string | null };
+
+/**
+ * DealRipe's judgment on the rep's change (or lack of one), checked against the
+ * calls. The heart of the dashboard:
+ *   confirmed  = the rep advanced it and the calls back the move
+ *   overstated = the rep advanced it but the evidence has critical gaps
+ *   risk       = the rep changed nothing, but the calls caught a blocker
+ *   lags       = the rep changed nothing, but the calls show progress not yet logged
+ *   none       = nothing notable (kept off the hero view)
+ */
+export type Verdict = { kind: "confirmed" | "overstated" | "risk" | "lags" | "none"; text: string };
+
 export type FlagSeverity = "high" | "med" | "low";
 export type DealFlag = {
   kind:
@@ -145,6 +160,17 @@ export type DealChangeRecord = {
   // named dark buyer, the SCOTSMAN gates still unanswered, single-threading,
   // stall. Grounded per deal, not a single generic line.
   blockers: string[];
+  // The rep's primary change this window and DealRipe's verdict on it. These
+  // drive the dashboard hero ("rep changes, checked against the calls").
+  repChange: RepChange | null;
+  verdict: Verdict;
+  // DealRipe's own forecast category (one conservative notch off the rep's,
+  // based on the call evidence) and a plain health status for the master table.
+  // "no_data" = DealRipe has not captured a call on this deal yet.
+  dealRipeCategory: string | null;
+  dealHealth: "at_risk" | "stalled" | "healthy" | "no_data";
+  // Rolldog's last-updated timestamp (the staleness signal Mark reads).
+  lastUpdatedAt: string | null;
   changes: ChangeEvent[];
   flags: DealFlag[];
   attention: number;
@@ -253,6 +279,15 @@ function personalizeRep(text: string | null, name: string): string | null {
     .replace(/\brep's\b/gi, `${name}'s`);
 }
 
+/** Drop placeholder buyer names ("CEO (unnamed)", "unknown", "TBD") so they read
+ * as unidentified rather than a fake name. */
+function cleanBuyerName(n: string | null): string | null {
+  const s = (n ?? "").trim();
+  if (!s) return null;
+  if (/unnamed|unknown|unidentified|not identified|^tbd$|^n\/?a$|^\(/i.test(s)) return null;
+  return s;
+}
+
 /** Swap the generic "the customer" for the actual contact's name. */
 function personalizeCustomer(text: string | null, name: string | null): string | null {
   if (!text || !name) return text;
@@ -349,6 +384,10 @@ const FCAST_ORDER = (c: string | null): number | null => {
   if (/omit/.test(l)) return 0;
   return null;
 };
+const CATEGORY_NAMES = ["Omitted", "Pipeline", "Expect", "Commit"] as const;
+function categoryFromOrder(n: number): string {
+  return CATEGORY_NAMES[Math.max(0, Math.min(3, n))];
+}
 
 function money0(n: number): string {
   if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -441,7 +480,7 @@ function computeMovement(
     const gains = ctx.gainedCount;
     const losses = ctx.progress.filter((p) => p.tone === "down").length;
     if (ctx.isNoShow) return { summary: "A meeting was missed this week", direction: "backward", events: [], moved: true };
-    if (gains > 0) return { summary: `Gained ground on calls this week (${gains} new answer${gains > 1 ? "s" : ""})`, direction: "forward", events: [], moved: true };
+    if (gains > 0) return { summary: `Advanced on the calls this week`, direction: "forward", events: [], moved: true };
     if (losses > 0) return { summary: "A setback surfaced on calls this week", direction: "backward", events: [], moved: true };
     const key = stageKeyFromName(ctx.stageName);
     const stall = ctx.daysInStage != null && key ? `, ${ctx.daysInStage} days in ${key}` : "";
@@ -449,6 +488,39 @@ function computeMovement(
   }
   const summary = parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(", ");
   return { summary, direction, events: parts, moved: true };
+}
+
+/** Render a Rolldog change event as the rep-facing from -> to for the hero. */
+function describeRepChange(ev: ChangeEvent): RepChange {
+  if (ev.kind === "new") return { label: "New opportunity", from: null, to: "New opp" };
+  if (ev.kind === "stage") return { label: "Stage", from: stageKeyFromName(ev.from), to: stageKeyFromName(ev.to) };
+  if (ev.kind === "forecast") return { label: "Forecast", from: ev.from, to: ev.to };
+  if (ev.kind === "close_date") return { label: "Close date", from: dateShort(ev.from), to: dateShort(ev.to) };
+  if (ev.kind === "amount") return { label: "Amount", from: ev.from ? money0(Number(ev.from)) : null, to: ev.to ? money0(Number(ev.to)) : null };
+  return { label: ev.label, from: ev.from, to: ev.to };
+}
+
+/** Whether the rep's change is an advance (forecast up, stage up, close pulled in,
+ * amount up, new) vs a de-risking move (forecast cut, stage slip, close pushed). */
+function isAdvancingChange(ev: ChangeEvent): boolean {
+  if (ev.kind === "new") return true;
+  if (ev.kind === "forecast") {
+    const a = FCAST_ORDER(ev.from);
+    const b = FCAST_ORDER(ev.to);
+    return a != null && b != null && b > a;
+  }
+  if (ev.kind === "stage") {
+    const a = stageRank(stageKeyFromName(ev.from));
+    const b = stageRank(stageKeyFromName(ev.to));
+    return a != null && b != null && b > a;
+  }
+  if (ev.kind === "close_date") {
+    const a = Date.parse(ev.from ?? "");
+    const b = Date.parse(ev.to ?? "");
+    return Number.isFinite(a) && Number.isFinite(b) && b < a;
+  }
+  if (ev.kind === "amount") return Number(ev.to) > Number(ev.from);
+  return false;
 }
 
 /** Attention score, weighted the way Mark triages. */
@@ -495,14 +567,11 @@ export async function getPipelineChanges(
     db.from("deal_signal_snapshots").select("deal_id, snapshot_date, signals").eq("tenant_id", tenantId).gte("snapshot_date", opts.sinceIso.slice(0, 10)).order("snapshot_date", { ascending: true }),
     loadFramework(tenantId).catch(() => null as Framework | null),
   ]);
-  // Which KEY_FIELDS the framework actually has, so "missing" only lists real gaps.
-  const frameworkKeyFields = new Map<string, string[]>(); // label -> matching field keys
+  // Human labels per field key from the framework (used to name what changed).
+  // Captured/missing are derived from the gate keys directly (see below), not
+  // from this map, so they still work when the framework fails to load.
   const fieldLabel = new Map<string, string>(); // field key -> human label from the framework
   if (framework) {
-    for (const kf of KEY_FIELDS) {
-      const keys = framework.fields.filter((f) => kf.re.test(f.fieldKey)).map((f) => f.fieldKey);
-      if (keys.length) frameworkKeyFields.set(kf.label, keys);
-    }
     for (const f of framework.fields) fieldLabel.set(f.fieldKey, f.label);
   }
 
@@ -587,24 +656,31 @@ export async function getPipelineChanges(
     );
     const economicBuyer = buyerContact
       ? {
-          name: String(buyerContact.name ?? "").trim() || null,
+          name: cleanBuyerName(String(buyerContact.name ?? "").trim() || null),
           role: String(buyerContact.role ?? "").trim() || null,
           engaged: !!buyerContact.last_contacted_at,
         }
       : { name: null, role: null, engaged: false };
-    // How we refer to the buyer in prose: "Brian (budget owner)" or "the economic buyer (still unknown)".
+    // How we refer to the buyer: "Brian (Budget Owner)" or, when unnamed, "the CEO"
+    // / "the economic buyer". Role is trimmed of location noise ("CEO, based in Miami").
+    const buyerRoleShort = (economicBuyer.role ?? "").split(",")[0].split("(")[0].trim();
     const buyerLabel = economicBuyer.name
-      ? `${economicBuyer.name}${economicBuyer.role ? ` (${economicBuyer.role})` : ""}`
-      : "the economic buyer (still unidentified)";
+      ? `${economicBuyer.name}${buyerRoleShort ? ` (${buyerRoleShort})` : ""}`
+      : buyerRoleShort
+        ? `the ${buyerRoleShort}`
+        : "the economic buyer";
+    // The blocker line, WITH the reason it matters (they sign off), so Mark isn't
+    // left asking why that person needs to be on a call.
+    const buyerBlocker = `${buyerLabel.charAt(0).toUpperCase()}${buyerLabel.slice(1)}, who signs off on a purchase this size, has never been on a call.`;
 
-    // Captured (the real answers) and Missing (the gaps) for the key fields the
-    // framework actually has, in Mark's order.
+    // Captured (the real answers) and Missing (the gaps), matched from the gate
+    // keys directly so this holds up even when the framework fails to load. This
+    // is the deal's full current qualification picture, not window-scoped.
     const captured: CapturedField[] = [];
     const missing: string[] = [];
+    const answeredKeys = [...answerByKey.keys()];
     for (const kf of KEY_FIELDS) {
-      const keys = frameworkKeyFields.get(kf.label);
-      if (!keys) continue; // framework has no such field
-      const hitKey = keys.find((k) => answerByKey.has(k));
+      const hitKey = answeredKeys.find((k) => kf.re.test(k));
       if (hitKey) {
         // For the economic buyer, prefer the person's name over the gate text.
         const value = kf.label === "Economic buyer" && economicBuyer.name ? economicBuyer.name : answerByKey.get(hitKey)!;
@@ -680,9 +756,19 @@ export async function getPipelineChanges(
       const t = Date.parse(String(c.scheduled_start ?? c.call_date ?? ""));
       return Number.isFinite(t) && t >= sinceMs && t <= Date.now();
     });
-    const isNoShow = !!noShowCall;
-    const noShowTitle = noShowCall ? String(noShowCall.title ?? "").trim() || null : null;
-    const noShowInvitees = noShowCall ? customerInviteeNames(noShowCall.participants) : [];
+    const isNoShow = !!noShowCall; // window-scoped, for the "what changed this week" story
+    // Current-state no-show: the deal's LATEST meeting was a no-show, regardless of
+    // window. The master read is a current picture, so a live no-show should surface
+    // even if it happened before the selected window.
+    const latestCall = (callsBy[d.id] ?? [])
+      .map((c) => ({ t: Date.parse(String(c.scheduled_start ?? c.call_date ?? "")), row: c }))
+      .filter((x) => Number.isFinite(x.t) && x.t <= Date.now())
+      .sort((a, b) => b.t - a.t)[0]?.row;
+    const currentNoShow = !!latestCall && NO_SHOW_OUTCOMES.has(String(latestCall.outcome ?? ""));
+    const anyNoShow = isNoShow || currentNoShow;
+    const noShowRow = noShowCall ?? (currentNoShow ? latestCall : null);
+    const noShowTitle = noShowRow ? String(noShowRow.title ?? "").trim() || null : null;
+    const noShowInvitees = noShowRow ? customerInviteeNames(noShowRow.participants) : [];
 
     // What the calls surfaced THIS WEEK, with specifics: qualification gates newly
     // answered (carrying the real captured answer, e.g. the budget figure or the
@@ -788,17 +874,16 @@ export async function getPipelineChanges(
       });
     }
 
-    // No-show in window (detected above; here it becomes a flag).
-    if (isNoShow) {
+    // No-show, window or current-state (detected above; here it becomes a flag).
+    if (anyNoShow) {
       const who = noShowInvitees.length ? ` (${noShowInvitees.join(", ")} did not join)` : "";
-      flags.push({ kind: "no_show", severity: "high", text: `The ${noShowTitle ? `"${noShowTitle}" ` : ""}meeting was a no-show${who}. Worth confirming this is still live.` });
+      flags.push({ kind: "no_show", severity: "high", text: `The ${noShowTitle ? `"${noShowTitle}" ` : "last "}meeting was a no-show${who}. Worth confirming this is still live.` });
     }
 
     // Economic buyer never engaged, when the optimism flag did not already say it.
     // Names the buyer + role, or says explicitly that they are still unidentified.
     if (buyerGap && !optimismFired && (economicBuyer.name || gatesConfirmed >= 4)) {
-      const cap = buyerLabel.charAt(0).toUpperCase() + buyerLabel.slice(1);
-      flags.push({ kind: "dark_buyer", severity: "high", text: `${cap} has never been on a call.` });
+      flags.push({ kind: "dark_buyer", severity: "high", text: buyerBlocker });
     }
 
     // Single-threaded qualified deal.
@@ -848,11 +933,11 @@ export async function getPipelineChanges(
     // gates still open, single-threading, stall. Built from the deal's own call
     // context so Mark sees the real gaps, not a single generic line.
     const blockers: string[] = [];
-    if (isNoShow) {
+    if (anyNoShow) {
       const who = noShowInvitees.length ? ` (${noShowInvitees.join(", ")} did not join)` : "";
-      blockers.push(`The ${noShowTitle ? `"${noShowTitle}" ` : ""}meeting was a no-show${who}, so this may not be live.`);
+      blockers.push(`The ${noShowTitle ? `"${noShowTitle}" ` : "last "}meeting was a no-show${who}, so this may not be live.`);
     }
-    if (buyerGap) blockers.push(`${buyerLabel.charAt(0).toUpperCase() + buyerLabel.slice(1)} has never been on a call.`);
+    if (buyerGap) blockers.push(buyerBlocker);
     const GAP_BLOCK: Record<string, string> = {
       "Why now": "The business driver (why now) is not established.",
       Budget: "Budget is not confirmed on any call.",
@@ -864,13 +949,84 @@ export async function getPipelineChanges(
     };
     for (const m of missingKey) {
       if (m === "Economic buyer") continue; // covered by the buyer line above
+      // Agreement / exec gaps are premature on early-stage deals; only flag them late.
+      if ((m === "Agreement / signature" || m === "Exec involvement") && !(rank != null && rank >= 3)) continue;
       const p = GAP_BLOCK[m];
       if (p) blockers.push(p);
     }
     if (engaged.length === 1 && gatesConfirmed >= 4) blockers.push(`Single-threaded on ${String(engaged[0].name)}, no other stakeholder engaged.`);
     if (daysInStage != null && daysInStage > 45) blockers.push(`Stalled ${daysInStage} days in ${stageKeyFromName(stageName) ?? "stage"}.`);
+    // The follow-up call agreed on the call was never put on the calendar.
+    if (repOwedMeeting) blockers.push("The follow-up call agreed on the last call is not on the calendar.");
     if (blockers.length === 0 && flags[0]) blockers.push(flags[0].text);
-    const blockersTop = blockers.slice(0, 4);
+    // No captured call means no evidence to blame; don't invent a blocker.
+    const blockersTop = hasContent ? blockers.slice(0, 4) : [];
+
+    // --- rep change + verdict (the dashboard hero) ---
+    // The rep's primary CRM change this window (forecast/stage/close/amount/new).
+    const repChangeEvent =
+      changes.find((c) => c.kind === "forecast" && c.from && c.to) ??
+      changes.find((c) => c.kind === "stage" && c.from && c.to) ??
+      changes.find((c) => c.kind === "close_date" && c.from && c.to) ??
+      changes.find((c) => c.kind === "amount" && c.from && c.to) ??
+      changes.find((c) => c.kind === "new") ??
+      null;
+    const repChange = repChangeEvent ? describeRepChange(repChangeEvent) : null;
+
+    // The critical gaps that would undermine an advance, in Mark's terms.
+    const critical: string[] = [];
+    if (!economicBuyer.engaged) critical.push(`${buyerLabel}, who signs off, has never been on a call`);
+    if (missingKey.includes("Budget")) critical.push("budget is unconfirmed");
+    if (missingKey.includes("Timeline / close date")) critical.push("the close date is not validated by the customer");
+    if (missingKey.includes("Agreement / signature")) critical.push("no agreement or signature yet");
+    const upProgress = whatChangedTop.filter((w) => w.tone === "up");
+
+    let verdict: Verdict;
+    if (repChangeEvent) {
+      const advancing = isAdvancingChange(repChangeEvent);
+      const toLabel = repChange?.to ?? "the change";
+      if (advancing && critical.length > 0) {
+        verdict = { kind: "overstated", text: `${rep} moved this to ${toLabel}, but ${critical.slice(0, 2).join(", ")}. Not as close as that implies.` };
+      } else if (advancing) {
+        verdict = { kind: "confirmed", text: upProgress.length ? `${rep}'s move is backed by the calls: ${upProgress[0].text}.` : "The call evidence supports the move." };
+      } else {
+        // Rep de-risked it themselves (cut forecast / pushed close); the calls agree.
+        verdict = { kind: "confirmed", text: `${rep} lowered this, and the calls agree.` };
+      }
+    } else if (flags.some((f) => f.severity === "high")) {
+      verdict = { kind: "risk", text: blockersTop[0] ?? "A blocker the rep has not flagged." };
+    } else if (upProgress.length) {
+      verdict = { kind: "lags", text: `The calls show progress not yet in the forecast: ${upProgress[0].text}.` };
+    } else {
+      verdict = { kind: "none", text: blockersTop[0] ?? "" };
+    }
+
+    // DealRipe's own forecast category: one conservative notch off the rep's, based
+    // on the evidence. Down when a critical gap undermines a confident forecast, up
+    // when the rep is behind strong evidence, otherwise it agrees with the rep.
+    const repOrder = FCAST_ORDER(category);
+    let drOrder = repOrder;
+    if (repOrder != null) {
+      if (critical.length > 0 && repOrder >= 2) drOrder = repOrder - 1;
+      else if (repOrder <= 1 && gatesConfirmed >= 4 && (economicBuyer.engaged || upProgress.length >= 2)) drOrder = repOrder + 1;
+    }
+    // With no captured call, DealRipe has no basis to disagree with the rep, so
+    // it mirrors the rep's category rather than notching it on absent evidence.
+    const dealRipeCategory = !hasContent ? category : drOrder != null ? categoryFromOrder(drOrder) : category;
+
+    // Plain health status Mark reads at a glance: at risk (DealRipe below the rep,
+    // or a high-severity blocker), stalled (sitting too long or no next step), or
+    // healthy (aligned and progressing).
+    const drBelowRep = repOrder != null && drOrder != null && drOrder < repOrder;
+    const highBlocker = flags.some((f) => f.severity === "high");
+    let dealHealth: DealChangeRecord["dealHealth"];
+    if (!hasContent) dealHealth = "no_data";
+    else if (drBelowRep || highBlocker || verdict.kind === "overstated" || verdict.kind === "risk") dealHealth = "at_risk";
+    else if ((daysInStage != null && daysInStage > 45) || (!hasUpcoming.get(d.id) && !nextStepIsCustomerWait && !agreedNextStep)) dealHealth = "stalled";
+    else dealHealth = "healthy";
+
+    // With no captured call, DealRipe has nothing to say; be honest, not generic.
+    if (!hasContent) verdict = { kind: "none", text: "No tracked calls yet." };
 
     const attention = scoreAttention({ flags, annual, daysToClose, category, isRenewal, hasBackwardChange });
     // "To look at" is a real problem Mark should inspect: a high-severity risk or
@@ -917,11 +1073,16 @@ export async function getPipelineChanges(
       movement,
       whatChanged: whatChangedTop,
       blockers: blockersTop,
+      repChange,
+      verdict,
+      dealRipeCategory,
+      dealHealth,
+      lastUpdatedAt: s?.updatedAt ?? null,
       changes,
       flags,
       attention,
       needsAttention,
-      isNoShow,
+      isNoShow: anyNoShow,
     });
   }
 

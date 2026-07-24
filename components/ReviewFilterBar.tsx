@@ -5,14 +5,15 @@ import { useState } from "react";
 
 import { RANGE_LABELS, type RangeKey } from "@/lib/date-range";
 
-const PRESETS: RangeKey[] = ["24h", "today", "yesterday", "7d", "30d", "this_month", "last_month"];
+const PRESETS: RangeKey[] = ["yesterday", "this_week", "last_week", "this_month", "last_month"];
 
 export function ReviewFilterBar({ reps }: { reps: Array<{ email: string; name: string }> }) {
   const router = useRouter();
   const params = useSearchParams();
-  const range = (params.get("range") ?? "7d") as RangeKey;
+  const range = (params.get("range") ?? "this_week") as RangeKey;
   const netNew = params.get("netnew") === "1";
   const noShow = params.get("noshow") === "1";
+  const tracked = params.get("tracked") === "1";
   const rep = params.get("rep") ?? "";
   const [from, setFrom] = useState(params.get("from") ?? "");
   const [to, setTo] = useState(params.get("to") ?? "");
@@ -55,6 +56,7 @@ export function ReviewFilterBar({ reps }: { reps: Array<{ email: string; name: s
         )}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
+        <button onClick={() => push({ tracked: tracked ? null : "1" })} className={chip(tracked)}>Tracked by DealRipe</button>
         <button onClick={() => push({ netnew: netNew ? null : "1" })} className={chip(netNew)}>Net-new only</button>
         <button onClick={() => push({ noshow: noShow ? null : "1" })} className={chip(noShow)}>No-shows</button>
         {reps.map((r) => (

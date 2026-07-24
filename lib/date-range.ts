@@ -13,6 +13,8 @@ export type RangeKey =
   | "today"
   | "yesterday"
   | "7d"
+  | "this_week"
+  | "last_week"
   | "30d"
   | "this_month"
   | "last_month"
@@ -25,6 +27,8 @@ export const RANGE_LABELS: Record<RangeKey, string> = {
   today: "Today",
   yesterday: "Yesterday",
   "7d": "Last 7 days",
+  this_week: "This week",
+  last_week: "Last week",
   "30d": "Last 30 days",
   this_month: "This month",
   last_month: "Last month",
@@ -54,6 +58,14 @@ function chicagoDayStart(d: Date): Date {
 function chicagoMonthStart(d: Date): Date {
   const w = wallClock(d);
   w.setDate(1);
+  w.setHours(0, 0, 0, 0);
+  return toUtc(w, d);
+}
+// Monday 00:00 Chicago of the week containing d (Kent's week starts Monday).
+function chicagoWeekStart(d: Date): Date {
+  const w = wallClock(d);
+  const daysFromMonday = (w.getDay() + 6) % 7;
+  w.setDate(w.getDate() - daysFromMonday);
   w.setHours(0, 0, 0, 0);
   return toUtc(w, d);
 }
@@ -92,6 +104,13 @@ export function resolveRange(
       const w = wallClock(now);
       w.setFullYear(w.getFullYear() - 1);
       return { sinceIso: toUtc(w, now).toISOString(), untilIso: now.toISOString(), key: k };
+    }
+    case "this_week":
+      return { sinceIso: chicagoWeekStart(now).toISOString(), untilIso: now.toISOString(), key: k };
+    case "last_week": {
+      const thisWeek = chicagoWeekStart(now);
+      const lastWeek = chicagoWeekStart(new Date(thisWeek.getTime() - 12 * 3600000));
+      return { sinceIso: lastWeek.toISOString(), untilIso: thisWeek.toISOString(), key: k };
     }
     case "today":
       return { sinceIso: chicagoDayStart(now).toISOString(), untilIso: now.toISOString(), key: k };

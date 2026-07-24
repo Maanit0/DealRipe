@@ -241,9 +241,26 @@ export function renderPipelineDigestEmail(args: {
   const name = (account: string, dealId: string): string =>
     base ? `<a href="${base}/deals/${dealId}" style="color:${NAVY};text-decoration:none;">${esc(account)}</a>` : esc(account);
 
-  const attention = pc.deals.filter((d) => d.needsAttention).slice(0, 6);
+  const fcat = (c: string | null): number => {
+    if (!c) return -1;
+    const l = c.toLowerCase();
+    return /commit/.test(l) ? 3 : /expect/.test(l) ? 2 : /pipeline/.test(l) ? 1 : /omit/.test(l) ? 0 : -1;
+  };
+  // Mark triages by revenue first: the biggest deals to look at lead.
+  const attention = pc.deals
+    .filter((d) => d.needsAttention)
+    .sort((a, b) => (b.dealSizeAnnual ?? 0) - (a.dealSizeAnnual ?? 0))
+    .slice(0, 6);
   const noShows = pc.deals.filter((d) => d.isNoShow);
   const h = pc.headline;
+
+  // Forecast reality: how much of the reps' Commit + Expect DealRipe rates softer
+  // than the forecast, so Mark sees the risk to his number up front.
+  const committedDeals = pc.deals.filter((d) => !d.archived && fcat(d.forecastCategory) >= 2);
+  const repForecast = committedDeals.reduce((n, d) => n + (d.dealSizeAnnual ?? 0), 0);
+  const softDeals = committedDeals.filter((d) => fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory));
+  const softAmount = softDeals.reduce((n, d) => n + (d.dealSizeAnnual ?? 0), 0);
+  const RED_TINT = "#FEF2F2";
 
   const subject = `DealRipe pipeline digest, week of ${weekLabel}${attention.length ? `. ${attention.length} to look at` : ""}`;
 
@@ -251,8 +268,15 @@ export function renderPipelineDigestEmail(args: {
     `<td valign="top" style="padding:0 8px;"><div style="font-family:${SANS};font-size:11px;color:${MUTED};">${label}</div><div style="font-family:${SANS};font-size:19px;font-weight:700;color:${color};">${esc(value)}</div></td>`;
 
   const mixChips = h.forecastMix
+    .filter((b) => b.annual > 0 && !/uncategor/i.test(b.category))
     .map((b) => `<span style="font-family:${SANS};font-size:11px;color:${MUTED};background:${CARD};border:1px solid ${BORDER};border-radius:20px;padding:3px 9px;margin-right:6px;white-space:nowrap;"><strong style="color:${NAVY};">${esc(b.category)}</strong> ${b.deals} &middot; ${esc(money(b.annual))}</span>`)
     .join("");
+
+  // The forecast-reality line: reps' Commit+Expect and how much DealRipe rates softer.
+  const forecastLine =
+    softAmount > 0
+      ? `<tr><td style="padding:4px 6px 0 6px;"><div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};background:${RED_TINT};border-radius:10px;padding:12px 15px;">Reps have <strong>${esc(money(repForecast))}</strong> in Commit and Expect this week. DealRipe rates <strong style="color:${RED};">${esc(money(softAmount))}</strong> of it softer than the forecast, on ${softDeals.length} deal${softDeals.length === 1 ? "" : "s"} below.</div></td></tr>`
+      : "";
 
   // One readable card per deal: big name, the deal facts, THE risk in a tinted
   // box, the contact and what was agreed, and the rep's next move in its own
@@ -272,6 +296,12 @@ export function renderPipelineDigestEmail(args: {
       const facts = d.inRolldog
         ? `${esc(d.stageName ?? "—")} &middot; ${esc(d.forecastCategory ?? "—")} &middot; closes ${esc(dstr(d.closeDate) || "—")} &middot; ${d.dealSizeAnnual ? esc(money(d.dealSizeAnnual)) + "/yr" : "size —"} &middot; ${esc(d.repName)}`
         : `Not in Rolldog yet &middot; ${esc(d.repName)}`;
+      // The hero when it exists: DealRipe rates the deal below the rep's forecast.
+      // This is the "you're committing this but it's soft" moment Mark cares most about.
+      const diverges = d.inRolldog && fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory);
+      const divergeHtml = diverges
+        ? `<div style="background:${RED_TINT};border-radius:10px;padding:12px 15px;margin-top:14px;"><div style="font-family:${SANS};font-size:15px;line-height:22px;color:${INK};"><strong style="color:${RED};">${esc(d.repName)} has this at ${esc(d.forecastCategory ?? "")}, DealRipe rates it ${esc(d.dealRipeCategory ?? "")}.</strong> ${esc(d.blockers[0] ?? "")}</div></div>`
+        : "";
       const toneColor = (t: "up" | "down" | "neutral") => (t === "up" ? GREEN : t === "down" ? RED : MUTED);
       const whatChangedHtml = d.whatChanged.length
         ? d.whatChanged
@@ -281,7 +311,10 @@ export function renderPipelineDigestEmail(args: {
             )
             .join("")
         : "";
-      const blockersHtml = (d.blockers.length ? d.blockers : ["Worth a look."])
+      // On diverging cards the top blocker is already the divergence reason, so
+      // drop it here to avoid saying it twice.
+      const shownBlockers = diverges && d.blockers.length > 1 ? d.blockers.slice(1) : d.blockers;
+      const blockersHtml = (shownBlockers.length ? shownBlockers : ["Worth a look."])
         .map(
           (b) =>
             `<div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};margin-top:6px;"><span style="color:${dot};font-size:10px;">&#9679;</span>&nbsp; ${esc(b)}</div>`,
@@ -316,6 +349,7 @@ export function renderPipelineDigestEmail(args: {
           <tr><td style="padding:20px 22px;">
             <div style="font-family:${SANS};font-size:17px;font-weight:700;color:${NAVY};line-height:23px;">${name(d.account, d.dealId)}${d.isRenewal ? ` <span style="font-size:11px;color:${MUTED};font-weight:500;">renewal</span>` : ""}</div>
             <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin-top:4px;">${facts}</div>
+            ${divergeHtml}
 
             <div style="${LABEL}margin-top:18px;">Moved this week</div>
             <div style="font-family:${SANS};font-size:15px;line-height:22px;color:${moveColor};font-weight:600;margin-top:4px;">${esc(d.movement.summary)}</div>
@@ -368,6 +402,8 @@ export function renderPipelineDigestEmail(args: {
     ${mixChips ? `<div style="margin-top:12px;">${mixChips}</div>` : ""}
   </td></tr>
 
+  ${forecastLine ? `${spacer}${forecastLine}` : ""}
+
   ${spacer}
 
   <tr><td style="padding:4px 6px 0 6px;">
@@ -389,10 +425,13 @@ export function renderPipelineDigestEmail(args: {
 </table>
 </td></tr></table></body></html>`;
 
-  const t: string[] = [`DealRipe pipeline changes, week of ${weekLabel}`, "", `Pipeline ${money(h.totalPipelineAnnual)} · ${h.dealsChanged} changed · ${h.dealsNeedingAttention} to look at · won/lost ${h.closedWon}/${h.closedLost}`, "", "DEALS TO LOOK AT"];
+  const t: string[] = [`DealRipe pipeline changes, week of ${weekLabel}`, "", `Pipeline ${money(h.totalPipelineAnnual)} · ${h.dealsChanged} changed · ${h.dealsNeedingAttention} to look at · won/lost ${h.closedWon}/${h.closedLost}`];
+  if (softAmount > 0) t.push("", `Reps have ${money(repForecast)} in Commit and Expect. DealRipe rates ${money(softAmount)} of it softer than the forecast, on ${softDeals.length} deal(s).`);
+  t.push("", "DEALS TO LOOK AT");
   if (attention.length)
     attention.forEach((d, i) => {
       t.push(`${i + 1}. ${d.account} (${d.stageName ?? "—"}, ${d.forecastCategory ?? "—"}, closes ${dstr(d.closeDate) || "—"})`);
+      if (fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory)) t.push(`   ${d.repName} has this at ${d.forecastCategory}, DealRipe rates it ${d.dealRipeCategory}: ${d.blockers[0] ?? ""}`);
       t.push(`   Moved this week: ${d.movement.summary}`);
       for (const w of d.whatChanged) t.push(`     - ${w.label ? `${w.label}: ` : ""}${w.text}`);
       t.push(`   Blocking:`);
