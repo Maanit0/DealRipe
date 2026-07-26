@@ -4,6 +4,7 @@ import { ContactsCard } from "./ContactsCard";
 import { CroReadCard } from "./CroReadCard";
 import { DealStateCard } from "./DealStateCard";
 import { DealHistoryCard } from "./DealHistoryCard";
+import { DealTabs } from "./DealTabs";
 import { SentCommsCard } from "./SentCommsCard";
 import { deriveDealState } from "@/lib/deal-state";
 import type { DealHistory } from "@/lib/deal-history";
@@ -102,9 +103,133 @@ export function MagayaDealView({
         ? `Close ${dealState.topGaps[0].label} on the next call.`
         : "Well qualified. Confirm timeline and keep momentum.";
 
+  // Explicit risk callouts for the Signals & Risk tab.
+  const risks: string[] = [];
+  if (forecastMismatch)
+    risks.push(`Rep has this at ${repCategory}, but only ${confirmed} of ${total} gates are confirmed by the calls.`);
+  if (ebRisk) risks.push("The budget owner / economic buyer has never been on a call.");
+  if (attSilent > 0)
+    risks.push(`${attSilent} invited stakeholder${attSilent > 1 ? "s" : ""} did not speak on the last call.`);
+  if (!dealState.nextStepAnswer)
+    risks.push("No firm next step is captured. Lock a dated mutual action plan.");
+
+  const overviewPanel = (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-5 items-stretch">
+        <DealStateCard state={dealState} />
+        <div className="bg-white rounded-xl2 shadow-card border-2 border-accent/40 px-5 py-4 flex flex-col">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-accent">Do next</div>
+          <div className="text-[14px] text-ink leading-relaxed mt-1.5 flex-1">{nextAction}</div>
+          <Link
+            href={`/deals/${deal.id}/prepare`}
+            className="mt-3 block w-full text-center px-4 py-2.5 rounded-xl2 bg-ink text-white text-[13px] font-semibold hover:bg-ink/90 transition"
+          >
+            Prepare next call
+          </Link>
+        </div>
+      </div>
+
+      <CroReadCard dealId={deal.id} initial={croRead ?? null} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">Upcoming call</div>
+          {upcoming ? (
+            <>
+              <div className="text-[15px] font-semibold text-ink mt-1.5">{upcoming.when}</div>
+              <div className={`text-[12px] mt-1 ${upcomingCall?.briefingSentAt ? "text-accent font-medium" : "text-muted"}`}>
+                {upcomingCall?.briefingSentAt ? "✓ " : ""}
+                {upcoming.briefing}
+              </div>
+            </>
+          ) : (
+            <div className="text-[13px] text-muted mt-1.5">
+              No upcoming meeting synced yet. It appears once the rep schedules a call with this customer.
+            </div>
+          )}
+        </div>
+        <ContactsCard contacts={deal.contacts} />
+      </div>
+    </div>
+  );
+
+  const signalsPanel = (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <SignalChip
+          label="Forecast"
+          value={forecastMismatch ? `Rep ${repCategory}, evidence lags` : `Rep ${repCategory}`}
+          tone={forecastMismatch ? "danger" : "muted"}
+        />
+        <SignalChip
+          label="Attendance"
+          value={latestAtt ? `${attSpoke} took part${attSilent > 0 ? `, ${attSilent} no-show` : ""}` : "No call captured yet"}
+          tone={attSilent > 0 ? "danger" : latestAtt ? "accent" : "muted"}
+        />
+        <SignalChip
+          label="Budget owner"
+          value={ebRisk ? "Never engaged" : "No gap flagged"}
+          tone={ebRisk ? "danger" : "muted"}
+        />
+      </div>
+
+      <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+        <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-2">Open risks</div>
+        {risks.length === 0 ? (
+          <div className="text-[13px] text-muted">No open risks flagged. The calls back the current forecast.</div>
+        ) : (
+          <ul className="space-y-2">
+            {risks.map((r, i) => (
+              <li key={i} className="flex items-start gap-2 text-[13px] text-ink">
+                <span className="mt-[3px] h-1.5 w-1.5 rounded-full bg-danger shrink-0" />
+                <span>{r}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {attendance && attendance.length > 0 && <AttendanceCard history={attendance} />}
+    </div>
+  );
+
+  const progressPanel = (
+    <div className="space-y-5">
+      <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-3.5 flex items-center justify-between">
+        <span className="text-[13px] text-ink">
+          <span className="font-semibold">{confirmed}</span> of {total} qualification gates confirmed from calls
+        </span>
+        <span className="text-[12px] text-muted">
+          Furthest stage: {STAGE_LABELS[dealState.reachedStageKey ?? deal.stageKey] ?? dealState.reachedStageKey ?? deal.stageKey}
+        </span>
+      </div>
+      <MagayaOpportunityControl
+        framework={framework}
+        extraction={deal.extraction}
+        currentStageKey={deal.stageKey}
+        dealId={deal.id}
+        capturedByField={history?.perGate ?? {}}
+      />
+    </div>
+  );
+
+  const changeLogPanel = (
+    <div className="space-y-5">
+      {history && history.timeline.length > 0 ? (
+        <DealHistoryCard dealId={deal.id} timeline={history.timeline} />
+      ) : (
+        <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">
+          No captured calls have moved this deal yet.
+        </div>
+      )}
+      <TeamsCallsCard dealId={deal.id} calls={deal.calls} />
+      <SentCommsCard messages={sentMessages} />
+    </div>
+  );
+
   return (
     <div className="space-y-5">
-      {/* Header */}
+      {/* Header: the rep, the money, and what DealRipe is saying. */}
       <div className="bg-white rounded-xl2 shadow-card border border-line px-6 py-5">
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div>
@@ -121,9 +246,7 @@ export function MagayaDealView({
             </p>
           </div>
           <div className="text-right">
-            <div className="text-[22px] font-semibold text-ink">
-              ${deal.arr.toLocaleString()}
-            </div>
+            <div className="text-[22px] font-semibold text-ink">${deal.arr.toLocaleString()}</div>
             <div className="text-[12px] text-muted mt-0.5">
               {STAGE_LABELS[deal.stageKey] ?? deal.stageKey}
               {deal.daysInStage ? ` · ${deal.daysInStage} days in stage` : ""}
@@ -132,27 +255,21 @@ export function MagayaDealView({
         </div>
         <div className="mt-4 pt-4 border-t border-line grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-              Rep category
-            </div>
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">Rep category</div>
             <div className="text-[13px] text-ink mt-1">
               {repCategory}
               {deal.repForecastCloseDate ? ` · close ${deal.repForecastCloseDate}` : ""}
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-              Rolldog score
-            </div>
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">Rolldog score</div>
             <div className="text-[13px] text-ink mt-1">
               {rolldogSummary?.score ?? "—"}
               {rolldogSummary?.qRank ? ` · rank ${rolldogSummary.qRank}` : ""}
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-              DealRipe read
-            </div>
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">DealRipe read</div>
             <div className="text-[13px] text-ink mt-1">
               {confirmed} of {total} gates confirmed
             </div>
@@ -160,110 +277,21 @@ export function MagayaDealView({
         </div>
       </div>
 
-      {/* Action band: where it stands, and the single next action. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-5 items-stretch">
-        <DealStateCard state={dealState} />
-        <div className="bg-white rounded-xl2 shadow-card border-2 border-accent/40 px-5 py-4 flex flex-col">
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-accent">
-            Do next
-          </div>
-          <div className="text-[14px] text-ink leading-relaxed mt-1.5 flex-1">{nextAction}</div>
-          <Link
-            href={`/deals/${deal.id}/prepare`}
-            className="mt-3 block w-full text-center px-4 py-2.5 rounded-xl2 bg-ink text-white text-[13px] font-semibold hover:bg-ink/90 transition"
-          >
-            Prepare next call
-          </Link>
-        </div>
-      </div>
-
-      {/* Compact signals. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <SignalChip
-          label="Forecast"
-          value={forecastMismatch ? `Rep ${repCategory}, evidence lags` : `Rep ${repCategory}`}
-          tone={forecastMismatch ? "danger" : "muted"}
-        />
-        <SignalChip
-          label="Attendance"
-          value={
-            latestAtt
-              ? `${attSpoke} took part${attSilent > 0 ? `, ${attSilent} no-show` : ""}`
-              : "No call captured yet"
-          }
-          tone={attSilent > 0 ? "danger" : latestAtt ? "accent" : "muted"}
-        />
-        <SignalChip
-          label="Budget owner"
-          value={ebRisk ? "Never engaged" : "No gap flagged"}
-          tone={ebRisk ? "danger" : "muted"}
-        />
-      </div>
-
-      <CroReadCard dealId={deal.id} initial={croRead ?? null} />
-
-      {/* Supporting detail. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        <div className="space-y-5">
-          <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-              Upcoming call
-            </div>
-            {upcoming ? (
-              <>
-                <div className="text-[15px] font-semibold text-ink mt-1.5">{upcoming.when}</div>
-                <div
-                  className={`text-[12px] mt-1 ${
-                    upcomingCall?.briefingSentAt ? "text-accent font-medium" : "text-muted"
-                  }`}
-                >
-                  {upcomingCall?.briefingSentAt ? "✓ " : ""}
-                  {upcoming.briefing}
-                </div>
-              </>
-            ) : (
-              <div className="text-[13px] text-muted mt-1.5">
-                No upcoming meeting synced yet. It appears once the rep schedules a call
-                with this customer.
-              </div>
-            )}
-          </div>
-          <ContactsCard contacts={deal.contacts} />
-        </div>
-        <div className="space-y-5">
-          {attendance && attendance.length > 0 && <AttendanceCard history={attendance} />}
-          <TeamsCallsCard dealId={deal.id} calls={deal.calls} />
-        </div>
-      </div>
-
-      {/* Full qualification detail, collapsed by default (reference, not the lead). */}
-      <details className="group bg-white rounded-xl2 shadow-card border border-line">
-        <summary className="cursor-pointer select-none list-none flex items-center justify-between gap-4 px-6 py-4">
-          <span className="text-[15px] font-semibold text-ink">
-            Full qualification detail{" "}
-            <span className="text-[12px] text-muted font-normal">
-              · {total} gates, extracted from calls
-            </span>
-          </span>
-          <span className="text-[12px] text-muted group-open:hidden">Show ›</span>
-          <span className="text-[12px] text-muted hidden group-open:inline">Hide ⌄</span>
-        </summary>
-        <div className="px-4 pb-4">
-          <MagayaOpportunityControl
-            framework={framework}
-            extraction={deal.extraction}
-            currentStageKey={deal.stageKey}
-            dealId={deal.id}
-            capturedByField={history?.perGate ?? {}}
-          />
-        </div>
-      </details>
-
-      {history && history.timeline.length > 0 && (
-        <DealHistoryCard dealId={deal.id} timeline={history.timeline} />
-      )}
-
-      <SentCommsCard messages={sentMessages} />
+      {/* Tabbed detail. */}
+      <DealTabs
+        tabs={[
+          { key: "overview", label: "Overview" },
+          { key: "signals", label: "Signals & Risk" },
+          { key: "progress", label: "Progress" },
+          { key: "changelog", label: "Change Log" },
+        ]}
+        panels={{
+          overview: overviewPanel,
+          signals: signalsPanel,
+          progress: progressPanel,
+          changelog: changeLogPanel,
+        }}
+      />
     </div>
   );
 }

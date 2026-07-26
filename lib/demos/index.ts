@@ -3,6 +3,7 @@ import { TOPSORT } from "./topsort";
 import { AWARE } from "./aware";
 import { COBALT } from "./cobalt";
 import { WESTCHESTER } from "./westchester";
+import { KEELSON } from "./keelson";
 
 export * from "./types";
 
@@ -22,6 +23,7 @@ export const DEMOS: Record<string, ForecastTenant> = {
   aware: AWARE,
   cobalt: COBALT,
   westchester: WESTCHESTER,
+  keelson: KEELSON,
 };
 
 export const DEMO_LIST: ForecastTenant[] = Object.values(DEMOS);

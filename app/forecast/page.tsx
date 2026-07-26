@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import {
   TENANT_LIST,
   getTenant,
+  type ActionExecution,
   type ForecastTenant,
   type Leverage,
   type Movement,
@@ -16,7 +17,7 @@ import {
 // ============================================================
 export default function ForecastRoomPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-bg" />}>
+    <Suspense fallback={<div className="min-h-screen bg-bg font-sans text-ink antialiased" />}>
       <ForecastRoomInner />
     </Suspense>
   );
@@ -27,6 +28,8 @@ function ForecastRoomInner() {
   const params = useSearchParams();
   const tenant = getTenant(params.get("tenant"));
   const leverageRef = useRef<HTMLDivElement | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   function scrollToLeverage() {
     leverageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -34,6 +37,10 @@ function ForecastRoomInner() {
 
   function startReview() {
     router.push(`/forecast/review?tenant=${tenant.slug}`);
+  }
+
+  if (!mounted) {
+    return <div className="min-h-screen bg-bg font-sans text-ink antialiased" />;
   }
 
   return (
@@ -466,6 +473,9 @@ function LeverageCard({
           <p className="text-[13.5px] text-ink leading-relaxed">
             {leverage.action}
           </p>
+          {leverage.execution && (
+            <ActionExecutor execution={leverage.execution} />
+          )}
         </div>
 
         <div className="border-t md:border-t-0 md:border-l border-line bg-bg p-5 space-y-3">
@@ -494,6 +504,333 @@ function LeverageCard({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Action executor: DealRipe drafts an email, re-books a meeting,
+// or opens a task; the rep reviews and sends in one click.
+// ============================================================
+function ActionExecutor({ execution }: { execution: ActionExecution }) {
+  const [open, setOpen] = useState(false);
+  const [done, setDone] = useState(false);
+  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+
+  const doneLabel =
+    execution.kind === "email"
+      ? "Sent by DealRipe"
+      : execution.kind === "meeting"
+        ? "Invite sent by DealRipe"
+        : execution.kind === "loom"
+          ? "Loom drafted by DealRipe"
+          : "Added by DealRipe";
+  const ctaLabel =
+    execution.kind === "email"
+      ? "Send email"
+      : execution.kind === "meeting"
+        ? "Send invite"
+        : execution.kind === "loom"
+          ? "Record with Loom"
+          : "Add to my tasks";
+  const kindTitle =
+    execution.kind === "email"
+      ? "Follow-up email"
+      : execution.kind === "meeting"
+        ? "Re-book meeting"
+        : execution.kind === "loom"
+          ? "Tailored Loom"
+          : "New task";
+  const canComplete = execution.kind !== "meeting" || !!selectedTime;
+
+  function complete() {
+    setDone(true);
+    setOpen(false);
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => !done && setOpen(true)}
+        className={`mt-3 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-semibold transition ${
+          done
+            ? "bg-accent/10 text-accent cursor-default"
+            : "bg-ink text-white hover:bg-ink/90"
+        }`}
+      >
+        {done ? (
+          <>
+            <span aria-hidden>✓</span> {doneLabel}
+          </>
+        ) : (
+          execution.buttonLabel
+        )}
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="bg-white rounded-xl2 shadow-cardHover border border-line w-full max-w-[560px] max-h-[86vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-bold text-accent">
+                  Drafted by DealRipe
+                </div>
+                <div className="text-[16px] font-semibold text-ink mt-0.5">
+                  {kindTitle}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-muted hover:text-ink text-[20px] leading-none -mt-0.5"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              {execution.kind === "email" && (
+                <div className="space-y-3">
+                  <ExecField label="To" value={execution.to} />
+                  <ExecField label="Subject" value={execution.subject} />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1">
+                      Body
+                    </div>
+                    <div className="text-[13px] text-ink leading-relaxed whitespace-pre-wrap bg-bg rounded-lg border border-line p-3.5">
+                      {execution.body}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {execution.kind === "meeting" && (
+                <div className="space-y-3">
+                  <ExecField label="Meeting" value={execution.title} />
+                  <ExecField label="With" value={execution.withWhom} />
+                  <MeetingCalendar
+                    calendar={execution.calendar}
+                    selectedDay={selectedDay}
+                    selectedTime={selectedTime}
+                    onPickDay={(d) => {
+                      setSelectedDay(d);
+                      setSelectedTime(null);
+                    }}
+                    onPickTime={setSelectedTime}
+                  />
+                  <p className="text-[12px] text-muted leading-snug">
+                    {execution.note}
+                  </p>
+                </div>
+              )}
+
+              {execution.kind === "task" && (
+                <div className="space-y-3">
+                  <ExecField label="Task" value={execution.title} />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1">
+                      Steps
+                    </div>
+                    <div className="text-[13px] text-ink leading-relaxed whitespace-pre-wrap bg-bg rounded-lg border border-line p-3.5">
+                      {execution.detail}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {execution.kind === "loom" && (
+                <div className="space-y-3">
+                  <div className="text-[12px] text-muted leading-snug bg-accent/5 border border-accent/20 rounded-lg p-3">
+                    {execution.reason}
+                  </div>
+                  <ExecField label="Video" value={execution.videoTitle} />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1.5">
+                      What to cover
+                    </div>
+                    <ol className="space-y-1.5">
+                      {execution.outline.map((o, i) => (
+                        <li
+                          key={i}
+                          className="text-[13px] text-ink leading-snug flex gap-2"
+                        >
+                          <span className="text-accent font-bold shrink-0">
+                            {i + 1}.
+                          </span>
+                          <span>{o}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1">
+                      Send it with
+                    </div>
+                    <div className="rounded-lg border border-line bg-bg p-3.5 space-y-1.5">
+                      <div className="text-[12px] text-ink">
+                        <span className="text-muted">To: </span>
+                        {execution.email.to}
+                      </div>
+                      <div className="text-[12px] text-ink">
+                        <span className="text-muted">Subject: </span>
+                        {execution.email.subject}
+                      </div>
+                      <div className="text-[12.5px] text-ink leading-relaxed whitespace-pre-wrap pt-2 border-t border-line">
+                        {execution.email.body}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-4 border-t border-line flex items-center justify-between gap-3">
+              <span className="text-[11.5px] text-muted">
+                DealRipe drafted this. Review, then send.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="text-[13px] font-semibold text-muted hover:text-ink transition px-2"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={complete}
+                  disabled={!canComplete}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-accent text-white text-[13px] font-semibold hover:bg-accent/90 transition disabled:opacity-40"
+                >
+                  {ctaLabel}
+                  <span aria-hidden>→</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function ExecField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1">
+        {label}
+      </div>
+      <div className="text-[13px] text-ink font-medium leading-snug">{value}</div>
+    </div>
+  );
+}
+
+function MeetingCalendar({
+  calendar,
+  selectedDay,
+  selectedTime,
+  onPickDay,
+  onPickTime,
+}: {
+  calendar: Extract<ActionExecution, { kind: "meeting" }>["calendar"];
+  selectedDay: number | null;
+  selectedTime: string | null;
+  onPickDay: (day: number) => void;
+  onPickTime: (label: string) => void;
+}) {
+  const firstWeekday = new Date(calendar.year, calendar.monthIndex, 1).getDay();
+  const daysInMonth = new Date(
+    calendar.year,
+    calendar.monthIndex + 1,
+    0,
+  ).getDate();
+  const availByDay = new Map(calendar.days.map((d) => [d.day, d.slots]));
+  const monthName = calendar.monthLabel.split(" ")[0];
+  const weekdayShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const slots = selectedDay ? (availByDay.get(selectedDay) ?? []) : [];
+  const dayLabel = (day: number) =>
+    `${weekdayShort[new Date(calendar.year, calendar.monthIndex, day).getDay()]}, ${monthName} ${day}`;
+
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1.5">
+        Pick a time
+      </div>
+      <div className="rounded-lg border border-line p-3">
+        <div className="text-[13px] font-semibold text-ink mb-2">
+          {calendar.monthLabel}
+        </div>
+        <div className="grid grid-cols-7 gap-1 text-center">
+          {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+            <div key={i} className="text-[10px] font-bold text-muted py-1">
+              {d}
+            </div>
+          ))}
+          {cells.map((c, i) =>
+            c === null ? (
+              <div key={i} />
+            ) : (
+              <button
+                key={i}
+                type="button"
+                disabled={!availByDay.has(c)}
+                onClick={() => onPickDay(c)}
+                className={`h-9 rounded-md text-[12.5px] font-semibold transition ${
+                  selectedDay === c
+                    ? "bg-ink text-white"
+                    : availByDay.has(c)
+                      ? "text-ink border border-accent/40 hover:border-ink"
+                      : "text-muted/30 cursor-default"
+                }`}
+              >
+                {c}
+              </button>
+            ),
+          )}
+        </div>
+      </div>
+
+      {selectedDay && (
+        <div className="mt-3">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-1.5">
+            {dayLabel(selectedDay)}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {slots.map((slot) => {
+              const label = `${dayLabel(selectedDay)} · ${slot}`;
+              return (
+                <button
+                  key={slot}
+                  type="button"
+                  onClick={() => onPickTime(label)}
+                  className={`px-3 py-2 rounded-lg text-[12.5px] font-semibold border transition ${
+                    selectedTime === label
+                      ? "border-ink bg-ink text-white"
+                      : "border-line text-ink hover:border-ink/40"
+                  }`}
+                >
+                  {slot}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
