@@ -1,0 +1,1757 @@
+Confirmed - BI Demo Customs - IFF & Magaya - Wednesday, July 22nd at 130
+pm EST 1230 pm CST-20260722_123440-Meeting Recording
+
+July 22, 2026, 5:34PM
+
+45m 26s
+
+[]
+Alexandra Suntrup started transcription
+
+[]
+Alejandro Gallego 0:03
+Yeah, I mean, you desire to be the responsible of inside by where we are
+going to be presenting today, right? So, first of all, I would like to
+start by knowing if you have previous experience when it comes to BI
+solutions, or if you have, if you have within the company any reporting
+tool.
+That can give me some information to just to see at which level I should
+go just to the repeat the basic things if you guys are taking are
+covering in in some way today.
+
+[]
+Katrin Halpaus 0:40
+I have no knowledge.
+
+[]
+Winnie Yim 0:40
+Um, Alejandro, this is Winnie. I have a little bit of experience with
+um...
+with Power BI, but I think maybe, I don't want to speak for everybody
+else. Does anybody else have experience with it? We might want to just
+start with basics.
+
+[]
+Trimika Fernandez 0:53
+No.
+We want them to start the basics. You are the most experienced person.
+
+[]
+Charman Wood 0:55
+No.
+
+[]
+Alejandro Gallego 0:57
+Okay.
+
+[]
+Winnie Yim 0:59
+Okay.
+
+[]
+Alejandro Gallego 0:59
+All right, Roger that. So, okay, let's do it from the beginning then,
+all right? And so I have prepared this small presentation. Are you
+seeing my screen?
+Okay, so the idea is to present the business intelligence solution that
+we have built for both modules, supply chain and custom compliance
+analytic, and how it works basically. So I'm going to be covering how
+the solution works, which is the main part that it covers and what you
+guys can do.
+
+[]
+Winnie Yim 1:16
+Yes.
+
+[]
+Alejandro Gallego 1:35
+with this solution Power BI. So that means that I'll be starting with
+the basis, the very, very basic and the very, very highlight level on a
+little bit on the data engineering solution, which is the pillar of this
+solution. Then I'm going to be covering the out-of-the-box dashboards
+that we have within the solution, how we
+Can use these solutions in order to do for the company self-service
+connector with any other BI tool that you may have or reporting tool,
+and how you can customize the data models that we do have over here,
+right? So, yeah, so first of all, the vision that we have when we build
+this solution is in order...
+Well, the plan was that we have to build one government pipeline, one
+government, let's say, data in your pipeline, where we can have later on
+any isolated tenants. Tenants means a networks ID or filer codes,
+multiple of them being shown in the same group.
+right? Even though that they are isolated databases, it doesn't matter.
+So we are. So then we prepared the solution in order to cover the main
+modules of supply chain, but also the custom compliance information. So
+where we could have information from custom and brokers with fiber
+quotes, right? So.
+Then, and...
+Yes, any question, Winnie?
+
+[]
+Winnie Yim 3:04
+No, sorry. I don't.
+
+[]
+Alejandro Gallego 3:06
+All right, so then there is a seven-stage journey, so where we basically
+transform the information from raw events that we that we consume from
+the sources onto the reporting layer, right? So, the first thing is we
+map the data sources, which is basically...
+Magaya app, say, or supply chain for the data warehouse, so we take it
+as a data sources and we perform 22 main techniques when it comes to
+ETR, and then we transport that data in order to apply a star schema, so
+we put it in a data lake that we have a big one.
+on Magaya side, that data is based on where we model the database and we
+get some sort of schema to that data. Then we model the data in a way
+that it can be consumed by a BI tools, BI tools, same BI tools, same
+Power BI, Tableau, Looker or...
+any other, even through exact. Then we create tenants. Tenants means a
+specific deployments for a specific customer, isolated one. So we ensure
+security and performance within those tenants database and with the
+reporting of out-of-the-box. So we basically unified information from
+different
+In networks ID or from different filer code from different brokers, we
+standardize this information, we deliver a information, we deliver
+insight through dashboards. Basically, we there is a step that allow us
+to do this, which is the data model or where we.
+Put, yeah, let's say the 50% of the effort, so it's in order to make
+this reusable, so that we ensure that you can use the data model in
+order to create a new report and not just use the out-of-the-box 7 dash
+or five dash or that we provide to you guys, right?
+Then, on the on the supply chain side, so we cover mainly all volume and
+the working, so same shipment, so where we can invest when we where we
+invest we time building reports where we show shipments and by month.
+by date, by week, containers, use by port division, export, and whatever
+that it happened within a shipment. And the previous model I have
+mentioned before, we can also for the commercial margin, cover and
+service, and so on. Then we get dashboard like this one, which is the
+one this is an example on.
+On Tableau site, and this is a these are the seven out-of-the-box
+dashboard.
+that we provide within the solution. So we provide a story about
+carriers, bookings, customer information, the activity within the
+assistant, a financial story, ground carrier, ocean carrier, and then
+the central store which is about shipment information. All right.
+Any questions? All good?
+All right, then this is another example of information being shown back
+in another reporting system, which is Power BI, where we basically here
+in the case of supply chain, we showcase the distribution of shipment by
+types, where we can see your shipment ground and ocean.
+the distribution of the containers and the cargo that is moving, the
+representation of a spatial view, and the main training that the
+shipments are following along with the branches there of the different
+branches. This company has multiple branches and the carriers that are
+being used there.
+All right, then jumping a little bit to customs and within the custom
+compliance solution, so we ingest this is a little bit more complex than
+the supply chain one, because this information is we receive an
+unstructured information saying, so we receive files and we transform
+those files, let's say the entries that you do within a system, we
+transform those files into information that
+can be digested by BI tools mainly. So the hierarchy of the information
+there it is, so we receive all entries files within the entry, we have
+the lines, all the lines within an entry. Within a line we have their
+tariff, right?
+And within the target, we have all the year records that we have within
+a unnamed, right? So we can do pre-join.
+To the PGA record, so for sure we can provide a high level overview of
+that process without going without going through every single step,
+right? What that means, so that basically, so we can, since we have a
+one government model.
+we can create mini reports from those models. So say, so we have
+entries, entries line, tariff, tariff PGAs, and we can do duties by
+importer, PGA exposure, what's lead, executive summaries about those
+ones. And in a pragmatic way, that what that means, so that we go from
+this format, which is a file that we receive from
+from the system to these formats. So which is a format that we can
+understand, which is the main plan. So from where we are receiving
+those, which are the importers that we are using, which are the goods
+that we are moving from one side, sorry, that we are importing or
+supporting, which are all the duties.
+the MPF, HMF, and all the invoice values along with our quantities. All
+right. So then this is the entries level, which is the heather of those
+invoices. Then here we have a combination between the heather through
+the lines. And this is an example of how we can
+combined together due to that technique that I have mentioned before
+about one global data model, and from that one we can create multiple
+reports. So right, so as you could see here in this sample report that I
+just get it, so we have the entry date, imported account, the name,
+which is anatomy data here, which is the entry number, which is the
+invoice for that.
+entry, and then which is import date. In this case, this entry wasn't
+released, so we don't have a release date, which is the total per each
+line of that invoice that we have 10 lines over here, which is the
+consignee that we're using and the part description. The reports
+continue here from the with the part number where we have all the others
+elements that I was mentioning before.
+report, right? So we have the tariff or the quantities within the
+tariff, the duties, the MPF and HMF, which in this case is the new,
+which was the bill quantity, the units and all the PGAs information that
+we have within this report. So this is showcasing that we can go from
+the entry to the PGA, which are different.
+Yeah.
+Hierarchy level within an entry on the system.
+Right.
+Any questions until here?
+So if not, I'm going to jump to Power BI environment where I can
+showcase a little bit how this work on, how this work on, let's say, on
+a practical way. All right. So this is the entry information that I was
+showing before. So
+From here, so we can go from the we can go from the entry level until
+the records, and that's translate on the movements within the entries,
+the amount of entries that we are receiving, which are the importers
+that we are using, until the scale level of details that we do have over
+here on Power BI.
+Then on Power BI.
+Then, why important Power BI? Why? Because it's user-oriented, so it's
+pretty easy to create new reports on top of the data model that I have
+mentioned before, and it's it's Power BI, the main their main philosophy
+when they create a Power BI on Microsoft on top of Power BI.
+let's say, give a tool to the final user. So you can, using just Power
+BI features, can explore data using the data set and explore that data
+using just Excel file. You can subscribe to a report, so where you can
+receive, let's say, this report, our custom report.
+on depending on the granularity of the information that you set up over
+here on the time of the day of the week of the month. So let's say that
+you wanted to receive the report with all information combined it
+together on weekly basis, you for a certain importer, so we can do so.
+We can also set up
+alerts, let's say that we are receiving, we are receiving certain amount
+of increase from a certain importer, so we can receive an alert
+regarding it, we can monitor the information.
+Over there, for sure, being having a...
+Go back here. So having a semantic model hosted in Power BI, so it
+allows us to, let's say, how to create a report. So using Copilot in
+order to make questions about the data set and report.
+and give replies from the AI agents and the multiple features that Power
+BI give to us, right?
+
+[]
+Winnie Yim 13:17
+I guess I have a question here. So are you providing us with this view
+within Magaya where like the JSON file with all of our data is already
+preloaded and we're just creating the report?
+
+[]
+Alejandro Gallego 13:17
+So, he's...
+Yeah.
+Yes, I'm, but not within Malaya. I'm providing news within your Power BI
+and deployment and say so, and that's a...
+Let me go back in here. So what I create for you, it is the logical
+model connected to physical one, which is basically these, let's say the
+entries one, these semantic model where you can reuse in order to create
+a new report, but it's not within the super, it's not within Magalla,
+it's not within the system.
+
+[]
+Winnie Yim 14:11
+Oh.
+
+[]
+Alejandro Gallego 14:12
+Did that reply your question?
+
+[]
+Winnie Yim 14:16
+Yes.
+
+[]
+Trimika Fernandez 14:18
+So where do we see it? Is it a different application that we pay for?
+
+[]
+Alejandro Gallego 14:24
+Right.
+
+[]
+Eduardo Bencomo 14:24
+No.
+
+[]
+Winnie Yim 14:24
+It's A Microsoft application.
+
+[]
+Eduardo Bencomo 14:26
+Is the Microsoft application you guys use to you use Power BI today,
+Winnie?
+
+[]
+Trimika Fernandez 14:27
+Okay.
+
+[]
+Winnie Yim 14:31
+I don't. I have used it. I use Python to make, you know, programs and
+tools that the CHP team can use for stuff. So I don't know if you guys
+will want to use Power BI. I mean, you guys tell me, Tamika, you know,
+Catrin, like, is this something you want to use or is this, I mean,
+
+[]
+Eduardo Bencomo 14:31
+Or not.
+The.
+
+[]
+Winnie Yim 14:52
+'Cause I can do, I can do all this for you as well. I know you guys
+would rather like...
+
+[]
+Trimika Fernandez 14:52
+It up.
+
+[]
+Winnie Yim 14:57
+Sometimes, get things yourself.
+Um, so I can't, because this is really complicated, you know, the...
+
+[]
+Trimika Fernandez 15:02
+But.
+That was my thing. Okay, I'm like, this is a, there's a lot of layers to
+this. And I was going to interject and say, quite frankly, I would have
+to talk to Winnie after this call to make sure I really digested
+everything that was just reviewed and the usefulness of it for us
+outside of what Winnie's able to provide us with the tools that she
+currently has.
+
+[]
+Winnie Yim 15:06
+Haha.
+Ohh.
+
+[]
+Alejandro Gallego 15:17
+Yeah.
+
+[]
+Winnie Yim 15:20
+Oh.
+Right, so I think...
+
+[]
+Eduardo Bencomo 15:27
+Yeah, I...
+
+[]
+Alexandra Suntrup 15:27
+Well, and it could be something also that, you know, we can provide you.
+And then if you think it is something that you might want to use,
+
+[]
+Winnie Yim 15:29
+Mmh.
+
+[]
+Eduardo Bencomo 15:43
+And this is something more designed for Winnie, you typically probably
+you are the one work preparing all the dashboards and whatever data set.
+
+[]
+Winnie Yim 15:43
+Yes, so.
+Well, we don't use dashboards right now like this, right? So like a lot
+of this is visualization that I don't know if, if you guys.
+
+[]
+Trimika Fernandez 15:56
+Realization.
+We would like, I would, I do want to interject that waiting. At one
+point, we want to get to the point where we have been to.
+
+[]
+Eduardo Bencomo 16:00
+Exactly, but this is the way, this is the way to get to this, but we
+will provide you the all this out of the sorry, sorry, I'm sorry, yeah,
+I'm sorry, I'm fine.
+
+[]
+Winnie Yim 16:05
+Wait, wait, wait, sorry, I couldn't hear Tamika. What, what, Tamika?
+
+[]
+Trimika Fernandez 16:08
+At one point, CHB would like to get to the point where we have a
+dashboard. We're not there yet, but we would like a dashboard for that
+ease of visualization of all different aspects of an entry. Those really
+help CHB teams. So I do, I don't know if that's something that can be
+done in another platform or not, but we eventually do want to get there.
+
+[]
+Winnie Yim 16:16
+Yeah.
+Yeah.
+Yeah, so...
+Yeah, so I, I don't want, I don't want, I think this might be a little
+too technical. So I think that maybe we could focus on, like, for
+example, if Tamika or Catherine or Shar wanted a basic entry report, you
+know, with the basic information that you would normally want to see,
+
+[]
+Trimika Fernandez 16:38
+Uh-huh.
+
+[]
+Winnie Yim 16:53
+Is that something that's available as a out-of-the-box report from
+Magaia without?
+
+[]
+Alexandra Suntrup 16:57
+Yeah, yeah, no, absolutely. Yeah, on the custom side, yeah.
+
+[]
+Alejandro Gallego 16:58
+Yes.
+
+[]
+Trimika Fernandez 16:59
+Yes.
+
+[]
+Winnie Yim 17:01
+Okay, I think, I hate to wish your time, Alejandro. Like, I mean, I,
+like, I totally get what you're saying, all these things, and like, I
+don't use Power BI that much. I have used it, but I have used Tableau.
+And like, if somehow we, if you would, if a JSON file is available to me
+from somewhere, you know, I can make.
+
+[]
+Trimika Fernandez 17:06
+And.
+
+[]
+Alejandro Gallego 17:07
+Yeah.
+Yeah.
+Yeah.
+
+[]
+Winnie Yim 17:20
+my own things also. So I think maybe if maybe Alexandra, if you can show
+everybody else how to get a good basic report and then if they needed
+special stuff, then they would come to me and then I would be like,
+okay, I can get you that, that kind of thing.
+
+[]
+Alexandra Suntrup 17:27
+Yeah.
+Yeah, we could look.
+
+[]
+Alejandro Gallego 17:30
+Yeah.
+
+[]
+Trimika Fernandez 17:31
+Yes, thank you.
+
+[]
+Alexandra Suntrup 17:33
+Yeah.
+Yeah, yeah, no, we can certainly do that. Again, this is, you know, just
+like an additional tool that maybe not at the onset that you necessarily
+need, but if there are more ad hoc or specialized reports, this would be
+
+[]
+Trimika Fernandez 17:36
+Thank you.
+
+[]
+Winnie Yim 17:47
+Ohh.
+
+[]
+Alexandra Suntrup 17:54
+I guess the tool that you could utilize.
+
+[]
+Winnie Yim 17:58
+Yes, that's perfect for me. Yeah, that's perfect for me to know, but
+like, I think it, yeah, I think it would be more helpful for the rest of
+the team if you would show how they can get it from the team.
+
+[]
+Alejandro Gallego 17:59
+Yes.
+
+[]
+Alexandra Suntrup 18:00
+Yeah, OK.
+Sure, yeah, no, I can absolutely. I mean, we can certainly give your
+team access to this, you know, give a user to access or give you access
+to this part of the system so that you have it. And then...
+
+[]
+Trimika Fernandez 18:08
+Thanks.
+
+[]
+Winnie Yim 18:14
+Mhm.
+Aha.
+Yes.
+
+[]
+Alexandra Suntrup 18:25
+you know, down the line, as you know, you get more acclimated to our can
+reports and the reports that you can generate. Again, if you find that
+there's certain data points or reporting that you need or your customers
+need that we don't have in our, you know,
+
+[]
+Winnie Yim 18:28
+Mm.
+Mhm.
+Oh!
+Mmh.
+
+[]
+Alexandra Suntrup 18:41
+in our reporting modules, then this is where we might, you know, where
+we could go to get it.
+
+[]
+Winnie Yim 18:43
+Mhm.
+
+[]
+Alejandro Gallego 18:46
+Yeah.
+
+[]
+Winnie Yim 18:48
+Okay, yeah, that makes sense.
+
+[]
+Alexandra Suntrup 18:50
+Okay.
+Well, then, Alejandro, thank you so much for your time. I think then
+we'll kind of...
+Hold this for the moment and Alejandro, you're welcome to hop off and
+then I'll share my screen, ladies, and we can kind of walk through some
+of the reporting that we have on the custom side right now, if that
+sounds good.
+
+[]
+Trimika Fernandez 19:19
+Sounds great.
+
+[]
+Alexandra Suntrup 19:21
+Perfect. Alejandro, thank you so much.
+
+[]
+Winnie Yim 19:21
+Okay, yeah, sounds good. Thank you.
+
+[]
+Katrin Halpaus 19:22
+Yes, please.
+
+[]
+Eduardo Bencomo 19:24
+Thank you, Ale.
+
+[]
+Alejandro Gallego 19:24
+Thank you so much, man. See you then.
+
+[]
+Winnie Yim 19:25
+Thanks, Alejandra.
+
+[]
+Katrin Halpaus 19:25
+Thank you.
+
+[]
+Alejandro Gallego 19:29
+Just send in there in the chat the out-of-the-box report or image, so
+you can check it out.
+
+[]
+Alexandra Suntrup 19:35
+Perfect.
+Thank you. Thank you so much.
+All right, so just to walk through the different types of reporting that
+we have in the customs compliance in our ABI application of the system.
+So real quickly, I do want to just highlight this piece right here. So
+We're going to have two options of reporting. The first are going to be
+what I like to call these set it and forget it reports. So these are
+going to be, you know, canned reports that you can set up to be sent to.
+you, they can be sent to your customers at a specific time or cadence.
+So typically during the training and implementation process, your
+implementation managers who will be training you will set up a couple
+of, you know, common reports that, you know, brokers typically utilize.
+But certainly you can go through and figure out, you know, what specific
+reports, if there are certain reports that...
+either your customer or maybe you want, let's say, every Monday at 7
+A.m. in your inbox, we can set it up that way. Or if there's certain
+monthly reports that you want set up, this is going to be the part of
+the application that you're going to be able to create those. Now,
+
+[]
+Trimika Fernandez 21:05
+Before you go, could we possibly see the columns that are included in
+the broker report?
+
+[]
+Winnie Yim 21:06
+Okay.
+
+[]
+Alexandra Suntrup 21:07
+Yep.
+
+[]
+Trimika Fernandez 21:13
+Just wondering if if it would show certain things.
+
+[]
+Alexandra Suntrup 21:13
+Yes, so let me, yep, let me do this. I'm going to actually, because the
+set it and forget it, I'm not going to be able to generate the report.
+I'm going to go over to the reporting module and we can pull one and we
+can look at the column headings and everything. You got it. You got it.
+Okay, so set it and forget it.
+
+[]
+Trimika Fernandez 21:23
+Okay.
+Okay, thank you so much.
+
+[]
+Alexandra Suntrup 21:33
+And now in our actual reports module, this is the one that may work in
+tandem with the, you know, the BI, the Power BI that Alejandro was just
+showing. So this is where you can, you know, you have the capabilities
+to generate a lot of different types of reports. Again, as you go
+through this, if you do end up coming
+
+[]
+Winnie Yim 21:35
+Okay.
+
+[]
+Alexandra Suntrup 21:55
+Across some type of...
+report that your customer or you want that we maybe aren't able to pull
+from this part of the system, that's where the Power BI is going to, you
+know, step in. So looking at, let's see, the brokerage report here.
+
+[]
+Winnie Yim 22:06
+Yeah.
+
+[]
+Alexandra Suntrup 22:19
+Um...
+Let me see if it's exactly, maybe called something a little bit
+different here. Is there one right here that you are looking at that you
+want me to pull up specifically?
+
+[]
+Trimika Fernandez 22:40
+I can, you can, if there are many, but I'm just curious of right now
+about the PGA report, whether or not it provides PGA inference, it's one
+of the inference reports, but the columns are, because I know that you
+have a separate report for MITSA and FDA. So I'm just curious of the.
+
+[]
+Alexandra Suntrup 22:53
+Oh.
+Sure.
+Sure, yeah.
+
+[]
+Trimika Fernandez 23:02
+available columns and the ability to add and change columns when you're
+generating a report.
+
+[]
+Alexandra Suntrup 23:07
+Yeah.
+You got it. Let's pull this one and let's just see.
+
+[]
+Trimika Fernandez 23:14
+And when you run, I noticed when you ran it, it was for a specific
+importer. Those are my only options. Am I able to run a report for all
+of our importers at one time?
+
+[]
+Alexandra Suntrup 23:16
+No.
+Yeah.
+Let me double check on that. I believe with certain reports you are.
+Let let me confirm that, Tramika. Yeah, yeah, give me one moment. OK.
+
+[]
+Trimika Fernandez 23:41
+Okay, no problem. No problem.
+I stopped you from generating, or was it? Is it still generating? OK.
+
+[]
+Alexandra Suntrup 23:49
+Ohh, no, hold on one second. Yeah, pulling for all.
+Okay, so specifically with this PGA, this is the report that we got.
+So, this just...
+
+[]
+Trimika Fernandez 24:11
+Okay, so this report just lets us know that something is something with
+a PGA. Are you able to add counts to the report? Or is it one of those
+reports where we would have to, I think you showed us some other reports
+somewhere else where we create these ad hoc reports.
+
+[]
+Alexandra Suntrup 24:13
+Yeah.
+Not well.
+
+[]
+Trimika Fernandez 24:29
+And that's when we can add the columns that we're specifically trying to
+see. Believe I remember you showing that before. And one of the
+recordings that I saw.
+
+[]
+Alexandra Suntrup 24:40
+Yes, I...
+
+[]
+Winnie Yim 24:41
+Was that maybe a dashboard view, though?
+
+[]
+Alexandra Suntrup 24:43
+It might have been the dashboard that you can do that. So we do have.
+
+[]
+Winnie Yim 24:44
+That.
+
+[]
+Alexandra Suntrup 24:54
+In our entry view, I'm going to just hold this right here just so you
+guys can see my screen. So in our entry view, this is where you can
+create very finite specific dashboards. You can extract this. So all of
+these dashboards you can extract into
+
+[]
+Trimika Fernandez 25:11
+Alright.
+
+[]
+Alexandra Suntrup 25:19
+like in Excel where you can work the columns around. Also within this
+view, you can add or subtract columns. So this might be a way to obtain
+
+[]
+Trimika Fernandez 25:30
+Bye.
+
+[]
+Alexandra Suntrup 25:41
+some information like reports that's just a different way that's not
+going to be specifically in our reporting module. Because the specific
+reporting modules,
+We don't really have the ability to do any ad hoc. That's really where
+kind of what Alejandro was showing. That's the part of the system where
+you would be able to create more of these, you know, specific ad hoc
+reports. But you do have the ability to
+Um...
+like move column headings around. This would be an example. Let me just
+show you one with.
+
+[]
+Trimika Fernandez 26:25
+We can move headings around, but we cannot add columns or create our own
+reports.
+
+[]
+Alexandra Suntrup 26:30
+On your reports, that that would be you can, but that would be the part
+of the application that that Alejandro had just had just showed you.
+
+[]
+Trimika Fernandez 26:39
+Yeah.
+Out of curiosity, after you show what you're showing, could you possibly
+show, I think it was an entry tariff report or something. I'm just
+curious about what columns are redetermined for inclusion in that report
+after you finish with the report.
+
+[]
+Alexandra Suntrup 26:42
+Sure.
+Yeah, I can, no, I can show you right now.
+
+[]
+Trimika Fernandez 26:57
+It's an entry, maybe the entries tariff report or all entries report,
+either one. I'm just curious about.
+
+[]
+Alexandra Suntrup 27:03
+Okay.
+No, let's.
+
+[]
+Trimika Fernandez 27:05
+What is available, and this is another one that I see we would be
+potentially only able to select one importer at the time.
+
+[]
+Alexandra Suntrup 27:07
+Yeah.
+Yep, and I I have to double check because I do believe that there's that
+that.
+
+[]
+Trimika Fernandez 27:17
+Okay.
+
+[]
+Alexandra Suntrup 27:20
+Believe that you can run it for all importers, but I do just need to
+double check on that. So let's.
+
+[]
+Winnie Yim 27:27
+Well, what if you left that blank, a lot?
+
+[]
+Trimika Fernandez 27:30
+Hi, I was wondering if it was left blank.
+
+[]
+Winnie Yim 27:30
+Alex, like...
+
+[]
+Alexandra Suntrup 27:32
+Yeah, that's actually, let's see.
+Um...
+Oh yeah, okay. That's how you do it then. There you go. You leave it
+blank. Perfect. Yeah, because this is pulling up all of the importers
+here. Okay, so, and then typically what folks are going to do is you can
+extract it into either like a CSV or...
+
+[]
+Trimika Fernandez 27:42
+Yes, thank you.
+Soon.
+So...
+
+[]
+Alexandra Suntrup 28:01
+In Excel, let's see, let's pull an Excel just so we can see all of the.
+
+[]
+Trimika Fernandez 28:07
+Ohh, the calm.
+
+[]
+Alexandra Suntrup 28:08
+The column headings, yeah, and I can send you a couple of these.
+
+[]
+Trimika Fernandez 28:11
+Yeah.
+
+[]
+Alexandra Suntrup 28:14
+I will when I follow.
+
+[]
+Trimika Fernandez 28:15
+I was just...
+I was just really, really curious about just to see what was in the
+background for some of these reports, since we don't have the ability to
+select what we wanted to see.
+
+[]
+Alexandra Suntrup 28:17
+Follow up.
+Yeah.
+Okay, so this would be an example of...
+the entries. So these are going to be all.
+column headings.
+Here and again, I can, I can.
+
+[]
+Trimika Fernandez 28:47
+No, you're good, you're good. I just wanted to see the type of...
+
+[]
+Alexandra Suntrup 28:51
+Sure.
+
+[]
+Trimika Fernandez 28:53
+Information available.
+
+[]
+Alexandra Suntrup 28:57
+Yeah.
+Yep, one I know is specific to duties. Let me pull that one up and I can
+also send that to you just so you can see an example.
+See, I think it was this one right here.
+Okay, let me extract this one, take a peek.
+Yep, this one should show the breakdown of duties. See right here with
+like the additional tariffs. Let's see.
+Yeah, so you've got the original, the 99s.
+So, typically, this is this is what what I would say in terms of our,
+you know, in terms of our reporting on on on the custom side, so...
+
+[]
+Winnie Yim 30:11
+Mm.
+
+[]
+Alexandra Suntrup 30:23
+Probably like 90 to 90% of our brokers are able to, and some types of
+these reportings get all of the information that they specifically need.
+But again, for, you know, that small percentage of, you know, maybe more
+customized reports, that's where, you know,
+Winnie, you may step in or the Power BI may step in. And you know,
+that's something again that I do like to highlight in terms of that
+training and implementation. You know, our custom specialists, you know,
+if you come to them and say, hey, there's this type of specific
+reporting.
+they're usually able to say, oh, okay, it's going to be, you know, this,
+this is how you're, you know, this is where you would go for that, that
+specific type of report.
+
+[]
+Trimika Fernandez 31:12
+Okay.
+
+[]
+Winnie Yim 31:21
+So that report that you just showed us was that the 7501 report?
+
+[]
+Alexandra Suntrup 31:22
+Sure.
+Um, I, this is, yeah, so this was one that...
+
+[]
+Winnie Yim 31:26
+I think it set it in the upper left corner of the focus.
+
+[]
+Alexandra Suntrup 31:34
+that I know brokers have been sending their customers who wanted like
+the breakdown of their of the duties. The other one, which I will send
+you was the full like full shipment report with all of the the importers
+from that specific time period.
+
+[]
+Winnie Yim 31:41
+Mmh.
+K.
+
+[]
+Alexandra Suntrup 31:56
+Yeah, and I can send, um, I'll send both of these too.
+to you just so you can just see the format and the information.
+
+[]
+Winnie Yim 32:05
+So, Tamika, I think that 7501 report looks a lot like the EDI reports
+that we do that come out of CSVs.
+
+[]
+Trimika Fernandez 32:12
+Right. If they're similar, I don't know if they can sign in all of the
+same information. It's kind of hard just to look at it this way, but
+yeah, they do look somewhat similar to me.
+
+[]
+Winnie Yim 32:13
+I think, yeah.
+
+[]
+Trimika Fernandez 32:25
+I was really hoping for the ability to sort of create your own report.
+pulling from some of this information when you when you so, but I do
+understand what's included. You know, I can kind of see what's included
+and similar to what we have.
+
+[]
+Alexandra Suntrup 32:35
+Yeah.
+Yeah.
+Yeah.
+Well, and again, I know the BI can be a little bit overwhelming at
+first, but...
+you know, we certainly can look at, you know, doing some training
+sessions specifically on it, at, you know, a little bit more of kind of
+a one-on-one, less overwhelming level and, you know, break it down
+where, you know, if you feel comfortable, you can go ahead and, you
+know, maybe
+Create, you know, maybe a couple of these reports that maybe you're used
+to or you want that we might not be able to do just in the in the main
+part of the application.
+
+[]
+Winnie Yim 33:19
+Okay.
+Mhm.
+
+[]
+Trimika Fernandez 33:22
+I understand, I understand.
+
+[]
+Alexandra Suntrup 33:23
+Yeah, yeah.
+
+[]
+Winnie Yim 33:27
+So, if we go back to the dashboard...
+
+[]
+Alexandra Suntrup 33:30
+Mhm.
+
+[]
+Winnie Yim 33:31
+Would we able, would you be able to add certain columns that?
+That CHP, or you know, would find.
+Like, Tamika, like what would be some things that you would like to see?
+Because you can generate the report from here too. So like, would you,
+Alex, be able to add like the HTS column so that we know which, is this
+by line or this is by shipment anyway? This is by shipment, right?
+
+[]
+Trimika Fernandez 33:46
+Yeah.
+Well, just to give.
+Um, that's another question, right?
+
+[]
+Winnie Yim 33:59
+So if the dashboard is by shipment, I guess that wouldn't help you being
+able to customize.
+
+[]
+Trimika Fernandez 34:02
+No.
+
+[]
+Alexandra Suntrup 34:03
+Yeah, I.
+
+[]
+Winnie Yim 34:04
+it that much because you need everything by line, say.
+
+[]
+Alexandra Suntrup 34:11
+So maybe so.
+Maybe is there a specific report that you currently have right now that
+you use that you'd be looking for us to have in the system? Because I
+can also, you know, go back and just make sure, you know, see if there's
+a way or certain information or we can, I can look at, you know, we can
+kind of play around with it now, but.
+
+[]
+Trimika Fernandez 34:34
+So, honestly...
+
+[]
+Winnie Yim 34:34
+So...
+
+[]
+Alexandra Suntrup 34:35
+Yeah. Oh, go ahead.
+
+[]
+Trimika Fernandez 34:36
+Okay.
+
+[]
+Winnie Yim 34:36
+The thing, the thing with the thing with Descartes is that they do have
+the same like as you do as some standard reporting, right? Like they
+might have a report that says something like this, but without leaving
+their system, we can also create any report we want.
+
+[]
+Alexandra Suntrup 34:46
+Yeah.
+Yeah.
+
+[]
+Winnie Yim 34:56
+pulling, you know, and choosing which data fields we want. So, and then
+those reports become available to be used again from other people. And
+there, yeah, so it's hard for us to say, there was a report that I was
+talking about called an EDI report for customs where they basically give
+you
+
+[]
+Trimika Fernandez 34:57
+And.
+
+[]
+Alexandra Suntrup 34:59
+Sure. Got it. Yeah.
+Got it. Okay.
+
+[]
+Trimika Fernandez 35:06
+Okay.
+
+[]
+Alexandra Suntrup 35:09
+Sure.
+
+[]
+Winnie Yim 35:16
+Almost every column you can think of from the entry.
+So you would have, there's like a billion columns, right? So there's HDS
+one column, additional 2 HDS tariff code, additional 3 HDF, et cetera,
+all in one report. So if your 7501 report doesn't have that,
+
+[]
+Alexandra Suntrup 35:33
+Done.
+Okay.
+
+[]
+Winnie Yim 35:39
+That might be, but you know, I couldn't see on all the columns if like
+you had every single tariff associated with a line.
+
+[]
+Trimika Fernandez 35:47
+Okay.
+
+[]
+Alexandra Suntrup 35:47
+Yeah.
+
+[]
+Trimika Fernandez 35:49
+Right, so I'm just looking, just curious to see if you had the ability
+to create the reports sort of as an avoiding A workaround of using the
+report you showed or the report that Wayne's referring to as like an EDI
+report that we use. Sometimes you're able to go into a system and you
+say,
+
+[]
+Alexandra Suntrup 35:49
+OK, this is her.
+Sure.
+
+[]
+Trimika Fernandez 36:10
+For example, when I was asking about the PGA report, I would like to see
+what PGA was claimed in a certain entry over a certain span of time. And
+then I can select what types of which columns I'd like to see in that
+report just straight from the system versus trying to extract it if
+possible.
+
+[]
+Alexandra Suntrup 36:13
+Shop.
+
+[]
+Trimika Fernandez 36:31
+from an EDI type report. Sometimes I am and sometimes I'm not able to
+get as much information as I would like. And Wendy is great with that,
+but there are times when you need a report and you kind of need it at
+that moment and she might be working on something else and has to
+research how to pull that information together. There are just some
+systems that have
+
+[]
+Alexandra Suntrup 36:43
+Sure.
+Yeah, right.
+Right.
+Sure. Yeah.
+
+[]
+Trimika Fernandez 36:54
+certain can't reports and you're able to add columns or their report
+that you create from nothing. That's all.
+
+[]
+Alexandra Suntrup 36:56
+Right.
+Right.
+Yeah, no, and duly noted, you know, certainly I know there's a lot of
+information that can be provided and are, you know, automated and then
+generated, but certainly in terms of customization, that
+
+[]
+Trimika Fernandez 37:14
+Uh-huh.
+
+[]
+Alexandra Suntrup 37:21
+That is going to be more on the BI side, how our system is designed
+right now. But again, I do know we do.
+
+[]
+Trimika Fernandez 37:23
+Thank you.
+
+[]
+Eduardo Bencomo 37:30
+Yeah, those those edge cases of Tamika and Winnie and the rest of the
+team, we we it is easier for us to extract the data and do it on the on
+the Power BI or Tableau. I mean, this case is Power BI, the one that we
+use, and and typically you know what we would you do is like ask
+someone, Winnie, which is like a super user or or or master of many
+skills here.
+
+[]
+Alexandra Suntrup 37:32
+Yeah.
+
+[]
+Trimika Fernandez 37:46
+I.
+Yeah.
+
+[]
+Eduardo Bencomo 37:54
+or ourselves, you know, create that report for you and then that report
+is scheduled to you receive it, you know, every day, every week,
+whatever you want. So you don't need to go, I mean, Alejandro went very
+technical on this, you know, you don't, you don't need to, you don't, I
+knew it, I was still watching that and I was like, oh, this is not going
+the right way.
+
+[]
+Trimika Fernandez 38:07
+Yes.
+Okay.
+
+[]
+Eduardo Bencomo 38:13
+But, but...
+
+[]
+Trimika Fernandez 38:13
+I was.
+
+[]
+Eduardo Bencomo 38:15
+But yeah, no, no, so typically you probably would never work there. I
+mean, what's gonna what typically is gonna happen, and sorry, Winnie,
+I'm pushing work to you, but but this kind of reports that are more
+complex, right? It will be created there, and then Winnie say, "OK, who
+needs to receive this report on a weekly basis? Tremika and his team,"
+and then that report will be generated and landed into your inbox every
+day if you want to.
+The dashboards as well, so the Alejandro show a little bit of the
+creation process of that, how we get the data there and whatnot, and
+nothing of that as be something that you need to deal with, but the
+results is you're gonna get it from there, right? And then it's more
+comprehensive what you can do.
+
+[]
+Trimika Fernandez 38:39
+Got you.
+
+[]
+Winnie Yim 38:53
+Oh.
+
+[]
+Eduardo Bencomo 38:56
+In that platform, I mean, for us to do this here, so because you're
+asking us, for example, this specific report and I want to see
+cross-reference order data and whatnot, then the other customer wants to
+see something else, and and for us to insert all that logic into our
+application takes more time than get the data out, you know, when I'm
+talking about you to get it out and and do that in a in a BI platform.
+
+[]
+Winnie Yim 39:14
+Mmh.
+
+[]
+Eduardo Bencomo 39:20
+From like, like Power BI, so that's what we did in this case. So, the
+team really doesn't need to work on that. I mean, it's you, Winnie, and
+then you prepare that the report for them. We give you out-of-the-box
+the dashboards, the you know, all this all the templates with the data,
+and then if you want to do more, you can do more. You know, you can ask
+us and we can do and handle and create.
+
+[]
+Winnie Yim 39:23
+Okay.
+
+[]
+Eduardo Bencomo 39:41
+one specific for you. So yeah.
+
+[]
+Winnie Yim 39:43
+Mhm.
+
+[]
+Trimika Fernandez 39:45
+Understood. Thank you. Thank you for that.
+
+[]
+Winnie Yim 39:48
+Yeah, I get what you're saying. It does, I can tell you that the big
+part, you know, because we can, everybody can create a report, that
+whole stats report section is huge and unwieldy. Like we have, you know,
+maybe 50,000, I'm exaggerating, reports and probably some of them are
+the same and maybe just have one column different or, you know,
+
+[]
+Alexandra Suntrup 40:03
+Yeah.
+
+[]
+Eduardo Bencomo 40:04
+Yeah.
+
+[]
+Alexandra Suntrup 40:08
+Yeah.
+
+[]
+Winnie Yim 40:08
+Something like that, but I'm pretty confident that, like, if we were
+able, if you guys are able to get...
+
+[]
+Alexandra Suntrup 40:10
+Yeah.
+
+[]
+Winnie Yim 40:15
+me access to an entire JSON file.
+of all of our data, like then I could actually make something pretty
+easy for the team to use also. I don't know how that works. Like if you
+guys are willing to do that or how to...
+
+[]
+Alexandra Suntrup 40:31
+I...
+
+[]
+Eduardo Bencomo 40:31
+Ohh.
+
+[]
+Winnie Yim 40:31
+Like, how are you know what I'm talking about? Like, if...
+
+[]
+Alexandra Suntrup 40:32
+Think so, yeah, let me, I mean, I...
+I can find out how we might be able to work that, but...
+I mean, I, yeah.
+Right. Yeah.
+
+[]
+Winnie Yim 40:48
+BI is tied to a JSON file, right? So...
+
+[]
+Alexandra Suntrup 40:50
+Got it. Okay, yeah.
+
+[]
+Winnie Yim 40:51
+Like if I could just have access to that JSON file, I don't need to use
+Power BI because I don't really love Power BI anyway. And I could make
+something easy for the team to just drag columns over and say, okay,
+this is the column I want, this is the column I want. And then they
+would be done with it.
+
+[]
+Alexandra Suntrup 40:54
+Yeah.
+Okay, yeah.
+
+[]
+Trimika Fernandez 40:58
+Okay.
+
+[]
+Alexandra Suntrup 41:00
+Okay.
+Yeah.
+Okay, yeah.
+
+[]
+Eduardo Bencomo 41:08
+Okay.
+
+[]
+Winnie Yim 41:08
+So anyway, if you could just look into that and see how, if that's
+possible.
+
+[]
+Alexandra Suntrup 41:09
+Yeah, we can find out about that. Yeah, absolutely, for sure.
+
+[]
+Eduardo Bencomo 41:11
+We can check with our 100 official.
+
+[]
+Alexandra Suntrup 41:13
+Yeah.
+
+[]
+Winnie Yim 41:15
+Okay, thank you.
+
+[]
+Alexandra Suntrup 41:15
+Yeah.
+Any other questions?
+
+[]
+Winnie Yim 41:23
+So, Tamika.
+Is there anything else for you, Tamika? I mean...
+
+[]
+Eduardo Bencomo 41:29
+Do we have group?
+
+[]
+Trimika Fernandez 41:29
+I...
+No, I don't have any other questions. I appreciate the information that
+we received today about, you know, the reporting possibilities and
+totally pushing Winnie towards the Power BI side and not. But I mean, if
+it did come to that, I would like to learn about it as well.
+
+[]
+Winnie Yim 41:34
+Okay.
+
+[]
+Alexandra Suntrup 41:52
+Yeah.
+
+[]
+Trimika Fernandez 41:52
+But, um...
+
+[]
+Eduardo Bencomo 41:53
+What?
+Were you guys impacted by the outage that we had the other day or not,
+or you're not using the Net CSV platform with the card?
+
+[]
+Trimika Fernandez 41:55
+African.
+
+[]
+Winnie Yim 42:03
+No.
+
+[]
+Trimika Fernandez 42:04
+No. So yes, we had your daughters the other day.
+
+[]
+Winnie Yim 42:05
+No, we weren't.
+
+[]
+Eduardo Bencomo 42:06
+Good.
+
+[]
+Winnie Yim 42:08
+Yeah, and Descartes owns that CHB, but like, so, but I don't think
+Descartes is using that particular, you know, in there.
+In what we're doing with them, I guess.
+
+[]
+Katrin Halpaus 42:20
+Yeah, we have, there are different levels. And so that's a, yeah, from
+what I understand, that CHB has had several outages since December.
+
+[]
+Winnie Yim 42:22
+Yeah.
+
+[]
+Eduardo Bencomo 42:31
+Yeah.
+Yeah, there was one the other day that was that was big, it was
+twenty-four hours.
+
+[]
+Katrin Halpaus 42:36
+Right, right.
+
+[]
+Winnie Yim 42:39
+Well.
+
+[]
+Eduardo Bencomo 42:39
+Glad that you were not impacted by that.
+
+[]
+Katrin Halpaus 42:42
+Same.
+
+[]
+Alexandra Suntrup 42:43
+Yeah.
+
+[]
+Winnie Yim 42:43
+The.
+
+[]
+Eduardo Bencomo 42:44
+Yeah.
+
+[]
+Trimika Fernandez 42:44
+Yeah.
+
+[]
+Eduardo Bencomo 42:47
+Well, okay, so we need, I guess we also have pending, take another, do
+another deep dive demo with the.
+Importing.
+Yeah.
+
+[]
+Winnie Yim 43:01
+Yes, I think so. Yeah. Like maybe just handhold or just walk through a
+file from beginning to end.
+
+[]
+Eduardo Bencomo 43:08
+Yeah, I can, if you give me what we availability, or I can give you
+ours, even if it's not there, Ernesto will be there, and then you can
+walk, I can, you can take it. If I can connect, I will connect, but if
+not, Ernesto will do it. I don't want to leave that for my return.
+
+[]
+Winnie Yim 43:16
+Mhm.
+Oh.
+
+[]
+Eduardo Bencomo 43:26
+I want to get us over that, if possible.
+
+[]
+Winnie Yim 43:28
+Okay.
+Okay, I'll check with the ops team, see what their available is like.
+
+[]
+Eduardo Bencomo 43:34
+Awesome.
+
+[]
+Winnie Yim 43:35
+And I, I can just send you back some, some, you know, a few times or
+ranges or however you want to do it.
+
+[]
+Eduardo Bencomo 43:39
+Yeah.
+Awesome, and then, and then the team with that that would need to be on
+the meeting, so, so Ernesto can send the invite just in case I'm not
+available. He he he handles that.
+
+[]
+Winnie Yim 43:42
+Okay.
+Yes.
+Okay, no problem.
+
+[]
+Eduardo Bencomo 43:54
+Sounds good.
+
+[]
+Winnie Yim 43:54
+Okay, working on it. Yeah.
+
+[]
+Alexandra Suntrup 43:54
+No.
+And I can help too add while you're on your cruise. Hopefully.
+
+[]
+Winnie Yim 44:00
+Oh.
+
+[]
+Trimika Fernandez 44:00
+Yeah.
+
+[]
+Eduardo Bencomo 44:01
+Yep.
+
+[]
+Alexandra Suntrup 44:01
+Fun cocktails, maybe visiting. Who's my new favorite soccer player in
+Norway? What's his name? Did you guys sing?
+
+[]
+Winnie Yim 44:08
+Erling, Erling Holland.
+
+[]
+Katrin Halpaus 44:09
+Yeah.
+
+[]
+Alexandra Suntrup 44:11
+Hollander. Oh my gosh.
+
+[]
+Winnie Yim 44:13
+Yeah.
+
+[]
+Eduardo Bencomo 44:14
+But you don't mean Alan. You don't mean Alan, right? ** *** doesn't.
+
+[]
+Alexandra Suntrup 44:15
+And.
+I know, I know, that's so creepy because he's like 20 years younger than
+me, but he's cute. He's a sweet guy, yeah.
+
+[]
+Charman Wood 44:17
+Yes.
+
+[]
+Trimika Fernandez 44:21
+That's OK.
+
+[]
+Katrin Halpaus 44:22
+That's, yeah, that's okay.
+
+[]
+Trimika Fernandez 44:23
+That never stopped him from being a cuban.
+
+[]
+Alexandra Suntrup 44:24
+Yeah, do you see me blushing? Like, actually, yes.
+
+[]
+Winnie Yim 44:27
+I don't even know what to do with myself.
+
+[]
+Trimika Fernandez 44:27
+Ha ha ha!
+
+[]
+Charman Wood 44:28
+This.
+Ha ha ha.
+
+[]
+Winnie Yim 44:30
+Yeah.
+
+[]
+Alexandra Suntrup 44:30
+Middle-aged woman over here.
+
+[]
+Katrin Halpaus 44:32
+Yeah.
+Okay.
+
+[]
+Winnie Yim 44:35
+Yeah, yeah, I don't know what to do with myself now that the World Cup
+is over. I was like, so bored.
+
+[]
+Alexandra Suntrup 44:37
+But...
+I know, I know, I know. It's been so fun, so fun watching. All right,
+ladies, well, looking forward to kind of the final steps. I will send in
+the follow-up recording to this call. I'll also send just a couple of
+those sample reports just so you can take a peek at them. And
+
+[]
+Winnie Yim 44:44
+Anyway.
+
+[]
+Alexandra Suntrup 44:59
+Look forward to kind of continuing these final stages.
+
+[]
+Eduardo Bencomo 45:03
+Alejandro said he was going to send that presentation as well, right? So
+put it together. We need to review a little bit and then also as an open
+task to check with Alejandro about the JSON files.
+
+[]
+Winnie Yim 45:03
+Sounds good.
+
+[]
+Trimika Fernandez 45:04
+Thank you.
+
+[]
+Alexandra Suntrup 45:06
+Yep. Oh yeah, I'll grab it from him also. Yep.
+Yes, absolutely. Yep, I've got them. Thanks.
+
+[]
+Winnie Yim 45:16
+Okay.
+
+[]
+Alexandra Suntrup 45:17
+Thank you, ladies. Have a good day. All right. Thank you so much. All
+right. Bye-bye.
+
+[]
+Winnie Yim 45:17
+Thank you, guys. OK. Thank you. Bye.
+
+[]
+Trimika Fernandez 45:18
+Thank you. Bye bye. Bye bye. Thank you.
+
+[]
+Katrin Halpaus 45:19
+Thank you. Thank you.
+
+[]
+Katrin Halpaus 45:22
+I.
+
+[]
+Trimika Fernandez stopped transcription
