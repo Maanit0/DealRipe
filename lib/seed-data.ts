@@ -35,6 +35,8 @@ export type CallRecord = {
   // Meeting type: new_opportunity | existing_customer | internal. Null until
   // classified. Non-opportunity meetings are excluded from the sales pipeline.
   meetingType?: string | null;
+  // Granular call kind: discovery | demo | proposal | follow_up. For the call list.
+  callSubtype?: string | null;
 };
 
 export type Deal = {

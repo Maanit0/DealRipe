@@ -8,6 +8,7 @@ import { getRolldogWritePreview, getRolldogWritePreviewByDeals, type RolldogFiel
 import { resolveRange, RANGE_LABELS, type RangeKey } from "@/lib/date-range";
 import { getMeetingCoverage, type MeetingCoverage } from "@/lib/meeting-coverage";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +35,10 @@ function fmt(iso: string): string {
   }
 }
 
-type SP = { view?: string; range?: string; from?: string; to?: string; kind?: string };
+type SP = { view?: string; range?: string; from?: string; to?: string; kind?: string; tenant?: string };
 
 export default async function ActivityPage({ searchParams }: { searchParams: SP }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   const view = searchParams.view === "raw" ? "raw" : "coverage";
   const range = resolveRange(searchParams.range, searchParams.from, searchParams.to);
   const rangeLabel =
@@ -48,7 +50,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
   let entries: ActivityEntry[] = [];
   const writesByDeal = new Map<string, RolldogFieldWrite[]>();
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenant);
     if (view === "coverage") {
       [coverage, entries] = await Promise.all([
         getMeetingCoverage(tenantId, { sinceIso: range.sinceIso, untilIso: range.untilIso }),
@@ -62,14 +64,14 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
       }
       await Promise.all(
         Array.from(linked.entries()).map(async ([dealId, opp]) => {
-          writesByDeal.set(dealId, await getRolldogWritePreview("magaya", dealId, opp));
+          writesByDeal.set(dealId, await getRolldogWritePreview(tenant, dealId, opp));
         }),
       );
     } else {
       entries = await getActivityLog(tenantId);
       // Exact write content for the Rolldog entries in the raw log.
       const dealIds = entries.filter((e) => e.kind === "rolldog_write" && e.dealId).map((e) => e.dealId as string);
-      const map = await getRolldogWritePreviewByDeals("magaya", dealIds);
+      const map = await getRolldogWritePreviewByDeals(tenant, dealIds);
       for (const [k, v] of map) writesByDeal.set(k, v);
     }
   } catch (err) {
@@ -100,11 +102,12 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
     if (searchParams.range) sp.set("range", searchParams.range);
     if (searchParams.from) sp.set("from", searchParams.from);
     if (searchParams.to) sp.set("to", searchParams.to);
+    if (tenant !== DEFAULT_TENANT_SLUG) sp.set("tenant", tenant);
     return `/activity?${sp.toString()}`;
   };
 
   return (
-    <AppShell active="activity">
+    <AppShell active="activity" tenant={tenant}>
       <div className="max-w-[1000px] mx-auto px-6 py-7">
         <h1 className="text-[24px] font-semibold tracking-tight text-ink">Activity</h1>
         <p className="text-[13px] text-muted mt-1">
@@ -134,7 +137,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
 
         {view === "coverage" ? (
           <>
-            <CoverageList meetings={coverage} writesByDeal={writesByDeal} />
+            <CoverageList meetings={coverage} writesByDeal={writesByDeal} crmName={tenant === DEFAULT_TENANT_SLUG ? "Rolldog" : "the CRM"} />
 
             <div className="mt-8">
               <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-2">
@@ -186,6 +189,7 @@ function RawLog({
   searchParams: SP;
   writesByDeal: Map<string, RolldogFieldWrite[]>;
 }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   const kinds: Array<[string, string]> = [
     ["", "All"],
     ["briefing", "Briefings"],
@@ -201,6 +205,7 @@ function RawLog({
     if (searchParams.from) sp.set("from", searchParams.from);
     if (searchParams.to) sp.set("to", searchParams.to);
     if (k) sp.set("kind", k);
+    if (tenant !== DEFAULT_TENANT_SLUG) sp.set("tenant", tenant);
     return `/activity?${sp.toString()}`;
   };
 
@@ -235,16 +240,16 @@ function RawLog({
               <>
                 <div className="text-[11px] text-muted w-[110px] shrink-0 pt-0.5 whitespace-nowrap">{fmt(e.at)}</div>
                 <span className={`shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${meta.cls}`}>
-                  {meta.label}
+                  {e.kind === "rolldog_write" && tenant !== DEFAULT_TENANT_SLUG ? "CRM" : meta.label}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] text-ink">
-                    {e.title}
+                    {e.kind === "rolldog_write" && tenant !== DEFAULT_TENANT_SLUG ? "Wrote to the CRM" : e.title}
                     {e.account && (
                       <>
                         {" · "}
                         {e.dealId ? (
-                          <Link href={`/deals/${e.dealId}`} className="text-accent hover:underline">
+                          <Link href={withTenant(`/deals/${e.dealId}`, tenant)} className="text-accent hover:underline">
                             {e.account}
                           </Link>
                         ) : (
@@ -257,7 +262,7 @@ function RawLog({
                 </div>
                 <div className="shrink-0 w-[150px] text-right pt-0.5">
                   {e.callId && e.callDate ? (
-                    <Link href={`/meetings/${e.callId}`} className="text-[11px] text-accent hover:underline whitespace-nowrap">
+                    <Link href={withTenant(`/meetings/${e.callId}`, tenant)} className="text-[11px] text-accent hover:underline whitespace-nowrap">
                       Call {fmt(e.callDate)}
                     </Link>
                   ) : (
@@ -297,7 +302,7 @@ function RawLog({
                         {e.dealId && (
                           <>
                             {" "}
-                            <Link href={`/deals/${e.dealId}`} className="text-accent hover:underline">
+                            <Link href={withTenant(`/deals/${e.dealId}`, tenant)} className="text-accent hover:underline">
                               Open the deal
                             </Link>
                             .

@@ -6,15 +6,16 @@ import { briefingStateFromContext, getDealContext } from "@/lib/deal-context";
 import { generateBriefingFromState } from "@/lib/generate-briefing";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 // Always generate from live data (see the deal page for the caching rationale).
 export const dynamic = "force-dynamic";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function loadLiveContext(id: string) {
+async function loadLiveContext(id: string, tenantSlug: string) {
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenantSlug);
     return await getDealContext(tenantId, id);
   } catch (err) {
     console.error("[magaya prepare] load failed:", err);
@@ -22,11 +23,18 @@ async function loadLiveContext(id: string) {
   }
 }
 
-export default async function PreparePage({ params }: { params: { id: string } }) {
+export default async function PreparePage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { tenant?: string };
+}) {
   // The briefing now reads the canonical deal context: calls-first stage,
   // call-verified extraction, contact-derived attendees. Rolldog only informs
   // the stage as a fallback, never overrides what the calls show.
-  const ctx = UUID_RE.test(params.id) ? await loadLiveContext(params.id) : null;
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
+  const ctx = UUID_RE.test(params.id) ? await loadLiveContext(params.id, tenant) : null;
 
   if (ctx) {
     const briefing = await generateBriefingFromState(briefingStateFromContext(ctx));
@@ -34,7 +42,7 @@ export default async function PreparePage({ params }: { params: { id: string } }
       <div className="min-h-screen bg-bg">
         <main className="max-w-[1200px] mx-auto px-6 py-7">
           <Link
-            href={`/deals/${ctx.dealId}`}
+            href={withTenant(`/deals/${ctx.dealId}`, tenant)}
             className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink transition mb-5"
           >
             <span className="text-base leading-none">←</span> Back to {ctx.account}

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { TranscriptView } from "@/components/TranscriptView";
 import { getCallTranscript } from "@/lib/transcript-view";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +12,12 @@ export default async function TranscriptPage({
   searchParams,
 }: {
   params: { id: string; callId: string };
-  searchParams: { q?: string };
+  searchParams: { q?: string; tenant?: string };
 }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   let data = null;
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenant);
     data = await getCallTranscript(tenantId, params.callId);
   } catch (err) {
     console.error("[transcript] load failed:", err);
@@ -26,7 +28,7 @@ export default async function TranscriptPage({
     <div className="min-h-screen bg-bg">
       <main className="max-w-[900px] mx-auto px-6 py-7">
         <Link
-          href={`/deals/${params.id}`}
+          href={withTenant(`/deals/${params.id}`, tenant)}
           className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink transition mb-5"
         >
           <span className="text-base leading-none">←</span> Back to {data.account}

@@ -28,9 +28,9 @@ import {
 } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
-async function loadMagayaPipeline() {
+async function loadMagayaPipeline(tenantSlug: string) {
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenantSlug);
     const deals = await getDealsForTenant(tenantId);
     const framework = deals.length > 0 ? await getFrameworkForDeal(deals[0].id) : null;
     // A digest failure must not knock the whole pipeline back to the demo.
@@ -156,13 +156,15 @@ export default async function PipelinePage({
 }: {
   searchParams: { tenant?: string; rep?: string };
 }) {
-  // Magaya account: live, framework-driven pipeline. JWT tenant will replace
-  // the ?tenant param once auth is wired; the TopSort demo path is unchanged.
-  if (searchParams.tenant === "magaya") {
-    const live = await loadMagayaPipeline();
+  // Live, framework-driven pipeline for any tenant passed via ?tenant (magaya is
+  // the pilot; keelson is the demo tenant). JWT tenant will replace the param
+  // once auth is wired. With no ?tenant param the TopSort demo path is unchanged.
+  const tenant = searchParams.tenant;
+  if (tenant) {
+    const live = await loadMagayaPipeline(tenant);
     if (live)
       return (
-        <AppShell active="deals">
+        <AppShell active="deals" tenant={tenant}>
           <MagayaPipeline
             deals={live.deals}
             framework={live.framework}
@@ -172,16 +174,17 @@ export default async function PipelinePage({
             repActivityByDealId={live.repActivity}
             lastCallByDealId={live.lastCall}
             repFilter={searchParams.rep ? searchParams.rep.toLowerCase() : null}
+            tenant={tenant}
           />
         </AppShell>
       );
-    // Do NOT fall back to the demo for the Magaya tenant; show the failure
-    // so it is obvious something threw (see the dev server terminal).
+    // Do NOT fall back to the demo for a named tenant; show the failure so it is
+    // obvious something threw (see the dev server terminal).
     return (
       <div className="min-h-screen bg-bg">
         <main className="max-w-[1200px] mx-auto px-6 py-7">
           <div className="bg-white rounded-xl2 shadow-card border border-line p-8">
-            <p className="text-[14px] text-ink font-medium">Magaya pipeline failed to load</p>
+            <p className="text-[14px] text-ink font-medium">Pipeline failed to load</p>
             <p className="text-[12px] text-muted mt-1">
               Check the dev server terminal for a line starting
               &ldquo;[magaya pipeline] load failed&rdquo;.

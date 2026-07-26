@@ -19,6 +19,7 @@ import { getSentMessages } from "@/lib/sent-messages";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getDealForTenant, getUpcomingCallForDeal } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, pipelineHref } from "@/lib/tenant-nav";
 
 // Always render from live data. Without this, Next.js caches the rendered deal
 // page per URL and never re-reads Supabase, so framework changes, new
@@ -28,9 +29,9 @@ export const dynamic = "force-dynamic";
 // Live Magaya deals have UUID ids; the TopSort demo uses slug ids.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function loadLiveMagayaDeal(id: string) {
+async function loadLiveMagayaDeal(id: string, tenantSlug: string) {
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenantSlug);
     const deal = await getDealForTenant(tenantId, id);
     if (!deal) return null;
     const framework = await getFrameworkForDeal(deal.id);
@@ -94,8 +95,15 @@ async function loadLiveMagayaDeal(id: string) {
   }
 }
 
-export default async function DealPage({ params }: { params: { id: string } }) {
-  const live = UUID_RE.test(params.id) ? await loadLiveMagayaDeal(params.id) : null;
+export default async function DealPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { tenant?: string };
+}) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
+  const live = UUID_RE.test(params.id) ? await loadLiveMagayaDeal(params.id, tenant) : null;
 
   let body: React.ReactNode;
   if (live) {
@@ -109,6 +117,7 @@ export default async function DealPage({ params }: { params: { id: string } }) {
         sentMessages={live.sentMessages}
         history={live.history}
         attendance={live.attendance}
+        tenant={tenant}
       />
     );
   } else {
@@ -122,7 +131,7 @@ export default async function DealPage({ params }: { params: { id: string } }) {
   const inner = (
     <main className="max-w-[1200px] mx-auto px-6 py-7">
       <Link
-        href={live ? "/pipeline?tenant=magaya" : "/pipeline"}
+        href={live ? pipelineHref(tenant) : "/pipeline"}
         className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink transition mb-5"
       >
         <span className="text-base leading-none">←</span> Back to pipeline
@@ -135,7 +144,7 @@ export default async function DealPage({ params }: { params: { id: string } }) {
   // its standalone full-page layout.
   if (live) {
     return (
-      <AppShell active="deals">
+      <AppShell active="deals" tenant={tenant}>
         <div className="min-h-screen bg-bg">{inner}</div>
       </AppShell>
     );

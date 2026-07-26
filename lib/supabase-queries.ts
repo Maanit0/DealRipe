@@ -67,6 +67,7 @@ function rowToCall(r: {
   has_been_extracted: boolean;
   outcome?: string | null;
   meeting_type?: string | null;
+  call_subtype?: string | null;
 }): CallRecord {
   return {
     id: r.id,
@@ -81,6 +82,7 @@ function rowToCall(r: {
     hasBeenExtracted: r.has_been_extracted,
     outcome: r.outcome ?? null,
     meetingType: r.meeting_type ?? null,
+    callSubtype: r.call_subtype ?? null,
   };
 }
 
@@ -193,7 +195,7 @@ export async function getDealsForTenant(tenantId: string): Promise<Deal[]> {
     db
       .from("calls")
       .select(
-        "id, deal_id, call_date, duration_minutes, participants, source, transcript_id, has_been_extracted, outcome, meeting_type",
+        "id, deal_id, call_date, duration_minutes, participants, source, transcript_id, has_been_extracted, outcome, meeting_type, call_subtype",
       )
       .in("deal_id", dealIds)
       .order("call_date", { ascending: false }),
@@ -265,7 +267,7 @@ export async function getDealForTenant(
     db
       .from("calls")
       .select(
-        "id, deal_id, call_date, duration_minutes, participants, source, transcript_id, has_been_extracted, outcome, meeting_type",
+        "id, deal_id, call_date, duration_minutes, participants, source, transcript_id, has_been_extracted, outcome, meeting_type, call_subtype",
       )
       .eq("deal_id", d.id)
       .order("call_date", { ascending: false }),

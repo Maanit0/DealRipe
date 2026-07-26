@@ -61,9 +61,12 @@ const TYPE_LABEL: Record<string, string> = {
 export function CoverageList({
   meetings,
   writesByDeal,
+  crmName = "Rolldog",
 }: {
   meetings: MeetingCoverage[];
   writesByDeal?: Map<string, RolldogFieldWrite[]>;
+  /** CRM display name; demo tenants pass a generic label instead of "Rolldog". */
+  crmName?: string;
 }) {
   if (meetings.length === 0) {
     return (
@@ -133,12 +136,12 @@ export function CoverageList({
               {m.isNoShow ? (
                 <>
                   <StepChip label="No-show follow-up" step={m.noShowFollowup} />
-                  <StepChip label="No-show logged to Rolldog" step={m.noShowLog} />
+                  <StepChip label={`No-show logged to ${crmName}`} step={m.noShowLog} />
                 </>
               ) : (
                 <>
                   <StepChip label="Recap" step={m.recap} />
-                  <StepChip label="Rolldog write-back" step={m.writeback} />
+                  <StepChip label={`${crmName} write-back`} step={m.writeback} />
                 </>
               )}
             </div>
@@ -171,7 +174,7 @@ export function CoverageList({
                     {writes.length > 0 && (
                       <details className="group mt-2 pt-2 border-t border-line">
                         <summary className="cursor-pointer list-none text-accent hover:underline flex items-center gap-1">
-                          <span>Show exactly what was written to Rolldog</span>
+                          <span>Show exactly what was written to {crmName}</span>
                           <span className="group-open:rotate-180 transition-transform">⌄</span>
                         </summary>
                         <div className="mt-2 space-y-2">

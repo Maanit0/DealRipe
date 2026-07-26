@@ -1,11 +1,14 @@
 import Link from "next/link";
 
 import { AppShell } from "@/components/AppShell";
+import { ForecastRoomView } from "@/components/ForecastRoom";
 import { ReviewFilterBar } from "@/components/ReviewFilterBar";
 import { attachDoThis } from "@/lib/digest-synthesis";
+import { getForecastRoom, type ForecastRoom } from "@/lib/forecast-room";
 import { resolveRange, RANGE_LABELS, type RangeKey } from "@/lib/date-range";
 import { getPipelineChanges, type DealChangeRecord, type ChangeEvent } from "@/lib/pipeline-changes";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +66,7 @@ const CHANGE_SECTIONS: Array<{ kind: ChangeEvent["kind"]; title: string }> = [
   { kind: "lost", title: "Closed lost" },
 ];
 
-type SP = { range?: string; from?: string; to?: string; netnew?: string; noshow?: string; rep?: string; tracked?: string };
+type SP = { range?: string; from?: string; to?: string; netnew?: string; noshow?: string; rep?: string; tracked?: string; tenant?: string };
 
 function nextStep(d: DealChangeRecord): string {
   if (d.dealHealth === "no_data") return "—";
@@ -105,13 +108,44 @@ function readText(d: DealChangeRecord): string {
 }
 
 export default async function ReviewPage({ searchParams }: { searchParams: SP }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
+
+  // Non-magaya tenants (the keelson demo) get the Forecast Room, computed from
+  // their real deals + snapshots. magaya keeps the exact pipeline-changes
+  // dashboard below, byte-for-byte, so the live pilot never changes.
+  if (tenant !== DEFAULT_TENANT_SLUG) {
+    let room: ForecastRoom | null = null;
+    try {
+      const tenantId = await resolveTenantId(tenant);
+      room = await getForecastRoom(tenantId);
+    } catch (err) {
+      console.error("[review] forecast room load failed:", err);
+    }
+    return (
+      <AppShell active="review" tenant={tenant}>
+        {room ? (
+          <ForecastRoomView data={room} tenant={tenant} />
+        ) : (
+          <div className="max-w-[1180px] mx-auto px-6 py-7 text-[13px] text-muted">
+            Forecast Room could not load for this tenant.
+          </div>
+        )}
+      </AppShell>
+    );
+  }
+
+  return <MagayaReview searchParams={searchParams} />;
+}
+
+async function MagayaReview({ searchParams }: { searchParams: SP }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   const range = resolveRange(searchParams.range ?? "this_week", searchParams.from, searchParams.to);
   const rangeLabel = range.key === "custom" ? `${searchParams.from} to ${searchParams.to}` : RANGE_LABELS[range.key as RangeKey];
 
   let deals: DealChangeRecord[] = [];
   let headline = { totalPipelineAnnual: 0, forecastMix: [], closedWon: 0, closedLost: 0, dealsChanged: 0, dealsNeedingAttention: 0, newOpportunities: 0 } as Awaited<ReturnType<typeof getPipelineChanges>>["headline"];
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenant);
     const pc = await getPipelineChanges(tenantId, { sinceIso: range.sinceIso ?? new Date(Date.now() - 7 * 864e5).toISOString(), untilIso: range.untilIso ?? new Date().toISOString() });
     await attachDoThis(pc.deals);
     deals = pc.deals;
@@ -176,7 +210,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
   const kpiNoShows = master.filter((d) => d.isNoShow).length;
 
   return (
-    <AppShell active="review">
+    <AppShell active="review" tenant={tenant}>
       <div className="max-w-[1320px] mx-auto px-6 py-7">
         <div className="flex items-center justify-between">
           <h1 className="text-[24px] font-semibold tracking-tight text-ink">Pipeline changes</h1>
@@ -241,7 +275,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
                     return (
                       <tr key={d.dealId} className="align-top hover:bg-bg/40">
                         <td className="px-4 py-3.5">
-                          <Link href={`/deals/${d.dealId}`} className="font-medium text-ink hover:underline">{d.account}</Link>
+                          <Link href={withTenant(`/deals/${d.dealId}`, tenant)} className="font-medium text-ink hover:underline">{d.account}</Link>
                         </td>
                         <td className="px-2 py-3.5 text-ink">{d.stageName ?? "—"}</td>
                         <td className="px-2 py-3.5 text-right font-medium text-ink whitespace-nowrap">{money(d.dealSizeMonthly)}</td>
@@ -259,7 +293,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
                           {d.dealHealth === "no_data" ? (
                             <span className="text-muted">—</span>
                           ) : (
-                            <Link href={`/actions?deal=${d.dealId}`} className="text-ink hover:text-accent hover:underline">
+                            <Link href={withTenant(`/actions?deal=${d.dealId}`, tenant)} className="text-ink hover:text-accent hover:underline">
                               {clause(nextStep(d), 200)}
                             </Link>
                           )}
@@ -344,7 +378,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
                             return (
                               <tr key={i} className="align-top hover:bg-bg/40">
                                 <td className="px-4 py-3 text-muted whitespace-nowrap">{fmtDate(c.ev.at)}</td>
-                                <td className="px-2 py-3"><Link href={`/deals/${c.dealId}`} className="font-medium text-ink hover:underline">{c.account}</Link></td>
+                                <td className="px-2 py-3"><Link href={withTenant(`/deals/${c.dealId}`, tenant)} className="font-medium text-ink hover:underline">{c.account}</Link></td>
                                 <td className="px-2 py-3 text-ink">{d?.stageName ?? "—"}</td>
                                 <td className="px-2 py-3 text-muted whitespace-nowrap">{c.ev.from ?? "—"}</td>
                                 <td className="px-2 py-3 text-ink font-medium whitespace-nowrap">{c.ev.to ?? "—"}</td>

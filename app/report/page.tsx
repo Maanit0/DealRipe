@@ -8,6 +8,7 @@ import { repName } from "@/lib/display-names";
 import { callSubtypeLabel } from "@/lib/meeting-classify";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -59,14 +60,15 @@ type Row = {
   writes: RolldogFieldWrite[];
 };
 
-export default async function ReportPage() {
+export default async function ReportPage({ searchParams }: { searchParams: { tenant?: string } }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   let fieldsWritten = 0;
   let dealsEnriched = 0;
   let callsProcessed = 0;
   let rows: Row[] = [];
 
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenant);
     const [entries, dealsRes, callsRes] = await Promise.all([
       getActivityLog(tenantId),
       supabaseAdmin().from("deals").select("id, account, rep_email").eq("tenant_id", tenantId),
@@ -97,7 +99,7 @@ export default async function ReportPage() {
     }
 
     const dealIds = Array.from(new Set(writes.map((e) => e.dealId as string)));
-    const writesByDeal = await getRolldogWritePreviewByDeals("magaya", dealIds);
+    const writesByDeal = await getRolldogWritePreviewByDeals(tenant, dealIds);
     rows = Array.from(writesByDeal.entries())
       .map(([dealId, w]) => {
         const deal = dealsById.get(dealId);
@@ -118,6 +120,8 @@ export default async function ReportPage() {
     console.error("[report] load failed:", err);
   }
 
+  const crmName = tenant === DEFAULT_TENANT_SLUG ? "Rolldog" : "the CRM";
+  const crmAdj = tenant === DEFAULT_TENANT_SLUG ? "Rolldog" : "CRM";
   const minutesSaved = (fieldsWritten * SECONDS_PER_FIELD) / 60;
   const tiles = [
     { label: "Qualification fields written", value: String(fieldsWritten) },
@@ -126,18 +130,18 @@ export default async function ReportPage() {
   ];
 
   return (
-    <AppShell active="report">
+    <AppShell active="report" tenant={tenant}>
       <style dangerouslySetInnerHTML={{ __html: PRINT_CSS }} />
       <div className="max-w-[1040px] mx-auto px-6 py-7">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-[13px]">
               <span className="font-semibold text-ink">DealRipe</span>
-              <span className="text-muted">to Rolldog</span>
+              <span className="text-muted">to {crmName}</span>
             </div>
             <h1 className="text-[24px] font-semibold tracking-tight text-ink mt-1">Post-call write-back</h1>
             <p className="text-[13px] text-muted mt-1 max-w-[660px]">
-              Every qualification field DealRipe captured from your calls and wrote back to Rolldog, automatically. Click a row to see exactly what was written. These fields were blank before the call.
+              Every qualification field DealRipe captured from your calls and wrote back to {crmName}, automatically. Click a row to see exactly what was written. These fields were blank before the call.
             </p>
           </div>
           <PrintButton />
@@ -154,7 +158,7 @@ export default async function ReportPage() {
 
         {rows.length === 0 ? (
           <div className="mt-6 bg-white rounded-xl2 border border-line px-5 py-4 text-[13px] text-muted">
-            No Rolldog write-backs recorded yet.
+            No {crmAdj} write-backs recorded yet.
           </div>
         ) : (
           <div className="mt-6 bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
@@ -180,7 +184,7 @@ export default async function ReportPage() {
                     <span className={`text-[11px] px-2 py-0.5 rounded-full ${typeCls(r.type)}`}>{r.type ?? "—"}</span>
                   </div>
                   <div className="w-[150px] shrink-0 text-[13px] truncate">
-                    <Link href={`/deals/${r.dealId}`} className="text-accent hover:underline">{r.account}</Link>
+                    <Link href={withTenant(`/deals/${r.dealId}`, tenant)} className="text-accent hover:underline">{r.account}</Link>
                   </div>
                   <div className="w-[80px] shrink-0 text-[12px] text-muted truncate">{r.rep}</div>
                 </summary>
@@ -203,7 +207,7 @@ export default async function ReportPage() {
         )}
 
         <p className="text-[11px] text-muted mt-4">
-          Estimated rep time saved on subfield entry: {fmtDuration(minutesSaved)} ({SECONDS_PER_FIELD} seconds per field to manually locate and fill each Rolldog qualification subfield, times {fieldsWritten} fields). Separate from the note-taking and next-step entry DealRipe also automates.
+          Estimated rep time saved on subfield entry: {fmtDuration(minutesSaved)} ({SECONDS_PER_FIELD} seconds per field to manually locate and fill each {crmAdj} qualification subfield, times {fieldsWritten} fields). Separate from the note-taking and next-step entry DealRipe also automates.
         </p>
       </div>
     </AppShell>

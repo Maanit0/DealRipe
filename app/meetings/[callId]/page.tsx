@@ -8,14 +8,22 @@ import { getMeetingDetail } from "@/lib/meetings";
 import { getSentMessages, type SentMessage } from "@/lib/sent-messages";
 import { getDealForTenant } from "@/lib/supabase-queries";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 import type { Contact } from "@/lib/seed-data";
 
 export const dynamic = "force-dynamic";
 
-export default async function MeetingPage({ params }: { params: { callId: string } }) {
+export default async function MeetingPage({
+  params,
+  searchParams,
+}: {
+  params: { callId: string };
+  searchParams: { tenant?: string };
+}) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   let tenantId: string;
   try {
-    tenantId = await resolveTenantId("magaya");
+    tenantId = await resolveTenantId(tenant);
   } catch {
     notFound();
   }
@@ -34,10 +42,10 @@ export default async function MeetingPage({ params }: { params: { callId: string
   const recap = sent.find((m) => m.kind === "recap") ?? null;
 
   return (
-    <AppShell active="meetings">
+    <AppShell active="meetings" tenant={tenant}>
       <div className="max-w-[1100px] mx-auto px-6 py-7">
         <Link
-          href="/meetings"
+          href={withTenant("/meetings", tenant)}
           className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink transition mb-5"
         >
           <span className="text-base leading-none">←</span> All meetings

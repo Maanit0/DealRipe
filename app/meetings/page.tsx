@@ -5,6 +5,7 @@ import { MeetingsFilterBar } from "@/components/MeetingsFilterBar";
 import { callSubtypeLabel } from "@/lib/meeting-classify";
 import { getMeetings, getUpcomingMeetings, type MeetingListItem } from "@/lib/meetings";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,7 @@ type SP = {
   range?: string;
   status?: string;
   q?: string;
+  tenant?: string;
 };
 
 function applyFilters(list: MeetingListItem[], sp: SP): MeetingListItem[] {
@@ -89,11 +91,12 @@ function applyFilters(list: MeetingListItem[], sp: SP): MeetingListItem[] {
 }
 
 export default async function MeetingsPage({ searchParams }: { searchParams: SP }) {
+  const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
   const view = searchParams.view === "upcoming" ? "upcoming" : "recorded";
   let recorded: MeetingListItem[] = [];
   let upcoming: MeetingListItem[] = [];
   try {
-    const tenantId = await resolveTenantId("magaya");
+    const tenantId = await resolveTenantId(tenant);
     [recorded, upcoming] = await Promise.all([getMeetings(tenantId), getUpcomingMeetings(tenantId)]);
   } catch (err) {
     console.error("[meetings] load failed:", err);
@@ -109,7 +112,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: SP 
   const rows = applyFilters(active, searchParams);
 
   return (
-    <AppShell active="meetings">
+    <AppShell active="meetings" tenant={tenant}>
       <div className="max-w-[1100px] mx-auto px-6 py-7">
         <h1 className="text-[24px] font-semibold tracking-tight text-ink">Meetings</h1>
         <p className="text-[13px] text-muted mt-1">
@@ -152,7 +155,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: SP 
                       <td className="py-3.5 align-top">
                         {clickable ? (
                           <Link
-                            href={`/meetings/${m.callId}`}
+                            href={withTenant(`/meetings/${m.callId}`, tenant)}
                             className="text-[14px] font-semibold text-ink hover:text-accent transition"
                           >
                             {meetingLabel(m)}
@@ -185,7 +188,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: SP 
                       </td>
                       <td className="py-3.5 align-top pr-5">
                         <Link
-                          href={`/deals/${m.dealId}`}
+                          href={withTenant(`/deals/${m.dealId}`, tenant)}
                           className="text-[13px] text-ink hover:text-accent transition"
                         >
                           {m.account}

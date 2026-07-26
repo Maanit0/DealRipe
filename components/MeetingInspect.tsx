@@ -96,8 +96,8 @@ export function MeetingInspect({
       </div>
 
       {tab === "summary" ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-          <div className="space-y-5">
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
             {attendance ? (
               <AttendanceCard history={[attendance]} />
             ) : (
@@ -107,28 +107,21 @@ export function MeetingInspect({
             )}
             <ContactsCard contacts={contacts} />
           </div>
-          <div>
-            {recapHtml ? (
-              <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
-                <div className="px-5 py-3 border-b border-line">
-                  <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-                    DealRipe recap
-                  </div>
-                  <div className="text-[12px] text-muted mt-0.5">What the rep received after this call.</div>
+          {recapHtml ? (
+            <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
+              <div className="px-5 py-3 border-b border-line">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
+                  DealRipe recap
                 </div>
-                <iframe
-                  title="Recap"
-                  srcDoc={recapHtml}
-                  className="w-full"
-                  style={{ height: 620, border: 0 }}
-                />
+                <div className="text-[12px] text-muted mt-0.5">What the rep received after this call.</div>
               </div>
-            ) : (
-              <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">
-                No recap generated for this meeting yet.
-              </div>
-            )}
-          </div>
+              <iframe title="Recap" srcDoc={recapHtml} className="w-full" style={{ height: 640, border: 0 }} />
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">
+              No recap generated for this meeting yet.
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-xl2 shadow-card border border-line px-6 py-5">

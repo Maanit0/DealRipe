@@ -43,6 +43,14 @@ type Props = {
   /** fieldKey -> which call captured it, for inline "captured Jul 16" tags and
    *  the transcript link on the quote. */
   capturedByField?: Attribution;
+  /** Display name for the subtitle; defaults to the framework name. Lets the demo
+   *  show a clean label instead of the internal framework name. */
+  labelName?: string;
+  /** When set, confirmed gates captured by this call are badged "NEW" in green —
+   *  the fields this extraction just added. */
+  highlightNewCallId?: string;
+  /** Open gate field keys the latest call newly surfaced — badged "NEW GAP" in red. */
+  newGapKeys?: string[];
 };
 
 export function MagayaOpportunityControl({
@@ -51,7 +59,11 @@ export function MagayaOpportunityControl({
   currentStageKey,
   dealId,
   capturedByField = {},
+  labelName,
+  highlightNewCallId,
+  newGapKeys,
 }: Props) {
+  const newGapSet = new Set(newGapKeys ?? []);
   const stages = frameworkStages(framework);
   const { confirmed, total } = frameworkProgress(framework, extraction);
 
@@ -67,7 +79,7 @@ export function MagayaOpportunityControl({
           <div>
             <h2 className="text-[15px] font-semibold text-ink">Opportunity Control</h2>
             <p className="text-[12px] text-muted mt-0.5">
-              {framework.name} qualification, extracted from calls
+              {labelName ?? framework.name} qualification, extracted from calls
             </p>
           </div>
           <div className="text-[12px] text-muted shrink-0">
@@ -102,6 +114,8 @@ export function MagayaOpportunityControl({
             extraction={extraction}
             capturedByField={capturedByField}
             dealId={dealId}
+            highlightNewCallId={highlightNewCallId}
+            newGapSet={newGapSet}
           />
         ))}
       </div>
@@ -114,11 +128,15 @@ function StageSection({
   extraction,
   capturedByField,
   dealId,
+  highlightNewCallId,
+  newGapSet,
 }: {
   stage: FrameworkStage;
   extraction: ExtractionResult;
   capturedByField: Attribution;
   dealId?: string;
+  highlightNewCallId?: string;
+  newGapSet: Set<string>;
 }) {
   const gate = stageGateStatus(stage, extraction);
   const open = gate.total - gate.met;
@@ -138,8 +156,15 @@ function StageSection({
         {stage.fields.map((f) => {
           const entry = extraction[f.fieldKey];
           const status = entry?.status ?? "Unknown";
+          const isNew = !!highlightNewCallId && status === "Yes" && capturedByField[f.fieldKey]?.callId === highlightNewCallId;
+          const isNewGap = status !== "Yes" && newGapSet.has(f.fieldKey);
+          const rowCls = isNew
+            ? "bg-accent/[0.07] ring-1 ring-accent/25"
+            : isNewGap
+              ? "bg-danger/[0.05] ring-1 ring-danger/20"
+              : "";
           return (
-            <div key={f.fieldKey} className="flex gap-3 items-start rounded-md px-2 py-2 -mx-2">
+            <div key={f.fieldKey} className={`flex gap-3 items-start rounded-md px-2 py-2 -mx-2 ${rowCls}`}>
               <StatusDot status={status} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
@@ -149,6 +174,12 @@ function StageSection({
                   <span className="text-[13px] text-ink font-medium leading-snug">
                     {f.question}
                   </span>
+                  {isNew && (
+                    <span className="text-[8.5px] uppercase tracking-wider font-bold px-1 py-0.5 rounded bg-accent/15 text-accent">New</span>
+                  )}
+                  {isNewGap && (
+                    <span className="text-[8.5px] uppercase tracking-wider font-bold px-1 py-0.5 rounded bg-danger/10 text-danger">New gap</span>
+                  )}
                 </div>
                 {entry?.status === "Yes" && (
                   <div className="mt-1.5 space-y-1">

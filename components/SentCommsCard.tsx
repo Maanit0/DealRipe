@@ -74,7 +74,7 @@ export function SentCommsCard({ messages }: { messages: SentMessage[] }) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-xl2 shadow-lg w-full max-w-[760px] max-h-[88vh] flex flex-col overflow-hidden"
+            className="bg-white rounded-xl2 shadow-lg w-full max-w-[1080px] h-[90vh] flex flex-col overflow-hidden"
           >
             <div className="flex items-start justify-between gap-3 px-5 py-3 border-b border-line shrink-0">
               <div className="min-w-0">
