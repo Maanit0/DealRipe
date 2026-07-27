@@ -23,6 +23,14 @@ import { getTasks, type TaskItem } from "./tasks";
 // A sensible quarter target for the demo tenant (the number the CRO is carrying).
 const QUARTER_TARGET_USD = 2_500_000;
 const QUARTER_LABEL = "Q3 2026";
+const STAGE_LABELS: Record<string, string> = {
+  SQL0: "Lead",
+  SQL1: "Develop Opportunity",
+  SQL2: "Solution Finalization",
+  SQL3: "Proposal Validation",
+  SQL4: "Negotiations",
+  SQL5: "Agreement Formalization",
+};
 // Forecast-accuracy constants for the calibration tile (DealRipe vs rep commit).
 const CALIBRATION = {
   drAccuracyPct: 90,
@@ -37,6 +45,8 @@ export type ForecastRoomDeal = {
   dealId: string;
   account: string;
   industry: string;
+  stageKey: string;
+  stageLabel: string;
   arr: number;
   repProb: number; // 0..1, the rep's forecast probability
   drProb: number; // 0..1, DealRipe's read (rep tempered by qualification)
@@ -72,6 +82,11 @@ export type ForecastRoom = {
   weekOf: string;
   quarterTargetUsd: number;
   quarterLabel: string;
+  /** True when a real quarter target is known (demo tenant). When false (the live
+   *  pilot, no target given), the summary leads with overcommit, not gap-to-target. */
+  hasTarget: boolean;
+  /** Sum of open-deal ARR, for the "Total pipeline" tile when there is no target. */
+  pipelineTotalUsd: number;
   repWeightedUsd: number;
   drWeightedUsd: number;
   gapToTargetUsd: number;
@@ -85,6 +100,25 @@ export type ForecastRoom = {
 
 function categoryOf(p: number): string {
   return p >= 0.7 ? "Commit" : p >= 0.4 ? "Expect" : "Pipeline";
+}
+
+// The live pilot forecasts in CRM categories (Commit/Expect/Pipeline/Omitted), not
+// probabilities. Map each to a representative probability so the room can weight and
+// compare rep vs DealRipe. Used only when a deal has no seeded probability (magaya).
+function categoryToProb(cat: string | null | undefined): number {
+  switch ((cat ?? "").toLowerCase()) {
+    case "commit":
+      return 0.85;
+    case "expect":
+      return 0.5;
+    case "pipeline":
+      return 0.25;
+    case "omit":
+    case "omitted":
+      return 0.05;
+    default:
+      return 0.25;
+  }
 }
 
 // Demo-tenant (keelson) reasons: each is specific to that one account and pulls
@@ -142,7 +176,12 @@ const DEMO_ACTION_DETAIL: Record<string, string> = {
     "This is advancing; press the advantage. Confirm the budget in writing and set the proposal review while the second stakeholder is warm. Leave with a proposal-review date on the calendar.",
 };
 
-export async function getForecastRoom(tenantId: string): Promise<ForecastRoom> {
+export async function getForecastRoom(
+  tenantId: string,
+  opts?: { quarterTargetUsd?: number | null },
+): Promise<ForecastRoom> {
+  const quarterTargetUsd = opts?.quarterTargetUsd ?? null;
+  const hasTarget = quarterTargetUsd != null;
   const untilIso = new Date().toISOString();
   const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
 
@@ -158,37 +197,65 @@ export async function getForecastRoom(tenantId: string): Promise<ForecastRoom> {
   const roomDeals: ForecastRoomDeal[] = deals.map((d) => {
     const prog = framework ? frameworkProgress(framework, d.extraction) : { confirmed: 0, total: 0 };
     const completion = prog.total > 0 ? prog.confirmed / prog.total : 0;
-    const repProb = d.repForecastProbability ?? 0;
-    // Same temper the snapshot stores: rep probability x qualification completion.
-    // A demo override lets a well-qualified deal the rep under-called read ABOVE
-    // the rep, so the room surfaces clean forward movement, not just risk.
-    const drProb = DEMO_DR_PROB[d.account] ?? Math.round(repProb * completion * 100) / 100;
     const rec = recById.get(d.id);
+
+    // The demo tenant carries a seeded 0..1 probability + annual arr. The live pilot
+    // (magaya) does not: its amounts are monthly in the CRM and its forecast is a
+    // category. Fall back to those so the room reads real numbers, not $0.
+    const usesSeededProb = !!(d.repForecastProbability && d.repForecastProbability > 0);
+    const arr = d.arr && d.arr > 0 ? d.arr : Math.round((rec?.dealSizeMonthly ?? 0) * 12);
+    const repProb = usesSeededProb ? (d.repForecastProbability as number) : categoryToProb(rec?.forecastCategory);
+    // DealRipe read: demo override; else, for the pilot, the category DealRipe assigned
+    // on the calls; else the qualification temper; else defer to the rep on unseen deals.
+    const drProb =
+      DEMO_DR_PROB[d.account] ??
+      (usesSeededProb
+        ? prog.confirmed > 0
+          ? Math.round(repProb * completion * 100) / 100
+          : repProb
+        : rec?.dealRipeCategory
+          ? categoryToProb(rec.dealRipeCategory)
+          : repProb);
+    const repCategory = usesSeededProb ? categoryOf(repProb) : rec?.forecastCategory || categoryOf(repProb);
+    const drCategory = usesSeededProb ? categoryOf(drProb) : rec?.dealRipeCategory || categoryOf(drProb);
     const highBlocker = rec ? rec.flags.some((f) => f.severity === "high") : false;
-    const reason =
-      DEMO_REASONS[d.account] ??
-      rec?.blockers?.[0] ??
-      (rec && rec.verdict.kind !== "none" ? rec.verdict.text : null) ??
-      "The calls back the current forecast.";
+    let reason: string;
+    if (DEMO_REASONS[d.account]) {
+      reason = DEMO_REASONS[d.account];
+    } else if (!usesSeededProb && rec?.blockers && rec.blockers.length > 0) {
+      // Live pilot: the specific, named blockers DealRipe caught on this deal's calls
+      // (e.g. "Brian, who signs off, has never been on a call. Single-threaded on Pulkit.").
+      reason = rec.blockers.slice(0, 3).join(" ");
+    } else {
+      reason =
+        rec?.blockers?.[0] ??
+        (rec && rec.verdict.kind !== "none" ? rec.verdict.text : null) ??
+        "The calls back the current forecast.";
+    }
+    const derivedHealth: ForecastHealth =
+      drProb < repProb - 0.1 || highBlocker ? "at_risk" : d.daysInStage > 45 ? "stalled" : "healthy";
+    // For the live pilot, trust DealRipe's actual call-driven triage (at-risk from
+    // blockers, no-shows, buyer gaps) so the room surfaces the same risk deals as the
+    // pipeline dashboard and the weekly digest, not just category downgrades.
     const health: ForecastHealth =
-      drProb < repProb - 0.1 || highBlocker
-        ? "at_risk"
-        : d.daysInStage > 45
-          ? "stalled"
-          : "healthy";
+      !usesSeededProb && rec?.dealHealth && rec.dealHealth !== "no_data"
+        ? (rec.dealHealth as ForecastHealth)
+        : derivedHealth;
     return {
       dealId: d.id,
       account: d.account,
       industry: d.industry,
-      arr: d.arr,
+      stageKey: d.stageKey ?? "",
+      stageLabel: STAGE_LABELS[d.stageKey ?? ""] ?? (d.stageKey ?? "—"),
+      arr,
       repProb,
       drProb,
       repProbPct: Math.round(repProb * 100),
       drProbPct: Math.round(drProb * 100),
       deltaPts: Math.round((drProb - repProb) * 100),
-      repCategory: categoryOf(repProb),
-      drCategory: categoryOf(drProb),
-      closeDate: d.repForecastCloseDate || null,
+      repCategory,
+      drCategory,
+      closeDate: d.repForecastCloseDate || rec?.closeDate || null,
       repName: repName(d.repEmail ?? null),
       repEmail: d.repEmail ?? null,
       gatesConfirmed: prog.confirmed,
@@ -201,14 +268,20 @@ export async function getForecastRoom(tenantId: string): Promise<ForecastRoom> {
 
   const repWeightedUsd = Math.round(roomDeals.reduce((n, x) => n + x.arr * x.repProb, 0));
   const drWeightedUsd = Math.round(roomDeals.reduce((n, x) => n + x.arr * x.drProb, 0));
-  const gapToTargetUsd = Math.max(0, QUARTER_TARGET_USD - drWeightedUsd);
+  const pipelineTotalUsd = Math.round(roomDeals.reduce((n, x) => n + x.arr, 0));
+  const gapToTargetUsd = hasTarget ? Math.max(0, (quarterTargetUsd as number) - drWeightedUsd) : 0;
   const overcommitUsd = Math.max(0, repWeightedUsd - drWeightedUsd);
 
-  // Ranked by weighted risk: ARR x the size of the rep/DealRipe gap, so a big
-  // deal with a big swing (either direction) sits at the top.
+  // Every deal that needs the leader's attention: a category the rep is running
+  // ahead on (delta), OR a deal DealRipe flagged at risk / stalled (buyer gap,
+  // no-show, blocker) even if the category matches. Ranked by ARR x how much is at
+  // stake — a delta when there is one, else a risk floor — so the big risky deals
+  // lead. Deals with a real delta keep their exact prior ordering (seeded demo).
+  const riskWeight = (x: ForecastRoomDeal) =>
+    x.arr * (x.deltaPts !== 0 ? Math.abs(x.deltaPts) : x.health === "at_risk" ? 20 : x.health === "stalled" ? 8 : 0);
   const changed = roomDeals
-    .filter((x) => x.deltaPts !== 0)
-    .sort((a, b) => Math.abs(b.deltaPts) * b.arr - Math.abs(a.deltaPts) * a.arr);
+    .filter((x) => x.deltaPts !== 0 || x.health !== "healthy")
+    .sort((a, b) => riskWeight(b) - riskWeight(a));
 
   // The prescribed actions that close the gap, from each deal's REAL seeded task,
   // ranked by the forecast lift they carry. Lift scales with the deal size and the
@@ -256,8 +329,10 @@ export async function getForecastRoom(tenantId: string): Promise<ForecastRoom> {
 
   return {
     weekOf,
-    quarterTargetUsd: QUARTER_TARGET_USD,
-    quarterLabel: QUARTER_LABEL,
+    quarterTargetUsd: quarterTargetUsd ?? 0,
+    quarterLabel: hasTarget ? QUARTER_LABEL : "",
+    hasTarget,
+    pipelineTotalUsd,
     repWeightedUsd,
     drWeightedUsd,
     gapToTargetUsd,

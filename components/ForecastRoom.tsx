@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { demoEmailDraft, upcomingSlots } from "@/lib/demo-drafts";
 import type { ForecastRoom, ForecastRoomAction, ForecastRoomDeal } from "@/lib/forecast-room";
-import { withTenant } from "@/lib/tenant-nav";
+import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
 
 // ============================================================
 // Money + helpers
@@ -94,7 +94,8 @@ export function ForecastRoomView({ data, tenant }: { data: ForecastRoom; tenant:
 // The room
 // ============================================================
 function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; onStart: () => void }) {
-  const gap = data.gapToTargetUsd;
+  const hasTarget = data.hasTarget;
+  const gap = hasTarget ? data.gapToTargetUsd : data.overcommitUsd;
   const dealsAtRisk = data.deals.filter((d) => d.health === "at_risk").length;
 
   const [openAction, setOpenAction] = useState<ForecastRoomAction | null>(null);
@@ -132,20 +133,27 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
         <div className="flex items-center gap-3 text-[12px]">
           <Link href={withTenant("/actions", tenant)} className="text-accent hover:underline">Actions</Link>
           <Link href={withTenant("/digests", tenant)} className="text-accent hover:underline">Weekly digest</Link>
+          {tenant === DEFAULT_TENANT_SLUG && (
+            <Link href="/review?view=pipeline" className="text-accent hover:underline">Full pipeline changes</Link>
+          )}
         </div>
       </div>
 
       {/* The number */}
       <section className="mt-5 bg-white rounded-xl2 shadow-card border border-line p-7">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-7 md:gap-6">
-          <Cell label="Quarter target" value={money(data.quarterTargetUsd)} sub={data.quarterLabel} tone="muted" />
+          {hasTarget ? (
+            <Cell label="Quarter target" value={money(data.quarterTargetUsd)} sub={data.quarterLabel} tone="muted" />
+          ) : (
+            <Cell label="Total pipeline" value={money(data.pipelineTotalUsd)} sub={`${data.deals.length} deals`} tone="muted" />
+          )}
           <Cell label="DealRipe forecast" value={money(data.drWeightedUsd)} sub="Weighted by qualification" tone="ink" hero />
           <button onClick={onStart} className="text-left group" aria-label="Start pipeline review">
             <Cell
-              label="Gap to target"
+              label={hasTarget ? "Gap to target" : "Overcommit"}
               value={money(gap)}
-              prefix={<span className="text-danger">−</span>}
-              sub={`${dealsAtRisk} deal${dealsAtRisk === 1 ? "" : "s"} can close it`}
+              prefix={hasTarget ? <span className="text-danger">−</span> : undefined}
+              sub={hasTarget ? `${dealsAtRisk} deal${dealsAtRisk === 1 ? "" : "s"} can close it` : "reps above DealRipe"}
               subClickable
               tone="danger"
               large
@@ -163,7 +171,7 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
         <div className="mt-7 pt-5 border-t border-line">
           <p className="text-[13.5px] italic text-muted leading-relaxed max-w-[820px]">
             If you carry the rep number, you commit {money(data.overcommitUsd)} that the calls do not yet support. If you carry
-            DealRipe&apos;s number, you have a plan to close to target.
+            DealRipe&apos;s number, {hasTarget ? "you have a plan to close to target." : "you’re forecasting on what the calls actually support."}
           </p>
         </div>
       </section>
@@ -178,14 +186,17 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
           </div>
         ) : (
           <div className="bg-white rounded-xl2 shadow-card border border-line overflow-x-auto">
-            <table className="w-full text-left text-[13px] min-w-[900px]">
+            <table className="w-full text-left text-[13px] min-w-[1120px]">
               <thead className="bg-bg/50 border-b border-line">
                 <tr className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-                  <th className="px-5 py-3 w-[240px]">Deal</th>
+                  <th className="px-5 py-3 w-[200px]">Deal</th>
+                  <th className="px-2 py-3">Stage</th>
                   <th className="px-2 py-3">ARR</th>
+                  <th className="px-2 py-3">Close</th>
                   <th className="px-2 py-3">Rep</th>
+                  <th className="px-2 py-3">Rep forecast</th>
                   <th className="px-2 py-3">DealRipe</th>
-                  <th className="px-2 py-3 text-right">Delta</th>
+                  <th className="px-2 py-3 text-right">{hasTarget ? "Delta" : "Status"}</th>
                   <th className="px-5 py-3">Why DealRipe reads it this way</th>
                 </tr>
               </thead>
@@ -198,13 +209,27 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
                       </Link>
                       {d.industry && <div className="text-[11px] text-muted mt-0.5">{d.industry}</div>}
                     </td>
+                    <td className="px-2 py-3.5 text-ink whitespace-nowrap">
+                      {d.stageKey ? <span className="text-muted">{d.stageKey} · </span> : null}
+                      {d.stageLabel}
+                    </td>
                     <td className="px-2 py-3.5 text-ink font-medium whitespace-nowrap">{money(d.arr)}</td>
+                    <td className="px-2 py-3.5 text-muted whitespace-nowrap">{fmtDate(d.closeDate)}</td>
+                    <td className="px-2 py-3.5 text-ink whitespace-nowrap">{d.repName}</td>
                     <td className="px-2 py-3.5 text-muted whitespace-nowrap">{d.repProbPct}% &middot; {d.repCategory}</td>
                     <td className="px-2 py-3.5 text-ink font-semibold whitespace-nowrap">{d.drProbPct}% &middot; {d.drCategory}</td>
-                    <td className={`px-2 py-3.5 text-right font-bold whitespace-nowrap ${d.deltaPts < 0 ? "text-danger" : "text-accent"}`}>
-                      {d.deltaPts > 0 ? "+" : ""}{d.deltaPts}pt
+                    <td className="px-2 py-3.5 text-right whitespace-nowrap">
+                      {hasTarget ? (
+                        <span className={`font-bold ${d.deltaPts < 0 ? "text-danger" : "text-accent"}`}>
+                          {d.deltaPts > 0 ? "+" : ""}{d.deltaPts}pt
+                        </span>
+                      ) : (
+                        <span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded ${HEALTH[d.health].chip}`}>
+                          {HEALTH[d.health].label}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-5 py-3.5 text-ink leading-snug min-w-[300px]">{d.reason}</td>
+                    <td className="px-5 py-3.5 text-ink leading-snug min-w-[280px]">{d.reason}</td>
                   </tr>
                 ))}
               </tbody>
@@ -215,7 +240,7 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
 
       {/* What closes the gap */}
       <section className="mt-9">
-        <h2 className="text-[17px] font-semibold tracking-tight text-ink">What closes your {money(gap)} gap to target</h2>
+        <h2 className="text-[17px] font-semibold tracking-tight text-ink">What closes your {money(gap)} gap</h2>
         <p className="text-[13px] text-muted mt-0.5 mb-3">The prescribed actions, ranked by weighted forecast lift.</p>
         <div className="space-y-3">
           {data.actions.map((a, i) => {
@@ -330,7 +355,8 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
         </div>
       )}
 
-      {/* Forecast accuracy */}
+      {/* Forecast accuracy — demo tenant only (the 90/63/184 figures are illustrative). */}
+      {hasTarget && (
       <section className="mt-9">
         <h2 className="text-[17px] font-semibold tracking-tight text-ink">Why trust the DealRipe forecast</h2>
         <p className="text-[13px] text-muted mt-0.5 mb-3">Forecast accuracy over the last eight quarters.</p>
@@ -351,6 +377,7 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
           </div>
         </div>
       </section>
+      )}
 
       <button
         onClick={onStart}

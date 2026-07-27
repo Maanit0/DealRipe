@@ -26,6 +26,7 @@ export type SendEmailArgs = {
   html: string;
   text: string;
   replyTo?: string;
+  bcc?: string | string[];
 };
 
 export type SendEmailResult = { id: string };
@@ -66,6 +67,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
     html: args.html,
     text: args.text,
     ...(args.replyTo ? { reply_to: args.replyTo } : {}),
+    ...(args.bcc ? { bcc: Array.isArray(args.bcc) ? args.bcc : [args.bcc] } : {}),
   });
   if (res.error) {
     throw new Error(`Resend send failed: ${res.error.message}`);

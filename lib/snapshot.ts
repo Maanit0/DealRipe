@@ -16,6 +16,7 @@
 
 import type { Json } from "./database.types";
 import { inferStageKey } from "./deal-state";
+import { getFrameworkForDeal } from "./framework";
 import type { Framework } from "./framework";
 import {
   frameworkProgress,
@@ -26,6 +27,7 @@ import { rolldogOppIdForDeal } from "./pilot-config";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import type { Deal } from "./seed-data";
 import { supabaseAdmin } from "./supabase";
+import { getDealsForTenant } from "./supabase-queries";
 
 export type StageGateSnapshot = {
   met: number;
@@ -206,4 +208,28 @@ export async function recordDealSnapshot(
   if (res.error) {
     throw new Error(`snapshot write failed for deal ${deal.id}: ${res.error.message}`);
   }
+}
+
+/**
+ * Record a snapshot for every deal in the tenant: read each deal's live Rolldog
+ * state and write today's snapshot row (upsert on deal_id,snapshot_date, so a
+ * re-run inside the same day just refreshes today's values). Shared by the daily
+ * snapshot cron and by the digest cron, which runs this first so the digest and
+ * everything reading the latest snapshot reflect current Rolldog, not yesterday's.
+ * Returns the number of deals written.
+ */
+export async function recordAllDealSnapshots(tenantId: string): Promise<number> {
+  const deals = await getDealsForTenant(tenantId);
+  const rolldogByDeal = await resolveRolldogSnapshots(
+    tenantId,
+    deals.map((d) => d.id),
+  );
+  let written = 0;
+  for (const deal of deals) {
+    const framework = await getFrameworkForDeal(deal.id);
+    if (!framework) continue;
+    await recordDealSnapshot(tenantId, deal, framework, rolldogByDeal.get(deal.id) ?? null);
+    written += 1;
+  }
+  return written;
 }

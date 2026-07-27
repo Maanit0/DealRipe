@@ -302,6 +302,16 @@ export function renderPipelineDigestEmail(args: {
       const divergeHtml = diverges
         ? `<div style="background:${RED_TINT};border-radius:10px;padding:12px 15px;margin-top:14px;"><div style="font-family:${SANS};font-size:15px;line-height:22px;color:${INK};"><strong style="color:${RED};">${esc(d.repName)} has this at ${esc(d.forecastCategory ?? "")}, DealRipe rates it ${esc(d.dealRipeCategory ?? "")}.</strong> ${esc(d.blockers[0] ?? "")}</div></div>`
         : "";
+      // The rep-move line: the rep changed the forecast category in the window
+      // (e.g. "Eduardo moved this from Expect to Commit this week"). Green when the
+      // rep raised confidence, amber when they softened it. Leads the movement
+      // section because it is the change Mark most wants flagged.
+      const fcMove = d.changes.find(
+        (c) => c.kind === "forecast" && c.from && c.to && c.from !== c.to,
+      );
+      const repMoveHtml = fcMove
+        ? `<div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};margin-top:6px;"><span style="color:${fcat(fcMove.to) > fcat(fcMove.from) ? GREEN : AMBER};font-size:10px;">&#9679;</span>&nbsp; <strong style="color:${NAVY};">${esc(d.repName)} moved this from ${esc(fcMove.from ?? "")} to ${esc(fcMove.to ?? "")} this week.</strong></div>`
+        : "";
       const toneColor = (t: "up" | "down" | "neutral") => (t === "up" ? GREEN : t === "down" ? RED : MUTED);
       const whatChangedHtml = d.whatChanged.length
         ? d.whatChanged
@@ -353,6 +363,7 @@ export function renderPipelineDigestEmail(args: {
 
             <div style="${LABEL}margin-top:18px;">Moved this week</div>
             <div style="font-family:${SANS};font-size:15px;line-height:22px;color:${moveColor};font-weight:600;margin-top:4px;">${esc(d.movement.summary)}</div>
+            ${repMoveHtml}
             ${whatChangedHtml}
 
             <div style="${LABEL}margin-top:18px;">What's blocking</div>
@@ -433,6 +444,8 @@ export function renderPipelineDigestEmail(args: {
       t.push(`${i + 1}. ${d.account} (${d.stageName ?? "—"}, ${d.forecastCategory ?? "—"}, closes ${dstr(d.closeDate) || "—"})`);
       if (fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory)) t.push(`   ${d.repName} has this at ${d.forecastCategory}, DealRipe rates it ${d.dealRipeCategory}: ${d.blockers[0] ?? ""}`);
       t.push(`   Moved this week: ${d.movement.summary}`);
+      const fcMoveT = d.changes.find((c) => c.kind === "forecast" && c.from && c.to && c.from !== c.to);
+      if (fcMoveT) t.push(`     - ${d.repName} moved this from ${fcMoveT.from} to ${fcMoveT.to} this week.`);
       for (const w of d.whatChanged) t.push(`     - ${w.label ? `${w.label}: ` : ""}${w.text}`);
       t.push(`   Blocking:`);
       for (const b of (d.blockers.length ? d.blockers : ["Worth a look."])) t.push(`     - ${b}`);

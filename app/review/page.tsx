@@ -66,7 +66,7 @@ const CHANGE_SECTIONS: Array<{ kind: ChangeEvent["kind"]; title: string }> = [
   { kind: "lost", title: "Closed lost" },
 ];
 
-type SP = { range?: string; from?: string; to?: string; netnew?: string; noshow?: string; rep?: string; tracked?: string; tenant?: string };
+type SP = { range?: string; from?: string; to?: string; netnew?: string; noshow?: string; rep?: string; tracked?: string; tenant?: string; view?: string };
 
 function nextStep(d: DealChangeRecord): string {
   if (d.dealHealth === "no_data") return "—";
@@ -110,31 +110,33 @@ function readText(d: DealChangeRecord): string {
 export default async function ReviewPage({ searchParams }: { searchParams: SP }) {
   const tenant = searchParams.tenant ?? DEFAULT_TENANT_SLUG;
 
-  // Non-magaya tenants (the keelson demo) get the Forecast Room, computed from
-  // their real deals + snapshots. magaya keeps the exact pipeline-changes
-  // dashboard below, byte-for-byte, so the live pilot never changes.
-  if (tenant !== DEFAULT_TENANT_SLUG) {
-    let room: ForecastRoom | null = null;
-    try {
-      const tenantId = await resolveTenantId(tenant);
-      room = await getForecastRoom(tenantId);
-    } catch (err) {
-      console.error("[review] forecast room load failed:", err);
-    }
-    return (
-      <AppShell active="review" tenant={tenant}>
-        {room ? (
-          <ForecastRoomView data={room} tenant={tenant} />
-        ) : (
-          <div className="max-w-[1180px] mx-auto px-6 py-7 text-[13px] text-muted">
-            Forecast Room could not load for this tenant.
-          </div>
-        )}
-      </AppShell>
-    );
+  // The full pipeline-changes dashboard stays one click away for magaya at
+  // ?view=pipeline, so none of that work is lost.
+  if (tenant === DEFAULT_TENANT_SLUG && searchParams.view === "pipeline") {
+    return <MagayaReview searchParams={searchParams} />;
   }
 
-  return <MagayaReview searchParams={searchParams} />;
+  // Everyone, including the live pilot, gets the Forecast Room by default. The demo
+  // tenant carries a real quarter target; the pilot has none, so DealRipe forecasts
+  // from its own read and leads with the overcommit, not a fabricated target.
+  let room: ForecastRoom | null = null;
+  try {
+    const tenantId = await resolveTenantId(tenant);
+    room = await getForecastRoom(tenantId, tenant === DEFAULT_TENANT_SLUG ? {} : { quarterTargetUsd: 2_500_000 });
+  } catch (err) {
+    console.error("[review] forecast room load failed:", err);
+  }
+  return (
+    <AppShell active="review" tenant={tenant}>
+      {room ? (
+        <ForecastRoomView data={room} tenant={tenant} />
+      ) : (
+        <div className="max-w-[1180px] mx-auto px-6 py-7 text-[13px] text-muted">
+          Forecast Room could not load for this tenant.
+        </div>
+      )}
+    </AppShell>
+  );
 }
 
 async function MagayaReview({ searchParams }: { searchParams: SP }) {

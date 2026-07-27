@@ -17,7 +17,7 @@ const ITEMS: Record<NavKey, { label: string; base: string }> = {
 };
 
 // Default (magaya / pilot) order.
-const DEFAULT_ORDER: NavKey[] = ["deals", "meetings", "actions", "activity", "review", "report"];
+const DEFAULT_ORDER: NavKey[] = ["review", "deals", "meetings", "actions", "report", "activity"];
 // Demo order (keelson and other non-magaya tenants), sequenced to walk the story:
 // the CRO's Forecast Room first, then the pre/post-call content the AE gets
 // (Meetings), then the actions that close the gaps, then the CRM write-back, then

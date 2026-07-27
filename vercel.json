@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/snapshot",
-      "schedule": "0 5 * * *"
+      "schedule": "0 */4 * * *"
     },
     {
       "path": "/api/cron/rolldog-relink",
@@ -26,7 +26,7 @@
     },
     {
       "path": "/api/cron/digest",
-      "schedule": "0 11 * * 1"
+      "schedule": "0 11 * * 2"
     },
     {
       "path": "/api/cron/audit",

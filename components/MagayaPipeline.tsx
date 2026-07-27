@@ -32,7 +32,7 @@ type Row = {
   total: number;
   currentOpen: number;
   callsCount: number;
-  category: "Commit" | "Expect" | "Pipeline";
+  category: "Commit" | "Expect" | "Pipeline" | "Omitted";
   mismatch: boolean;
   health: Health;
   /** DealRipe evidence-based risk flags (the "why"), most important first. */
@@ -44,13 +44,28 @@ function stageRank(key: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// Magaya reps use forecast categories, not percentages. Until the live
-// Rolldog read provides the category directly, derive it from the seeded
-// number as a bridge.
+// Magaya reps use forecast categories, not percentages. The live Rolldog read
+// provides the real category (see liveCategory); deriveCategory is only the
+// fallback when no Rolldog read is available (throttled read, or the keelson
+// demo, which has no live CRM).
 function deriveCategory(p: number): "Commit" | "Expect" | "Pipeline" {
   if (p >= 0.7) return "Commit";
   if (p >= 0.4) return "Expect";
   return "Pipeline";
+}
+
+// Normalize the rep-entered forecast category from Rolldog to our four buckets.
+// This is the source of truth for the pilot: what the rep actually has in the
+// CRM, the same value the digest and Forecast Room read. Null when absent or
+// unrecognized, so the caller falls back to deriveCategory.
+function liveCategory(raw: string | null | undefined): Row["category"] | null {
+  if (!raw) return null;
+  const l = raw.toLowerCase();
+  if (l.includes("commit")) return "Commit";
+  if (l.includes("expect")) return "Expect";
+  if (l.includes("omit")) return "Omitted";
+  if (l.includes("pipeline")) return "Pipeline";
+  return null;
 }
 
 export function MagayaPipeline({
@@ -92,7 +107,14 @@ export function MagayaPipeline({
   const visibleDeals = repFilter
     ? salesDeals.filter((d) => (d.repEmail ?? "").toLowerCase() === repFilter)
     : salesDeals;
-  const rows: Row[] = framework ? visibleDeals.map((deal) => buildRow(deal, framework)) : [];
+  // Pilot (magaya) reads the real rep category from the live Rolldog summary;
+  // the keelson demo has no live CRM, so it keeps its tuned seeded categories.
+  const isPilot = tenant === DEFAULT_TENANT_SLUG;
+  const rows: Row[] = framework
+    ? visibleDeals.map((deal) =>
+        buildRow(deal, framework, isPilot ? summariesByDealId[deal.id]?.forecastCategory ?? null : null),
+      )
+    : [];
 
   rows.sort((a, b) => {
     const order = { at_risk: 0, stalled: 1, healthy: 2 };
@@ -394,18 +416,20 @@ export function MagayaPipeline({
   );
 }
 
-function buildRow(deal: Deal, framework: Framework): Row {
+function buildRow(deal: Deal, framework: Framework, liveCategoryRaw: string | null = null): Row {
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
   const completion = total > 0 ? confirmed / total : 0;
-  const category = deriveCategory(deal.repForecastProbability);
+  // The real rep category from Rolldog when we have it, else the seeded bridge.
+  const category = liveCategory(liveCategoryRaw) ?? deriveCategory(deal.repForecastProbability);
 
   const stages = frameworkStages(framework);
   const current = stages.find((s) => s.key === deal.stageKey);
   const currentGate = current ? stageGateStatus(current, deal.extraction) : null;
   const currentOpen = currentGate ? currentGate.total - currentGate.met : 0;
 
-  // The rep is confident (Commit/Expect) but the calls don't back it.
-  const mismatch = category !== "Pipeline" && completion < 0.6;
+  // The rep is confident (Commit/Expect) but the calls don't back it. Omitted
+  // and Pipeline are not "ahead of the evidence", so they never mismatch.
+  const mismatch = (category === "Commit" || category === "Expect") && completion < 0.6;
 
   // DealRipe evidence-based risk flags, from what the calls actually captured.
   const ds = deriveDealState(framework, deal.extraction, deal.stageKey);
