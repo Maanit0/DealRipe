@@ -122,7 +122,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: SP })
   let room: ForecastRoom | null = null;
   try {
     const tenantId = await resolveTenantId(tenant);
-    room = await getForecastRoom(tenantId, tenant === DEFAULT_TENANT_SLUG ? {} : { quarterTargetUsd: 2_500_000 });
+    room = await getForecastRoom(tenantId, tenant === DEFAULT_TENANT_SLUG ? { pilot: true } : { quarterTargetUsd: 2_500_000 });
   } catch (err) {
     console.error("[review] forecast room load failed:", err);
   }

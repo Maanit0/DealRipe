@@ -59,6 +59,37 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* The problem, in the leader's words */}
+        <section className="py-20 border-t border-line">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-3">
+            The problem
+          </div>
+          <h2 className="text-[28px] sm:text-[32px] font-semibold tracking-tight text-ink leading-tight max-w-[720px]">
+            You own the number. You don&rsquo;t own the inputs.
+          </h2>
+          <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-9">
+            <Problem title="You can&rsquo;t tell the customer from the rep.">
+              A rep says a deal is closing and your tools take it at face value.
+              But what the customer actually said and what the rep heard are
+              rarely the same thing.
+            </Problem>
+            <Problem title="Your pipeline is full of deals that aren&rsquo;t real.">
+              It&rsquo;s month-end and half the deals dated to close won&rsquo;t.
+              Everyone knows it, nobody updated them, and you strip them out by
+              hand before you can trust your own number.
+            </Problem>
+            <Problem title="The flags never tell you what to do.">
+              Every tool surfaces risk. None of them say get the economic buyer
+              in the room before the proposal goes out. So the gap gets found
+              too late, and the deal slips a quarter.
+            </Problem>
+            <Problem title="And if the forecast is wrong, it&rsquo;s on you.">
+              Not the rep who over-committed. You. Accurate forecasting is the
+              job, and today it rests on inputs you can&rsquo;t fully trust.
+            </Problem>
+          </div>
+        </section>
+
         {/* How it works */}
         <section className="py-20 border-t border-line">
           <div className="text-[10px] uppercase tracking-wider font-bold text-muted mb-8">
@@ -268,6 +299,23 @@ function DepthItem({
         {title}
       </div>
       <p className="mt-2 text-[14px] leading-relaxed text-muted">{children}</p>
+    </div>
+  );
+}
+
+function Problem({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="border-l-2 border-danger/40 pl-4">
+      <div className="text-[16px] font-semibold tracking-tight text-ink leading-snug">
+        {title}
+      </div>
+      <p className="mt-2 text-[14.5px] leading-relaxed text-muted">{children}</p>
     </div>
   );
 }

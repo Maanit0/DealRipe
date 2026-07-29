@@ -3,7 +3,7 @@
  * render the email, and write an HTML preview. Optionally send it.
  *
  *   npx tsx scripts/test-briefing-email.ts
- *   npx tsx scripts/test-briefing-email.ts --deal aquagulf
+ *   npx tsx scripts/test-briefing-email.ts --deal iff
  *   npx tsx scripts/test-briefing-email.ts --send you@example.com
  *
  * Requires ANTHROPIC_API_KEY + Supabase. --send needs RESEND_API_KEY +
@@ -28,7 +28,7 @@ type Args = { tenantSlug: string; dealExternalId: string; send?: string; out: st
 function parseArgs(argv: string[]): Args {
   const a: Args = {
     tenantSlug: "magaya",
-    dealExternalId: "aquagulf",
+    dealExternalId: "iff",
     out: path.join(process.cwd(), ".previews", "pre-call-briefing.html"),
   };
   for (let i = 0; i < argv.length; i++) {

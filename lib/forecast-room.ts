@@ -178,10 +178,15 @@ const DEMO_ACTION_DETAIL: Record<string, string> = {
 
 export async function getForecastRoom(
   tenantId: string,
-  opts?: { quarterTargetUsd?: number | null },
+  opts?: { quarterTargetUsd?: number | null; pilot?: boolean },
 ): Promise<ForecastRoom> {
   const quarterTargetUsd = opts?.quarterTargetUsd ?? null;
   const hasTarget = quarterTargetUsd != null;
+  // The live pilot (magaya) forecasts in CRM categories, not seeded probabilities.
+  // When pilot, read the rep and DealRipe categories straight from live Rolldog (the
+  // same source as the weekly digest and the pipeline dashboard) and never from a
+  // seeded probability, so the Forecast Room can never disagree with the digest.
+  const pilot = opts?.pilot === true;
   const untilIso = new Date().toISOString();
   const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
 
@@ -202,8 +207,12 @@ export async function getForecastRoom(
     // The demo tenant carries a seeded 0..1 probability + annual arr. The live pilot
     // (magaya) does not: its amounts are monthly in the CRM and its forecast is a
     // category. Fall back to those so the room reads real numbers, not $0.
-    const usesSeededProb = !!(d.repForecastProbability && d.repForecastProbability > 0);
-    const arr = d.arr && d.arr > 0 ? d.arr : Math.round((rec?.dealSizeMonthly ?? 0) * 12);
+    const usesSeededProb = !pilot && !!(d.repForecastProbability && d.repForecastProbability > 0);
+    const arr = pilot
+      ? Math.round((rec?.dealSizeMonthly ?? 0) * 12)
+      : d.arr && d.arr > 0
+        ? d.arr
+        : Math.round((rec?.dealSizeMonthly ?? 0) * 12);
     const repProb = usesSeededProb ? (d.repForecastProbability as number) : categoryToProb(rec?.forecastCategory);
     // DealRipe read: demo override; else, for the pilot, the category DealRipe assigned
     // on the calls; else the qualification temper; else defer to the rep on unseen deals.

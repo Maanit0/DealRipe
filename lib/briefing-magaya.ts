@@ -15,6 +15,7 @@
  */
 
 import type { Framework } from "./framework";
+import { CLOSING_DISCIPLINE, formatPlaysForBriefing } from "./magaya-plays";
 
 export type FieldStatus = {
   status: "Yes" | "No" | "Unknown";
@@ -114,6 +115,8 @@ Rules:
 10. "signalFlag" is one short flag ONLY if there is a live risk worth surfacing (economic buyer not engaged, deal stalled, competitor ahead, close date unvalidated). Otherwise null.
 11. Do not invent facts that are not in the provided state.
 12. Be brief and scannable, the rep reads this live on a call. Every text field (callObjective, whereItStands, nextStepCommitment, whatsAtRisk, signalFlag) is ONE tight sentence, at most about 22 words, no run-ons and no lists. Each question "ask" is at most about 18 words. Each "why" is one short line, at most about 14 words. Favor fewer words over completeness.
+13. "nextStepCommitment" must be a specific, dated commitment: name the action and a concrete near-term date or timeframe the rep proposes on this call, anchored to TODAY in the user message (for example "early next week" or "the week of <a date after TODAY>"). Never use a past date. ${CLOSING_DISCIPLINE}
+14. The user message includes a reference block of how Magaya's best reps phrase questions for these gaps. Match that voice and style in your "ask" wording, and adapt each to this customer and the attendees. Do not copy the reference verbatim when it does not fit.
 
 Return a single JSON object, no prose, no markdown fences:
 {
@@ -138,6 +141,8 @@ export function buildMagayaBriefingUserMessage(args: {
   currentGaps: Gap[];
   nextGaps: Gap[];
   history?: string;
+  /** Today's date (YYYY-MM-DD), so the next-step commitment anchors a real near-term date. */
+  today?: string;
 }): string {
   const { framework, extraction } = args;
 
@@ -155,6 +160,7 @@ export function buildMagayaBriefingUserMessage(args: {
   const gapLine = (g: Gap) => `- ${g.fieldKey} (${g.label}) [${g.status}]`;
 
   const lines = [
+    args.today ? `TODAY: ${args.today}` : "",
     `ACCOUNT: ${args.account}`,
     `CURRENT STAGE: ${args.stage}${args.nextStage ? ` (next: ${args.nextStage})` : ""}`,
     args.closeDate ? `CLOSE DATE: ${args.closeDate}` : "",
@@ -173,6 +179,14 @@ export function buildMagayaBriefingUserMessage(args: {
 
   if (args.history) {
     lines.push(``, `SINCE LAST CALL:`, args.history);
+  }
+
+  // Reference: how Magaya's best reps phrase questions for the open gaps on this
+  // call. Guides the voice of the generated "ask" fields; adapted, not copied.
+  const gapLabels = [...args.currentGaps, ...args.nextGaps].map((g) => g.label);
+  const playsBlock = formatPlaysForBriefing(gapLabels);
+  if (playsBlock) {
+    lines.push(``, playsBlock);
   }
 
   lines.push(

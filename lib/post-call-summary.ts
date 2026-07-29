@@ -112,7 +112,7 @@ Rules:
 2. No marketing language, no praise, no "great call". Plain, factual, the way a sales manager recaps to a rep.
 3. Ground every statement in the transcript. Do not invent facts, numbers, names, or commitments that were not said.
 4. "recap": 2 to 3 short sentences, each at most about 16 words, on what actually happened, what the customer said, what moved or was deferred. Concrete, not generic. Brief and scannable, no run-ons.
-5. "suggestedNextStep": ONE specific next action for the rep, at most about 18 words. Name the person or action. One tight sentence.
+5. "suggestedNextStep": ONE specific next action for the rep, at most about 18 words. Name the person or action. When a follow-up meeting is expected, make it a concrete dated step and prompt booking it now, never a conditional "if you think it makes sense". One tight sentence.
 6. Write for the rep's eyes. Second person is fine ("you").
 7. "nextStepCommitment": the concrete next action from the rep's side, phrased as a short imperative fragment with NO trailing period and NOT starting with the rep's own name (e.g. "send Ely the product videos and datasheet", "reconvene after their board meets"). At most about 14 words, or null if none was set.
 8. "followUpMeetingExpected": true ONLY if a specific next meeting, call, or demo was agreed and could be booked now with both sides ready. Set it FALSE if the immediate next step is asynchronous (sending materials, waiting on the customer's internal review or an RFI), if the next meeting is gated on a prerequisite like a signed NDA, if a meeting was already scheduled on the call, or if the deal is dead. When in doubt, false.

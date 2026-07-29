@@ -48,6 +48,7 @@ import { sendNoShowFollowup } from "./no-show-followup";
 import { logNoShowToRolldog, writeBackDealToRolldog } from "./rolldog-writeback";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
+import { customerParticipation } from "./attendance";
 import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
 import { rolldogOppIdForDeal } from "./pilot-config";
 import { supabaseAdmin } from "./supabase";
@@ -485,151 +486,248 @@ async function processRow(
     // Body IS durable, so we still attempt the delete below.
   }
 
-  // ----- 5. Run extraction. Failure here sets ingest_error but does
-  //          NOT block the delete step — the body is durable. -----
+  // ----- 5. Classify the meeting, then extract + write back ONLY for
+  //          customer sales calls. -----
+  //
+  // DealRipe auto-joins meetings, and the subject-match path can even put a bot
+  // in an internal prep or pipeline-review meeting ABOUT a deal. Deal truth
+  // (field_extractions + Rolldog write-back) must come only from real customer
+  // sales calls, never from a rep's internal "happy ears" about a deal. So we
+  // classify FIRST and gate qualification extraction + write-back on
+  // new_opportunity. Internal / existing-customer meetings get a recap only.
 
-  try {
-    const ingestResult = await ingestTranscript({
-      source: "recall_ai",
-      externalCallId,
-      transcript,
-    });
-    counts.extracted += 1;
-    emit({ kind: "extracted", callId, recallBotId });
-
-    // Record the positive outcome so the UI shows "Extracted" deterministically
-    // rather than inferring it. Best-effort; never blocks the pipeline.
-    const outc = await db.from("calls").update({ outcome: "captured" }).eq("id", callId);
-    if (outc.error) {
-      console.error(`[transcript-sync] outcome=captured mark failed for call ${callId}: ${outc.error.message}`);
-    }
-
-    // Classify the meeting once and persist it, so the pipeline and digest can
-    // drop non-opportunity (customer/internal) meetings out of the sales view.
-    // Reused by the recap below so it isn't classified twice.
-    // Deal context: a deal with a Rolldog opportunity is a tracked, open sales
-    // opportunity, so customer-facing calls are sales calls (never existing-customer).
-    const dealLink = await db
+  // Resolve the deal for this call (calendar-sync always sets deal_id) for the
+  // classification tiebreaker and recap routing.
+  const callDealRow = await db.from("calls").select("deal_id, participants").eq("id", callId).maybeSingle();
+  let dealExternalId: string | null = null;
+  let trackedOpportunity = false;
+  if (callDealRow.data?.deal_id) {
+    const dr = await db
       .from("deals")
-      .select("rolldog_opportunity_id")
-      .eq("tenant_id", tenantId)
-      .eq("external_id", ingestResult.dealExternalId)
+      .select("external_id, rolldog_opportunity_id")
+      .eq("id", callDealRow.data.deal_id)
       .maybeSingle();
-    const trackedOpportunity =
-      !!rolldogOppIdForDeal(ingestResult.dealExternalId) || !!dealLink.data?.rolldog_opportunity_id;
-    const meetingType = await classifyMeetingType(transcript, { trackedOpportunity });
-    const callSubtype = await classifyCallSubtype({ transcript, meetingType }).catch(() => null);
-    const mt = await db
-      .from("calls")
-      .update({ meeting_type: meetingType, call_subtype: callSubtype })
-      .eq("id", callId);
-    if (mt.error) {
-      console.error(`[transcript-sync] meeting_type update failed for call ${callId}: ${mt.error.message}`);
-    }
+    dealExternalId = dr.data?.external_id ?? null;
+    trackedOpportunity =
+      !!dr.data?.rolldog_opportunity_id ||
+      (dealExternalId ? !!rolldogOppIdForDeal(dealExternalId) : false);
+  }
 
-    // Best-effort: email the rep their post-call summary. Fully isolated in
-    // its own try/catch so a mail failure can never affect ingest status or
-    // the media-delete step below.
-    let recapNextAction: string | undefined;
+  // A deal with a Rolldog opportunity is a tracked, open sales opportunity, so
+  // customer-facing calls are sales calls (never existing-customer). An
+  // all-internal meeting (no customer voice) still classifies as "internal".
+  const meetingType = await classifyMeetingType(transcript, { trackedOpportunity });
+  const callSubtype = await classifyCallSubtype({ transcript, meetingType }).catch(() => null);
+  const mt = await db
+    .from("calls")
+    .update({ meeting_type: meetingType, call_subtype: callSubtype })
+    .eq("id", callId);
+  if (mt.error) {
+    console.error(`[transcript-sync] meeting_type update failed for call ${callId}: ${mt.error.message}`);
+  }
+
+  // Deal truth is written only for customer sales calls. If the deal could not
+  // be resolved at all, fall back to the qualification path (old behavior)
+  // rather than silently dropping a call.
+  const runQualification = meetingType === "new_opportunity" || dealExternalId === null;
+
+  if (runQualification) {
+    // ----- 5a. Customer sales call: extract + write back. Failure here sets
+    //           ingest_error but does NOT block the delete step. -----
     try {
-      const notify = await sendPostCallSummary({
-        tenantId,
-        dealExternalId: ingestResult.dealExternalId,
-        extraction: ingestResult.extraction as unknown as ExtractionMap,
+      const ingestResult = await ingestTranscript({
+        source: "recall_ai",
+        externalCallId,
         transcript,
-        meetingType,
-        callId,
       });
-      recapNextAction = notify.nextAction;
-      if (!notify.sent) {
-        console.warn(
-          `[transcript-sync] post-call summary not sent for call ${callId}: ${notify.reason}`,
-        );
-      }
-    } catch (notifyErr) {
-      console.error(
-        `[transcript-sync] post-call summary send threw for call ${callId}:`,
-        notifyErr instanceof Error ? notifyErr.message : notifyErr,
-      );
-    }
+      counts.extracted += 1;
+      emit({ kind: "extracted", callId, recallBotId });
 
-    // Best-effort: push extracted fields to Rolldog. Gated + fail-closed;
-    // no-ops until the deal's opportunity id is mapped (pilot-config) and
-    // allowlisted (crm-scope). Never affects ingest.
-    try {
-      const wb = await writeBackDealToRolldog("magaya", ingestResult.dealExternalId, {
-        nextAction: recapNextAction,
-        callId,
-      });
-      if (!wb.written) {
-        console.warn(
-          `[transcript-sync] rolldog write-back skipped for call ${callId}: ${wb.reason}`,
-        );
+      // Record the positive outcome so the UI shows "Extracted" deterministically.
+      const outc = await db.from("calls").update({ outcome: "captured" }).eq("id", callId);
+      if (outc.error) {
+        console.error(`[transcript-sync] outcome=captured mark failed for call ${callId}: ${outc.error.message}`);
       }
-    } catch (wbErr) {
-      console.error(
-        `[transcript-sync] rolldog write-back threw for call ${callId}:`,
-        wbErr instanceof Error ? wbErr.message : wbErr,
-      );
-    }
 
-    // Best-effort: add the customer-side people named on the call to the deal
-    // so the Contacts card populates itself. Deduped by name; fully isolated so
-    // it can never affect ingest status or the delete step.
-    try {
-      const dealRow = await db
-        .from("deals")
-        .select("id, account")
-        .eq("tenant_id", tenantId)
-        .eq("external_id", ingestResult.dealExternalId)
-        .maybeSingle();
-      if (dealRow.data) {
-        const callRow = await db
-          .from("calls")
-          .select("call_date, scheduled_start")
-          .eq("id", callId)
-          .maybeSingle();
-        const callDate =
-          callRow.data?.call_date ??
-          callRow.data?.scheduled_start ??
-          new Date().toISOString();
-        const people = await extractContactsFromTranscript({
-          transcript,
-          account: dealRow.data.account,
-        });
-        const res = await upsertDealContacts({
+      // Best-effort: email the rep their post-call summary. Fully isolated in
+      // its own try/catch so a mail failure can never affect ingest status or
+      // the media-delete step below.
+      let recapNextAction: string | undefined;
+      try {
+        const notify = await sendPostCallSummary({
           tenantId,
-          dealId: dealRow.data.id,
-          contacts: people,
-          callDate,
+          dealExternalId: ingestResult.dealExternalId,
+          extraction: ingestResult.extraction as unknown as ExtractionMap,
+          transcript,
+          meetingType,
+          callId,
         });
-        if (res.inserted > 0) {
-          console.log(
-            `[transcript-sync] added ${res.inserted} contact(s) to ${ingestResult.dealExternalId} (skipped ${res.skipped} existing)`,
+        recapNextAction = notify.nextAction;
+        if (!notify.sent) {
+          console.warn(
+            `[transcript-sync] post-call summary not sent for call ${callId}: ${notify.reason}`,
           );
         }
+      } catch (notifyErr) {
+        console.error(
+          `[transcript-sync] post-call summary send threw for call ${callId}:`,
+          notifyErr instanceof Error ? notifyErr.message : notifyErr,
+        );
       }
-    } catch (cErr) {
-      console.error(
-        `[transcript-sync] contact extraction threw for call ${callId}:`,
-        cErr instanceof Error ? cErr.message : cErr,
+
+      // Best-effort: push extracted fields to Rolldog. Gated + fail-closed;
+      // no-ops until the deal's opportunity id is mapped (pilot-config) and
+      // allowlisted (crm-scope). Never affects ingest.
+      try {
+        const wb = await writeBackDealToRolldog("magaya", ingestResult.dealExternalId, {
+          nextAction: recapNextAction,
+          callId,
+        });
+        if (!wb.written) {
+          console.warn(
+            `[transcript-sync] rolldog write-back skipped for call ${callId}: ${wb.reason}`,
+          );
+        }
+      } catch (wbErr) {
+        console.error(
+          `[transcript-sync] rolldog write-back threw for call ${callId}:`,
+          wbErr instanceof Error ? wbErr.message : wbErr,
+        );
+      }
+
+      // Best-effort: add the customer-side people named on the call to the deal
+      // so the Contacts card populates itself. Deduped by name; fully isolated so
+      // it can never affect ingest status or the delete step.
+      try {
+        const dealRow = await db
+          .from("deals")
+          .select("id, account")
+          .eq("tenant_id", tenantId)
+          .eq("external_id", ingestResult.dealExternalId)
+          .maybeSingle();
+        if (dealRow.data) {
+          const callRow = await db
+            .from("calls")
+            .select("call_date, scheduled_start")
+            .eq("id", callId)
+            .maybeSingle();
+          const callDate =
+            callRow.data?.call_date ??
+            callRow.data?.scheduled_start ??
+            new Date().toISOString();
+          const people = await extractContactsFromTranscript({
+            transcript,
+            account: dealRow.data.account,
+          });
+          const res = await upsertDealContacts({
+            tenantId,
+            dealId: dealRow.data.id,
+            contacts: people,
+            callDate,
+          });
+          if (res.inserted > 0) {
+            console.log(
+              `[transcript-sync] added ${res.inserted} contact(s) to ${ingestResult.dealExternalId} (skipped ${res.skipped} existing)`,
+            );
+          }
+        }
+      } catch (cErr) {
+        console.error(
+          `[transcript-sync] contact extraction threw for call ${callId}:`,
+          cErr instanceof Error ? cErr.message : cErr,
+        );
+      }
+    } catch (err) {
+      counts.ingestErrors += 1;
+      const message = err instanceof Error ? err.message : String(err);
+      await writeIngestError(
+        callId,
+        `extraction failed (transcript saved; use --retry-ingest): ${message}`,
+      );
+      emit({
+        kind: "ingest-error",
+        callId,
+        recallBotId,
+        phase: "ingest",
+        message,
+      });
+      // Fall through. Body is durable; delete is still safe.
+    }
+  } else {
+    // ----- 5b. Not a customer sales call. Two sub-cases:
+    //   (i)  a customer WAS invited but nobody from their side spoke: this is a
+    //        customer NO-SHOW that turned into an internal chat. Draft a
+    //        reschedule follow-up and log the no-show; do not send a meeting recap.
+    //   (ii) a genuine internal / existing-customer meeting: recap only, no
+    //        qualification extraction and no Rolldog write-back, so a rep's
+    //        internal "happy ears" never becomes deal truth. -----
+    const { hadCustomerInvitee, anyCustomerSpoke } = customerParticipation(
+      callDealRow.data?.participants,
+      transcript,
+    );
+    const customerNoShow = hadCustomerInvitee && !anyCustomerSpoke;
+
+    if (customerNoShow) {
+      const outc = await db.from("calls").update({ outcome: "no_show" }).eq("id", callId);
+      if (outc.error) {
+        console.error(`[transcript-sync] outcome=no_show mark failed for call ${callId}: ${outc.error.message}`);
+      }
+      // Draft the reschedule follow-up for the rep (never emails the customer).
+      try {
+        const ns = await sendNoShowFollowup({ tenantId, callId });
+        console.log(
+          `[transcript-sync] no-show follow-up for call ${callId}: ${ns.sent ? `sent to ${ns.to}` : `skipped (${ns.reason})`}`,
+        );
+      } catch (err) {
+        console.warn(
+          `[transcript-sync] no-show follow-up threw for call ${callId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // Log the no-show to Rolldog (gated to a confirmed opportunity; no-ops otherwise).
+      try {
+        const wb = await logNoShowToRolldog("magaya", { callId });
+        console.log(
+          `[transcript-sync] no-show Rolldog log for call ${callId}: ${wb.written ? `wrote to opp ${wb.opportunityId}` : `skipped (${wb.reason})`}`,
+        );
+      } catch (err) {
+        console.warn(
+          `[transcript-sync] no-show Rolldog log threw for call ${callId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      console.log(
+        `[transcript-sync] call ${callId} classified ${meetingType} but the invited customer never spoke; handled as a no-show.`,
+      );
+    } else {
+      const outc = await db.from("calls").update({ outcome: "captured" }).eq("id", callId);
+      if (outc.error) {
+        console.error(`[transcript-sync] outcome=captured mark failed for call ${callId}: ${outc.error.message}`);
+      }
+      // Recap only. Empty extraction: sendPostCallSummary renders the general
+      // (non-qualification) recap and sets no next-step, so nothing flows to Rolldog.
+      try {
+        const notify = await sendPostCallSummary({
+          tenantId,
+          dealExternalId: dealExternalId as string,
+          extraction: {} as unknown as ExtractionMap,
+          transcript,
+          meetingType,
+          callId,
+        });
+        if (!notify.sent) {
+          console.warn(
+            `[transcript-sync] ${meetingType} recap not sent for call ${callId}: ${notify.reason}`,
+          );
+        }
+      } catch (notifyErr) {
+        console.error(
+          `[transcript-sync] ${meetingType} recap send threw for call ${callId}:`,
+          notifyErr instanceof Error ? notifyErr.message : notifyErr,
+        );
+      }
+      console.log(
+        `[transcript-sync] call ${callId} classified ${meetingType}; recap only, no extraction or Rolldog write-back (deal truth stays customer-calls-only).`,
       );
     }
-  } catch (err) {
-    counts.ingestErrors += 1;
-    const message = err instanceof Error ? err.message : String(err);
-    await writeIngestError(
-      callId,
-      `extraction failed (transcript saved; use --retry-ingest): ${message}`,
-    );
-    emit({
-      kind: "ingest-error",
-      callId,
-      recallBotId,
-      phase: "ingest",
-      message,
-    });
-    // Fall through. Body is durable; delete is still safe.
   }
 
   // ----- 6. Delete the source recording. Body is durable in

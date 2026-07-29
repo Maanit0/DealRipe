@@ -46,6 +46,59 @@ type CallRow = {
   outcome?: string | null;
 };
 
+/**
+ * Lean, synchronous check of whether a customer took part in a call, from the
+ * calendar participants and the transcript. Used by transcript-sync to tell a
+ * real customer meeting from a customer NO-SHOW that turned into an internal
+ * chat: if a customer was invited but nobody from their side spoke, it is a
+ * no-show even when the reps kept talking. Same speaker-matching as
+ * computeCallAttendance, so it agrees with the attendance badge in the UI.
+ */
+export function customerParticipation(
+  participants: unknown,
+  transcriptBody: string,
+): { hadCustomerInvitee: boolean; anyCustomerSpoke: boolean } {
+  const parts = Array.isArray(participants) ? (participants as Array<Record<string, unknown>>) : [];
+  const customerInvitees = parts.filter((p) => {
+    const email = typeof p.email === "string" ? p.email : "";
+    const domain = email.split("@")[1]?.toLowerCase();
+    return domain && domain !== "magaya.com";
+  });
+  if (customerInvitees.length === 0) return { hadCustomerInvitee: false, anyCustomerSpoke: false };
+
+  const speakerTokens = new Set<string>();
+  let hasExternalSpeaker = false; // a "Name | ORG" (non-Magaya) speaker joined and spoke
+  for (const raw of (transcriptBody ?? "").split("\n")) {
+    const line = raw.trim();
+    const idx = line.indexOf(":");
+    if (idx <= 0 || idx > 60) continue;
+    let label = line.slice(0, idx);
+    let org: string | null = null;
+    const pipe = label.indexOf("|");
+    if (pipe > 0) {
+      org = label.slice(pipe + 1).trim().toLowerCase();
+      label = label.slice(0, pipe);
+    }
+    const name = label.trim();
+    for (const tok of name.toLowerCase().split(/[^a-záéíóúñü]+/i)) if (tok.length >= 3) speakerTokens.add(tok);
+    if (org && name && !org.includes("magaya")) hasExternalSpeaker = true;
+  }
+  const tokens = [...speakerTokens];
+
+  const spoke = (p: Record<string, unknown>): boolean => {
+    const identity: string[] = [];
+    const name = typeof p.name === "string" ? p.name : null;
+    if (name) for (const w of name.toLowerCase().split(/[^a-záéíóúñü]+/i)) if (w.length >= 2) identity.push(w);
+    const local = (typeof p.email === "string" ? p.email : "").split("@")[0]?.toLowerCase();
+    if (local) identity.push(local);
+    return identity.some((id) =>
+      tokens.some((s) => s === id || (s.length >= 4 && id.includes(s)) || (id.length >= 4 && s.includes(id))),
+    );
+  };
+
+  return { hadCustomerInvitee: true, anyCustomerSpoke: hasExternalSpeaker || customerInvitees.some(spoke) };
+}
+
 /** Attendance for one call, given the account's known contact names. */
 async function computeCallAttendance(
   tenantId: string,

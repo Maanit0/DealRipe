@@ -1,0 +1,1565 @@
+{
+  "generatedAt": "2026-07-28T06:43:52.417Z",
+  "since": "2026-07-14",
+  "reps": [
+    "Juan",
+    "Eduardo"
+  ],
+  "reads": [
+    {
+      "id": "9a615ca2-526c-4956-a500-97aaf9399242",
+      "rep": "Juan",
+      "account": "Corelogistics",
+      "subtype": "Proposal",
+      "date": "Jul 16",
+      "callId": "9a615ca2-526c-4956-a500-97aaf9399242",
+      "gatesConfirmed": [
+        "Authority",
+        "Competition",
+        "Need",
+        "Size",
+        "Timescale",
+        "Scope",
+        "why_looking",
+        "timeline_notes",
+        "existing_systems",
+        "competition_notes",
+        "next_step_confirmed",
+        "sql2_demo_completed",
+        "close_date_validated",
+        "budget_approver_named",
+        "sql4_exec_involvement",
+        "decision_process_mapped",
+        "sql2_proposal_delivered",
+        "key_decision_maker_identified"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "Are there any questions that you may have top of mind on the platform or software itself?",
+              "why": "To surface any lingering product concerns before moving into pricing, and to confirm readiness to receive the proposal"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "If Brian says, hey, my budget is 4,000, I'll speak with Mitch and see what we could do to come as close as possible to that number.",
+              "why": "Soft probe to surface Brian's budget ceiling without asking directly, while signaling flexibility and naming the internal approver"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "How's Brian? Is Brian with you today?",
+              "why": "To confirm whether the budget approver and key decision maker was present for the proposal walkthrough"
+            }
+          ],
+          "timeline": [
+            {
+              "asked": "You mentioned that you're looking at platforms now, but in your selection process you really aren't really ready to implement a solution until the end of the year. Is that correct? Do I remember that right?",
+              "why": "To validate or correct the previously noted timeline so billing start dates and contract terms could be set accurately"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Any other questions on that part?",
+              "why": "Checkpoint close after explaining implementation fees to confirm comprehension and surface objections before moving on"
+            },
+            {
+              "asked": "I think you mentioned you wanted maybe one more demo for the rest of the team. If you think my guy might be the fit.",
+              "why": "To lock in a concrete next step — a team demo — and keep momentum toward a decision within the two-week window the customer stated"
+            }
+          ]
+        },
+        "techniques": [
+          "Timeline correction and reframe: Juan had the wrong timeline (end of year) and used a direct check-in question to surface the correction, then immediately adjusted the proposal terms on the fly to reflect the new start date",
+          "Anchoring on long-term partnership framing: Juan repeatedly used 'long-term marriage' and 'three-year contract' language to pre-empt short-term price objections and align with the customer's own stated intent to stay for 10 years",
+          "Proactive discount justification: Juan explained each discount (35% off container tracking, 25% off airway bills, 20% off implementation rate) with a rationale tied to the customer's actual volume, making discounts feel tailored rather than arbitrary",
+          "Naming the approver and threading to him: Juan named Mitchell Emerson (VP) as the pricing approver and referenced Brian as the budget decision maker, keeping both stakeholders visible and creating a path for multi-threading",
+          "Upsell framing as a low-stakes add-on: Juan introduced the white-label portal upgrade ($100 more) as a casual option to 'just talk to Brian about,' reducing friction on the upsell",
+          "Pay-as-you-go framing on implementation: Juan reframed the implementation fee as time-and-materials billed in arrears, reducing the perceived upfront risk",
+          "Tie-down on switching cost logic: Juan mirrored the customer's own reasoning ('you're not going to move from Cargo Wise to a software just for a year') to reinforce the three-year term",
+          "Competitive positioning without prompting: Juan proactively stated 'we're typically cheaper than Cargo Wise' and framed the pricing as an incentive for switching, addressing competition before the customer raised it",
+          "Checkpoint questions after each pricing section: Juan paused after each line item to confirm understanding before moving forward"
+        ],
+        "whatWorked": [
+          "The timeline check-in question ('you really aren't ready to implement until end of year, is that correct?') directly unlocked a critical correction — Pulkit clarified they could start next month, which allowed Juan to adjust billing dates and contract end dates on the call, validating the close_date_validated and timeline_notes gates. Pulkit responded: 'We can start this year itself... next month onwards.'",
+          "Juan's pre-emptive framing of the three-year contract as a long-term partnership ('if you're gonna make the change, it's gonna be for a while') was immediately confirmed by Pulkit without resistance: 'We won't move from Cargo Wise to a software just for a year.' This validated the Scope and Timescale gates.",
+          "Asking 'How's Brian? Is Brian with you today?' surfaced that Brian (the budget approver) was absent but had delegated review authority to Pulkit, and that Brian would be the final decision maker — confirming the budget_approver_named and key_decision_maker_identified gates. Pulkit responded: 'He said just look for the proposal, share the proposal with me and then we'll take the decision.'",
+          "Juan's mention of Mitchell Emerson (VP) as the pricing approver who had already blessed the draft — combined with the statement 'we don't want to let price stand in the way of us doing business together' — produced Pulkit's disclosure of the full decision process: two-week timeline, board/partner meeting, operations team approval needed. This confirmed decision_process_mapped and sql4_exec_involvement gates.",
+          "The pre-emptive competitive reference ('we're typically cheaper than Cargo Wise, and I have an incentive for you because you're coming over from Cargo Wise') produced no pushback and set a favorable price anchor before the numbers were shown, supporting the competition_notes gate.",
+          "Referencing the previously discussed team demo ('I think you mentioned you wanted maybe one more demo for the rest of the team') prompted Pulkit to confirm it would happen before finalizing: 'It will be there for sure before finalizing.' This confirmed next_step_confirmed."
+        ],
+        "phrasings": [
+          "We don't want to let price stand in the way of us doing business together.",
+          "We're looking for a long-term marriage as well, right?",
+          "If you're gonna make the change, it's gonna be for a while.",
+          "Your price won't change for three years and the price is guaranteed.",
+          "I'd rather give you more than what you need so you don't pay for overages.",
+          "You won't pay for the months that you're implementing. You're gonna pay for the months ahead.",
+          "You only pay for time that's actually consumed at the estimated time.",
+          "If Brian says, hey, my budget is 4,000, I'll speak with Mitch and see what we could do to come as close as possible to that number.",
+          "This is our first offering and draft to you — if you need to sharpen the pencil just slightly.",
+          "I have an incentive for you because you're looking at us coming over from Cargo Wise."
+        ],
+        "objections": [
+          {
+            "objection": "Pulkit asked whether creating a shipment in Magaya without using tracking would still incur a charge",
+            "handling": "Juan clarified the pricing model: the per-user license fee is flat regardless of tracking usage; the tracking fees are add-ons for automation. He then offered the stripped-down scenario ('if you said you don't need container tracking, your fee will be $3,375/month') to make the value of the add-ons clear by contrast."
+          },
+          {
+            "objection": "Pulkit noted they need two weeks to evaluate, compare tools on price and functionality, meet with the board and partners, and get operations team approval before committing",
+            "handling": "Juan validated the timeline without pushback ('I can respect it, I understand it'), reinforced his support role ('you have my support with anything you need as you continue the process'), and immediately pivoted to locking in the next concrete step — a team demo — to maintain momentum within the two-week window."
+          }
+        ],
+        "nextStepMove": "Juan set a soft next step by referencing a previously discussed team demo ('I think you mentioned you wanted maybe one more demo for the rest of the team') rather than proposing a specific date or meeting. Pulkit confirmed the demo would happen before finalizing. Juan also committed to sending the proposal via email for Pulkit to review with Brian. However, no specific date or calendar commitment was secured for the follow-up demo or the decision meeting, leaving the next step confirmed in intent but not anchored in time."
+      }
+    },
+    {
+      "id": "5f18a171-f4af-424b-a64c-9cffde77ae93",
+      "rep": "Eduardo",
+      "account": "Duty Free Americas",
+      "subtype": "call",
+      "date": "Jul 16",
+      "callId": "5f18a171-f4af-424b-a64c-9cffde77ae93",
+      "gatesConfirmed": [],
+      "analysis": null,
+      "error": "no transcript"
+    },
+    {
+      "id": "11bba153-359c-44d9-a23a-06954ef29e6d",
+      "rep": "Juan",
+      "account": "Extrum",
+      "subtype": "Discovery",
+      "date": "Jul 17",
+      "callId": "11bba153-359c-44d9-a23a-06954ef29e6d",
+      "gatesConfirmed": [
+        "why_looking",
+        "timeline_notes",
+        "existing_systems",
+        "budget_range_stated",
+        "next_step_confirmed",
+        "champion_internal_action"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "¿Cuántas licencias van a necesitar acceso al sistema?",
+              "why": "To size the deal and calculate a concrete monthly price on the call"
+            },
+            {
+              "asked": "¿Cuál es el promedio mensual del número de contenedor?",
+              "why": "To size the container-tracking tier and anchor a specific monthly cost"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [
+            {
+              "asked": "(Implicit restatement) Lo que yo entiendo por su latir y lo que hemos hablado hasta ahora: el proceso de agencia de carga, NVCC, Freight For y almacenamiento… todo lo tienen manualmente usando email y Excel, perdemos visibilidad de los embarques…",
+              "why": "Summarizing the pain back to the customer to confirm understanding and surface any gaps before moving to next step"
+            }
+          ],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "Entonces eso es lo que me preguntan, hablar sobre el presupuesto inicial para asegurar que estamos en el rango…",
+              "why": "To qualify whether the prospect has an approved budget and whether the integration requirement needs to be factored in"
+            },
+            {
+              "asked": "(Implicit) Si haces un contrato de tres años con esos servicios, en vez de 1.350 lo puedo hacer en un 30% de descuento, serían 945… el presupuesto sería entre 900 dólares a 1.350 dólares",
+              "why": "To anchor a budget range verbally before requiring the NDA, and to test price sensitivity"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "voy a revisar estos costos con gerencia… (prompted by Juan's close) sería solo una aprobación inicial para ver si tiene sentido continuar",
+              "why": "Juan surfaced that Eli needs to take pricing to management, confirming she is a champion but not the final authority"
+            }
+          ],
+          "timeline": [
+            {
+              "asked": "El tiempo de implementación para este paquete sería entre 45 y 60 días para implementarlo, es decir, si toman decisión digamos el primero de septiembre, ya el primero de noviembre ya están implementados",
+              "why": "To make the timeline concrete and create a soft urgency anchor tied to a real go-live date"
+            }
+          ],
+          "other": [
+            {
+              "asked": "¿Repite la pregunta? / ¿Me confirmas ese dato, por favor?",
+              "why": "Clarification probes to ensure accurate technical answers and avoid over-promising"
+            }
+          ]
+        },
+        "techniques": [
+          "Pre-call briefing leverage: Juan used Zulet's SDR handoff summary (120 containers, manual Excel/email, BL creation, tracking, POD) to skip basic situation questions and jump straight to confirming pain and sizing the deal",
+          "Verbal pricing on the call before NDA: Juan gave a full cost breakdown (licenses, container tracking, implementation hours, discount tiers) verbally to qualify budget without waiting for a formal proposal, explicitly stating 'no va a cambiar mucho de lo que estamos hablando'",
+          "Anchoring with contract-term discounts: Juan presented a price range ($945–$1,350/month) tied to contract length (1 vs. 3 years) and payment cadence to create a negotiation frame and test commitment level",
+          "Honest gap acknowledgment: Juan explicitly told the customer Magaya covers ~75% of their needs and cannot fulfill last-mile drayage tracking out of the box, building credibility rather than over-promising",
+          "Summary/recap close: Juan recapped all confirmed requirements before the close ('lo que yo entiendo por su latir…') to validate understanding and transition to next steps",
+          "NDA as a gate: Juan used the mutual NDA as a deliberate gate before sending written pricing or scheduling a demo, protecting deal process and creating a commitment step",
+          "Implementation timeline concretization: Juan translated '45–60 days' into a real calendar example ('si toman decisión el primero de septiembre, ya el primero de noviembre están implementados') to make urgency tangible",
+          "Next-step framing with conditions: Juan described the next meeting's agenda (discovery depth, budget confirmation, implementation timeline) before asking for the NDA signature, so the prospect understood the value of proceeding",
+          "Layered follow-up on integration: When Eli asked about drayage tracking, Juan did not deflect—he layered follow-up questions about the provider's API and architecture to show a credible path while being honest about the unknown cost"
+        ],
+        "whatWorked": [
+          "Verbal pricing breakdown unlocked budget confirmation: After Juan walked through the $825 (licenses) + $525 (tracking) = $1,350/month structure, Eli immediately engaged with line-item questions ('¿los 525 incluye los 120 contenedores?') and ultimately stated she would review the costs with management — confirming budget_range_stated and champion_internal_action gates",
+          "Honest 75% fit acknowledgment retained trust: Juan's closing statement — 'lamento no poder decirte que sí y cumplir con todos tus requerimientos… quizás cumple con 75% de tus necesidades' — kept Eli engaged rather than causing her to disengage; she responded 'OK' and agreed to review materials, supporting next_step_confirmed",
+          "NDA-as-gate move secured a concrete next step: Juan's repeated framing of 'si tiene sentido continuar, firmas el acuerdo de confidencialidad y podemos proceder' gave Eli a clear, low-friction action item, producing next_step_confirmed",
+          "Implementation timeline concretization ('primero de septiembre → primero de noviembre') prompted Eli to say 'sería para principios de noviembre en todo caso OK' — confirming timeline_notes gate",
+          "SDR handoff summary used as situation baseline: By opening with Zulet's briefing (existing_systems: email + Excel, 120 containers/month), Juan avoided redundant situation questions and Eli immediately volunteered deeper pain context ('perdemos visibilidad de los embarques… herramientas financieras requieren proof of delivery'), confirming existing_systems and why_looking gates early"
+        ],
+        "phrasings": [
+          "La siguiente reunión es una llamada descubrimiento para conocer sus procesos, sus requerimientos y asegurar que Magallane sí puede adaptar bien. También hablamos sobre el presupuesto y el tiempo de implementación para asegurar que Magallan cumple con tus necesidades.",
+          "Si ustedes piensan que tiene sentido continuar con el proceso de análisis y ver Magallane más profundo, pues les envío un acuerdo de confidencialidad para poder agendar la reunión de demostración.",
+          "El presupuesto sería entre 900 dólares a 1.350 dólares. Es el presupuesto mensual sin integración y sin las aerolíneas.",
+          "Si toman decisión digamos el primero de septiembre, ya el primero de noviembre ya están implementados.",
+          "Lamento no poder decirte que sí y cumplir con todos tus requerimientos, pero sí, dependiendo en qué tanta énfasis pone esa interacción con el proveedor local, quizás cumple con 75% de tus necesidades.",
+          "Sería solo una aprobación inicial para ver si tiene sentido continuar analizando Magallan; si dan la luz verde, firmas el acuerdo de confidencialidad y podemos proceder.",
+          "No va a cambiar mucho de lo que estamos hablando — el sistema se hace por contrato.",
+          "Por ahora te puedo enviar un correo que te muestra unos videos del sistema y también un datasheet para ustedes poder dar la conferencia y ver exactamente qué todo viene incluido."
+        ],
+        "objections": [
+          {
+            "objection": "¿Hay forma de poder enlazar con la naviera para no estar ingresando manualmente?",
+            "handling": "Juan confirmed automatic tracking via container number once initial data is entered manually, and explained the quote-to-shipment conversion flow to minimize re-entry"
+          },
+          {
+            "objection": "¿Podrían hacer el enlace con el transporte local (drayage) para last-mile tracking?",
+            "handling": "Juan was transparent that this requires a custom API integration with the local provider, that the cost is unknown until a technical meeting with that provider, and that it carries both a one-time development cost and an ongoing monthly fee"
+          },
+          {
+            "objection": "¿Ustedes podrían ofrecer alguna prueba piloto por un periodo?",
+            "handling": "Juan declined directly ('lamentablemente no ofrecemos un tiempo de prueba') and immediately redirected to the demo/discovery process as the evaluation path, framing it as the standard way to validate fit"
+          },
+          {
+            "objection": "¿Pueden mandarnos un correo con las propuestas escritas?",
+            "handling": "Juan explained that written pricing requires a signed NDA first, but gave all numbers verbally on the call so the prospect had enough to take to management, removing the blocker to internal review"
+          }
+        ],
+        "nextStepMove": "Juan set a conditional next step: if Eli and José review the materials internally and decide it makes sense to continue, they sign the mutual NDA, which then unlocks the formal demo meeting. He committed to sending videos and a datasheet immediately after the call to support Eli's internal review with management (champion_internal_action). The step is concrete (NDA signature → demo scheduling) but the timing is left open — Juan did not pin a specific date for the follow-up, which is a gap. He closed by saying 'quedo atento a poder agendar ese encuentro con ustedes,' leaving the initiative with the prospect rather than booking a specific callback date."
+      }
+    },
+    {
+      "id": "fbd5ec35-3568-4a08-aca0-13c7559e979a",
+      "rep": "Eduardo",
+      "account": "Aeronet",
+      "subtype": "Discovery",
+      "date": "Jul 20",
+      "callId": "fbd5ec35-3568-4a08-aca0-13c7559e979a",
+      "gatesConfirmed": [
+        "why_looking",
+        "why_looking_now",
+        "existing_systems",
+        "competition_notes",
+        "budget_range_stated",
+        "next_step_confirmed"
+      ],
+      "analysis": null,
+      "error": "Expected ',' or ']' after array element in JSON at position 12332 (line 131 column 6)"
+    },
+    {
+      "id": "8c01c5d3-bce0-4a5f-ae75-edc5e3173c9e",
+      "rep": "Juan",
+      "account": "Cargocleared",
+      "subtype": "Discovery",
+      "date": "Jul 21",
+      "callId": "8c01c5d3-bce0-4a5f-ae75-edc5e3173c9e",
+      "gatesConfirmed": [
+        "why_looking",
+        "competition_notes",
+        "next_step_confirmed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "Talk to me a little bit about your operations right now, different types of filing types that you're doing, if you're comfortable sharing what software you're currently utilizing.",
+              "why": "Establish baseline: what they file, what tools they use, where they are in their journey"
+            },
+            {
+              "asked": "Are you, is this under your individual license and filer code or is it going to be under a corporate license?",
+              "why": "Confirm operational readiness and legitimacy of the prospect as a real buyer"
+            },
+            {
+              "asked": "Do you do freight forwarding today or is that not in the scope of your business offerings?",
+              "why": "Scope the immediate need vs. future expansion to right-size the solution recommendation"
+            },
+            {
+              "asked": "How many users do you think you would be starting off with?",
+              "why": "Size the deal and determine pricing tier for accounting module"
+            },
+            {
+              "asked": "On the custom side, how many users will you have to start with? Is it going to be you and Harris to begin?",
+              "why": "Confirm user count for customs subscription pricing"
+            }
+          ],
+          "whyNow": [
+            {
+              "asked": "From what I'm hearing, it sounds like the main focus of the project is really on the custom side but you might have interest in freight forwarding. Am I understanding that right?",
+              "why": "Confirm the primary driver and urgency — starting a new business from scratch is the why-now"
+            }
+          ],
+          "need_pain": [
+            {
+              "asked": "(Implicit follow-up after Stephanie described a support failure) So Stephanie, we do have something I can follow up with you — it's called the EULA and SLA. It will give you the KPI times for our response time.",
+              "why": "Acknowledge and neutralize a live pain point around slow support response that caused a late duty payment"
+            },
+            {
+              "asked": "Have you had any customers say anything about or had issues with like exporting and talking to QuickBooks or anything?",
+              "why": "Surface integration concerns before they become objections"
+            }
+          ],
+          "competition": [
+            {
+              "asked": "(After Stephanie mentioned Flexport AI) Yeah, I actually worked for Flexport so I am familiar. So yes, kind of comparable to what Flexport had.",
+              "why": "Acknowledge the competitive reference, establish credibility, then differentiate"
+            },
+            {
+              "asked": "(Implicit) Just to kind of put that little birdie in the back of your head — as your business grows, if there's certain offerings you do want to provide for your customers, we're able to provide the full gamut.",
+              "why": "Pre-empt future competitive consideration by anchoring breadth of platform early"
+            },
+            {
+              "asked": "(After Stephanie mentioned Ace Link) Is it completely different or is it similar?",
+              "why": "Uncover prior familiarity with the legacy product to reduce friction and leverage existing comfort"
+            }
+          ],
+          "budget": [
+            {
+              "asked": "Can you give me a choice with QuickBooks and then the standalone accounting just so we have different options to look at?",
+              "why": "Customer-initiated; rep responded by offering tiered pricing options to fit budget"
+            },
+            {
+              "asked": "Our 50 transaction tier is $350 per month. That includes six users.",
+              "why": "Anchor pricing early to test budget reaction before the formal proposal"
+            },
+            {
+              "asked": "If you go over, it is $10 per transaction, whereas the regular rate would be $7.",
+              "why": "Explain overage economics to prevent sticker shock later"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "Is it going to be under your individual license and filer code or is it going to be under a corporate license?",
+              "why": "Indirectly probe who controls the entity and the filing authority"
+            },
+            {
+              "asked": "(Observing Harris asking detailed accounting and freight forwarding questions) Juan introduced himself and summarized what he heard about the project scope.",
+              "why": "Identify that Harris is a second decision-maker with freight forwarding background who needs to be addressed separately"
+            }
+          ],
+          "timeline": [
+            {
+              "asked": "If you want, we can go ahead and look at scheduling the demo right now while we're on the phone. Or if you guys want to wait till the NDA and I send you the pricing.",
+              "why": "Test readiness to commit to a next step and compress the timeline"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Stephanie, where are you both located? What time zone are you both in?",
+              "why": "Logistics for scheduling the demo, also builds rapport"
+            }
+          ]
+        },
+        "techniques": [
+          "Framing the call upfront as a 'fact-finding mission' to lower defensiveness and set mutual expectations",
+          "Open-ended situational opener ('talk to me about your operations') to let the prospect self-reveal scope before pitching",
+          "Positive reinforcement as a rapport tool ('That is 80% of the battle') to validate the prospect's progress and build confidence",
+          "Layered follow-up: after learning they are at ground zero, immediately scoped filing types, then license type, then user count — building a complete picture incrementally",
+          "Competitive acknowledgment plus credibility bridge: 'I actually worked for Flexport so I am familiar' — then pivoting to differentiation",
+          "Proactive transparency on pricing (verbal ballpark before NDA) to keep momentum and avoid losing the prospect to a competitor who quotes faster",
+          "Multi-threading: Alex handled customs, Juan handled accounting/freight forwarding — each addressed the relevant stakeholder (Stephanie vs. Harris)",
+          "Juan's consultative redirect: explicitly advised against upselling the full accounting module when QuickBooks was sufficient, building trust and positioning Magaya as a long-term partner",
+          "Anchoring future growth: repeatedly planting the idea that the platform scales with them ('you can always add that when you're ready') to make the initial commitment feel low-risk",
+          "Pain acknowledgment without defensiveness: when Stephanie described the support failure with a prior vendor, rep immediately offered the SLA document as a concrete remedy",
+          "Soft close on next step: 'If you want, we can go ahead and look at scheduling the demo right now while we're on the phone' — offering optionality while nudging toward commitment",
+          "Recording the demo offer: reducing friction for internal sharing and reinforcing thoroughness",
+          "NDA as a gating mechanism: used to formalize the relationship and justify putting pricing in writing, creating a micro-commitment before the demo"
+        ],
+        "whatWorked": [
+          "The open-ended situational opener unlocked the 'ground zero' disclosure immediately — Stephanie revealed she was starting from scratch, which shaped the entire solution framing for the rest of the call",
+          "Validating the corporate license ('That is 80% of the battle') built instant rapport and signaled Alex's domain expertise, which kept Stephanie engaged and forthcoming",
+          "Juan's transparent recommendation against the full accounting module ('I don't see they'll get value out of it right away') directly produced the why_looking gate confirmation — Stephanie responded 'Okay, yep' and Harris confirmed 'that's pretty much the way we're going to look at it,' showing the consultative approach unlocked trust and deal clarity",
+          "Acknowledging the Flexport AI comparison rather than deflecting it — 'I actually worked for Flexport so I am familiar' — kept Stephanie engaged and led to a natural differentiation moment on the classification report feature",
+          "The verbal pricing disclosure before the NDA prevented a stall: Stephanie immediately asked for options (QuickBooks vs. standalone accounting) and Harris drilled into transaction tier mechanics, confirming active budget evaluation",
+          "The soft close on scheduling the demo while on the call produced the next_step_confirmed gate — Stephanie agreed to a Friday demo on the spot: 'I think we can schedule a demo'",
+          "Stephanie's unprompted mention of Ace Link ('I think the company I work for now used it like a couple years ago') confirmed prior familiarity with the product lineage, which Alex leveraged to reduce perceived switching risk — this surfaced because the call felt conversational rather than scripted"
+        ],
+        "phrasings": [
+          "Really the goal of this call is just really a fact-finding mission. Just to learn about your operations, talk about our capabilities, and then if it makes sense, the next natural steps would be a tailored customized demo based on the conversations we're having today.",
+          "Talk to me a little bit about your operations right now, different types of filing types that you're doing, if you're comfortable sharing what software you're currently utilizing.",
+          "That is 80% of the battle.",
+          "I like to kind of put that little birdie in the back of your head that as your business grows, if there's certain offerings that you do want to provide for your customers, we're really able to provide the full gamut.",
+          "I would love nothing more than to sell you a solution, but I don't see they're going to get value out of it right away.",
+          "We want to be a partner. We want to see you grow more than to sell you a solution.",
+          "You can always go up, but you can't really go down. So we like to be conservative and start you with where you think you would be at right now.",
+          "Part of the job of the account manager is to monitor how many transactions you're doing — if you notice your business is scaling, we'll move you to the next tier and credit that overage to your new monthly subscription.",
+          "If you want, we can go ahead and look at scheduling the demo right now while we're on the phone. Or if you guys want to wait till the NDA and I send you the pricing. No pressure.",
+          "I will record the demo when I do it, just so that you can go back and reference it.",
+          "That is not something that should ever happen here if you're waiting a couple of days — I can provide you the specific KPIs."
+        ],
+        "objections": [
+          {
+            "objection": "Concern about after-hours support — prior vendor left her waiting days on a time-sensitive FTZ filing, resulting in a late duty payment",
+            "handling": "Alex acknowledged the pain directly, did not minimize it, offered a concrete artifact (EULA/SLA with KPI response times) to prove the problem wouldn't recur, and stated clearly 'that is not something that should ever happen here'"
+          },
+          {
+            "objection": "Stephanie asked whether the accounting module was separate and additional cost",
+            "handling": "Alex confirmed it was separate but immediately offered the QuickBooks integration as a free, included alternative — reframing the objection as a non-issue for their current stage"
+          },
+          {
+            "objection": "Harris pushed back on the inability to scale down tiers during seasonal dips",
+            "handling": "Alex acknowledged the limitation honestly ('that's where we don't have as much wiggle room') rather than overselling flexibility, which maintained credibility"
+          },
+          {
+            "objection": "Stephanie noted that most vendors require three-year contracts and was surprised when Alex mentioned one-year",
+            "handling": "Alex clarified that three years is standard but that she can request approval for shorter terms for new businesses, framing it as advocacy on the customer's behalf"
+          },
+          {
+            "objection": "Harris asked about hidden costs beyond what was discussed",
+            "handling": "Alex proactively disclosed the only additional cost (AI modules) and confirmed everything else — storage, users up to six, all filing types — was included in the base subscription"
+          }
+        ],
+        "nextStepMove": "Alex set a concrete, calendared next step on the call itself: a one-hour demo scheduled for Friday at 2pm Eastern, with a calendar invite sent in real time before the call ended. She also committed to sending the NDA via DocuSign immediately after the call, with pricing to follow upon NDA signature. Juan reinforced the structure by summarizing the two-path proposal (customs + QuickBooks vs. full Magaya supply chain) so the prospect would know exactly what to evaluate at the demo. The next step was fully confirmed with date, time, and pre-work (NDA signing) assigned — a strong close given it was a first discovery call with a ground-zero prospect."
+      }
+    },
+    {
+      "id": "c0c741a5-5e0c-4e9c-86bf-cc1501da678f",
+      "rep": "Juan",
+      "account": "Successchb",
+      "subtype": "Discovery",
+      "date": "Jul 21",
+      "callId": "c0c741a5-5e0c-4e9c-86bf-cc1501da678f",
+      "gatesConfirmed": [
+        "why_looking",
+        "why_looking_now",
+        "existing_systems",
+        "competition_notes",
+        "next_step_confirmed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "Are you starting up an operation on your own? Like you mentioned your one man shop and from the summary that Rosie mentioned, it sounds like you're just getting off your ground.",
+              "why": "Confirm whether this is a new business launch or an existing operation, to size the opportunity and tailor the pitch"
+            },
+            {
+              "asked": "Was your parents company maybe focus on customs brokerage or do they do 3PL as well?",
+              "why": "Understand the scope of services needed — customs only vs. full freight forwarding — to route to the right specialist"
+            },
+            {
+              "asked": "Talk to me a little bit about kind of the transaction types that you're currently doing like 7501s, ISF, in bonds?",
+              "why": "Map the full filing footprint to understand product fit and module relevance"
+            },
+            {
+              "asked": "Do you file any like drawback or reconciliation right now?",
+              "why": "Identify edge-case transaction types that might require additional modules"
+            },
+            {
+              "asked": "Do you file any like AES or truck manifest for your customers?",
+              "why": "Probe for export filing volume to assess AES module relevance"
+            },
+            {
+              "asked": "How many folks do you have on your team who are filing — like how many users currently?",
+              "why": "Establish user count for pricing tier and license sizing"
+            },
+            {
+              "asked": "Right now with ITS, do you guys currently do any type of like integration like API or EDI or is there any AI built in, or you just keying in those lines?",
+              "why": "Understand current workflow and automation maturity to position AI modules as an upgrade"
+            }
+          ],
+          "whyNow": [
+            {
+              "asked": "What's the main motivating factor? Are you getting your filer code right? Are you taking over the business?",
+              "why": "Pin down the specific trigger event driving the search for new software right now"
+            }
+          ],
+          "need_pain": [
+            {
+              "asked": "Do you guys currently do any type of like integration like API or EDI or is there any AI built in, or you just keying in those lines when those customers are coming to you? What does that look like?",
+              "why": "Surface the manual data-entry pain point, especially for high-line-item entries, to set up the AI module value proposition"
+            }
+          ],
+          "competition": [
+            {
+              "asked": "Unlike the actual platform, let's say, let's take away these features — how does NetCHB and you guys, in terms of just purely the non-AI functions work? Is there a big difference?",
+              "why": "Draw out competitive comparison to position Magaya's differentiators against the named competitor"
+            }
+          ],
+          "budget": [
+            {
+              "asked": "I guess all the pricing stuff you'll just send me, you know, with users and how that works?",
+              "why": "Open the door to pricing discussion; customer-initiated, not rep-pushed"
+            },
+            {
+              "asked": "Is there a way to discount on our whatever package that happens?",
+              "why": "Test pricing flexibility and negotiation room — customer-initiated probe"
+            }
+          ],
+          "decisionProcess_authority": [],
+          "timeline": [
+            {
+              "asked": "(Implicit in) Are you getting your filer code right? Are you taking over the business?",
+              "why": "Filer code arrival is the natural go-live trigger; understanding its status sets the urgency window"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Do you have any kind of like — just estimate on how many like entries or ISFs you guys file monthly? Is it like 50? A thousand? Five thousand?",
+              "why": "Qualify transaction volume to slot into the correct pricing tier and set realistic growth expectations"
+            },
+            {
+              "asked": "Is there any other questions I should be asking you that I haven't asked yet?",
+              "why": "Open-ended close to surface any uncovered concerns or needs before wrapping discovery"
+            }
+          ]
+        },
+        "techniques": [
+          "Pre-call summary read-back: Rossy recapped notes from the prior day's call to confirm understanding and signal preparation, building credibility before handing off",
+          "Rapid scope qualification and graceful exit: Juan quickly confirmed the prospect needed customs-only (not freight forwarding) and excused himself, keeping the call focused and routing to the right specialist",
+          "Familiarity bridge: Alexandra opened with 'I'm familiar with ITS' to establish instant credibility with a prospect who had only ever used one system",
+          "Full-gamut transaction mapping: Alexandra systematically walked through every filing type (7501, ISF, in-bonds, drawback, AES) to build a complete picture of scope before pitching",
+          "Pain quantification through specificity: Alexandra anchored the AI value prop to the prospect's own described pain — '2,300-line invoices' — rather than generic claims",
+          "Blind ingestion demo offer: Alexandra proposed using the prospect's actual invoices in the demo to make the AI proof tangible and reduce skepticism",
+          "Competitor displacement story: Alexandra used a specific, recent NetCHB downtime event (24-hour outage) as a concrete differentiator rather than vague claims",
+          "ITS-to-Magaya transition specialist name-drop: Alexandra mentioned a team member who personally migrated from ITS, directly addressing the prospect's unspoken fear of switching from a 35-year-old system",
+          "Tiered pricing walk-through on the call: Alexandra gave live pricing numbers (transactions, AI modules, implementation hours) to anchor expectations and move toward next step",
+          "Bundling as discount lever: Alexandra explicitly tied discounting to bundling AI modules, creating an incentive structure rather than just conceding price",
+          "NDA as next-step commitment device: Alexandra used the NDA as a low-friction, concrete next action that advances the deal without requiring a purchase decision",
+          "Volume-range question with anchors: Alexandra gave a range ('50? A thousand? Five thousand?') to make it easy for the prospect to self-place without feeling judged"
+        ],
+        "whatWorked": [
+          "Juan's rapid scope qualification ('So you don't primarily need assistance to manage your freight forwarding operations — low volume, looking for only customs') confirmed the deal belonged to Alexandra alone, keeping the call efficient. The prospect confirmed: 'Right now it's just custom brokerage.'",
+          "Alexandra's ITS familiarity opener ('I'm familiar with ITS') immediately relaxed the prospect and prompted him to open up about his entire family history with the system, surfacing the real why-now: 'I finally got my corporate license a few months ago, just waiting for the filer code.' This confirmed the why_looking and why_looking_now gates.",
+          "The transaction-type mapping question ('talk to me about the transaction types — 7501s, ISF, in bonds') unlocked a detailed picture of the filing mix including FDA, Lacey Act, PGAs, and 2,300-line invoices, which directly set up the AI heavy-lifting pitch.",
+          "The current-workflow question ('are you just keying in those lines?') confirmed manual entry as the core pain and prompted the prospect to volunteer that he had already been researching AI vendors (Cervo, DocuLock), confirming active evaluation and competition_notes gate.",
+          "The ITS-to-Magaya migration specialist mention ('one of the women on our customs team used to be a user and did the transition from ITS into Magaya') visibly reassured the prospect, who immediately asked a practical follow-up about data portability: 'Is that something you guys can help with?'",
+          "Alexandra's NDA-plus-demo next step ('I would send you an NDA... and then I would schedule a demo') was accepted without resistance — the prospect confirmed: 'Okay, cool' — locking the next_step_confirmed gate."
+        ],
+        "phrasings": [
+          "I'm familiar with ITS. Awesome.",
+          "Talk to me a little bit about kind of the transaction types that you're currently doing — like 7501s, ISF, in bonds.",
+          "Do you guys currently do any type of like integration like API or EDI, or you just keying in those lines when those customers are coming to you? What does that look like?",
+          "I like to call this my fact-finding mission.",
+          "If you have customer invoices that have like 50 lines, 300 lines, I can actually use them in the demo and we can see how our system ingests the data.",
+          "I love to do just like blind ingestion — I don't know, some brokers don't like it, I like to do that because ours is done in real time, just to see how long it takes and how it ingests.",
+          "The AI is not doing your job, it's just kind of doing that heavy lifting of having to key in all of those lines.",
+          "We have a whole customs compliance team — one of the women who is one of our custom specialists used to be a user and did the transition from ITS into Magaya, so she's like hyper familiar.",
+          "If you want our system, I would love to partner with you and we'll find a way to make it work.",
+          "I would send you an NDA — you just want to sign that before we do a demo — and then I would schedule a demo with you and me, I'll record it so you can go back."
+        ],
+        "objections": [
+          {
+            "objection": "Prospect asked whether all companies have the same fixed pricing or if there's room to negotiate",
+            "handling": "Alexandra confirmed pricing is tiered by volume (not negotiable on structure) but explicitly said discounts are always open, and tied bundling AI modules to a higher discount — creating an incentive rather than just conceding"
+          },
+          {
+            "objection": "Prospect raised concern about filing from overseas (e.g., vacation in Paris) and whether that creates a compliance issue with CBP",
+            "handling": "Alexandra acknowledged the nuance, said she'd double-check the VPN requirement, but explained the workflow: prospect can prepare the entry remotely, then assign it to a U.S.-based user to transmit — turning a potential blocker into a feature (user assignment)"
+          },
+          {
+            "objection": "Prospect expressed uncertainty about switching from ITS after 35+ years of family use and asked about data migration",
+            "handling": "Alexandra normalized the transition by referencing Smart Border users who had to switch after that system sunset, then immediately offered a concrete solution: templates for historical data transfer and a dedicated ITS-experienced implementation specialist"
+          }
+        ],
+        "nextStepMove": "Alexandra set a clear, two-part next step: (1) send an NDA for both parties to sign before the demo, and (2) schedule a one-hour recorded demo where the prospect can optionally bring real customer invoices to test the AI live. She offered specific timing ('as early as end of this week or next week') and confirmed the prospect's email on the call. The prospect accepted without pushback. However, no specific date or calendar hold was locked — the commitment was directional rather than a booked meeting, leaving some risk of drift."
+      }
+    },
+    {
+      "id": "8b4ae800-f023-41c4-9e36-9416eaeb4859",
+      "rep": "Juan",
+      "account": "Airamericas",
+      "subtype": "Proposal",
+      "date": "Jul 21",
+      "callId": "8b4ae800-f023-41c4-9e36-9416eaeb4859",
+      "gatesConfirmed": [
+        "why_looking",
+        "existing_systems",
+        "next_step_confirmed",
+        "key_decision_maker_identified"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "In your process and operations you operate with a warehouse or without warehouse?",
+              "why": "To scope the solution and determine which modules are relevant to the prospect's operation"
+            },
+            {
+              "asked": "Do you do more import than export or is it about a 50/50 of the 2?",
+              "why": "To understand operational mix and tailor the feature discussion accordingly"
+            }
+          ],
+          "whyNow": [
+            {
+              "asked": "Is there anything specifically motivating and changing your solution from your legacy system, like what's driving you and your CEO to look for a new platform?",
+              "why": "To uncover the root business pain and urgency behind the evaluation — asked late but directly before close"
+            }
+          ],
+          "need_pain": [
+            {
+              "asked": "Is there anything specifically motivating and changing your solution from your legacy system, like what's driving you and your CEO to look for a new platform?",
+              "why": "To surface the specific operational or financial pain driving the switch from the in-house system"
+            }
+          ],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "So just to give you the full package, your first year with Magaya would be 41,000, including implementation... and then the second and third year would just be the 32,000",
+              "why": "To anchor the total cost of ownership across a three-year contract and make the annual math concrete for the prospect"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "After you discuss with your CEO, if you think it makes sense for you to continue looking at Magaya deeper, then you can sign the NDA and then we'll have another meeting",
+              "why": "To acknowledge the CEO as the key decision maker and build a path to engage him directly"
+            }
+          ],
+          "timeline": [
+            {
+              "asked": "I'd like to understand more about your needs and requirements, exactly what's motivating you to change your solution and when you want to have it implemented by",
+              "why": "To qualify urgency and confirm whether Magaya's 60-day implementation timeline can meet the prospect's expectations"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Do you have any other questions, any other concerns you might ask before you wrap up?",
+              "why": "To surface any remaining objections or blockers before ending the call"
+            }
+          ]
+        },
+        "techniques": [
+          "Pre-call note review read-back: Rossy recapped all known facts before handing to Juan, establishing credibility and saving discovery time",
+          "Verbal pricing anchor before written proposal: Juan stated pricing verbally in full detail (per user, monthly, quarterly, annually, three-year total) before any written quote, using the NDA requirement as a gate",
+          "Layered cost build-up: Juan stacked subscription, AES inclusion, optional add-ons (AMS, ISF, Emanifest), and implementation into a clear first-year vs. ongoing-year breakdown",
+          "Late but direct why-now question: Juan asked the motivation question only after pricing was discussed, catching the prospect off guard and getting an unguarded, honest answer about in-house developer cost",
+          "Reframing the pricing conversation: After learning the pain was in-house cost, Juan said 'So that's why you went straight for pricing — I understand why,' validating the prospect and showing he connected the dots",
+          "Multi-threading setup: Juan proposed meeting the CEO in person in Miami, attempting to engage the actual decision maker directly",
+          "Next-step sequencing with NDA gate: Juan used the NDA as a formal commitment step before sending written pricing, creating a structured progression",
+          "Value-add close: Juan offered to send a data sheet, high-level video tour, and demo playlist as leave-behind assets to keep the prospect engaged between calls",
+          "Tie-down on contract length to pricing: Juan explicitly linked the 135/user rate to a three-year commitment, anchoring the prospect to a longer term"
+        ],
+        "whatWorked": [
+          "The late why-now question ('Is there anything specifically motivating and changing your solution...') unlocked the core pain: the prospect revealed 'it's totally depending on the in house cost... developers, programmers... that's a major cost risk for us.' This confirmed the why_looking gate and gave Juan the context to reframe the total cost comparison.",
+          "Rossy's pre-call note read-back ('you're currently using an in house system and you're interested in looking for another option that could be more modern') confirmed existing_systems before Juan even spoke, saving discovery time and establishing trust.",
+          "Juan's verbal pricing walkthrough prompted the prospect to immediately ask for a written quotation ('are you able to provide me the quotation for the like 20 users'), confirming budget engagement and opening the NDA gate as the confirmed next step.",
+          "Juan's suggestion to meet the CEO in person in Miami ('maybe I can meet your CEO in person... I can go to his office') was accepted positively by the prospect, supporting the key_decision_maker_identified gate and setting up multi-threading.",
+          "The NDA-before-written-quote requirement, combined with the demo offer, produced a clear verbal next step commitment from the prospect: 'Definitely' — confirming next_step_confirmed."
+        ],
+        "phrasings": [
+          "I can only give this to you verbally as we're discussing now. It won't look much different when you look at a proposal in writing, but I cannot imitate it to you until you sign a mutual non-disclosure agreement.",
+          "So that's why you went straight for pricing. I understand why.",
+          "Just to give you the full package, your first year with Magaya would be 41,000, including implementation.",
+          "It would only change if you add more users.",
+          "I'd like to understand more about your needs and requirements, exactly what's motivating you to change your solution and when you want to have it implemented by — just to make sure that we can meet your expectations as far as budget and timing.",
+          "Is there anything specifically motivating and changing your solution from your legacy system, like what's driving you and your CEO to look for a new platform?",
+          "After you discuss with your CEO, if you think it makes sense for you to continue looking at Magaya deeper, then you can sign the NDA and then we'll have another meeting, we'll do a tailored demo.",
+          "Do you have any other questions, any other concerns you might ask before you wrap up?"
+        ],
+        "objections": [
+          {
+            "objection": "The prospect asked whether shipment volume increases would change the price, implying concern about variable costs",
+            "handling": "Juan immediately clarified the flat-fee-per-user model: 'We charge by the number of licenses per month, not the number of transactions or your volume. So it's a flat fee per month by the number of users.' He reinforced this with 'unlimited transactions' language."
+          },
+          {
+            "objection": "The prospect asked for a written quotation immediately",
+            "handling": "Juan held the gate: 'I cannot imitate it to you until you sign a mutual non-disclosure agreement,' while still providing full verbal pricing detail so the prospect had everything they needed to discuss internally."
+          },
+          {
+            "objection": "The CEO did not attend the call and the prospect indicated they needed to review with him before proceeding",
+            "handling": "Juan acknowledged the CEO's role, proposed sending supporting materials for the internal review, offered to meet the CEO in person in Miami, and set a clear conditional next step: sign NDA, then tailored demo."
+          }
+        ],
+        "nextStepMove": "Juan set a conditional but structured next step: the prospect reviews with the CEO, signs an NDA, and then a tailored demo is scheduled — with Juan explicitly offering to meet the CEO in person in Miami. He also committed to sending a data sheet, video tour, and demo playlist to support the internal review. The prospect verbally confirmed 'Definitely' to the demo and agreed to follow up via email within one to two days. The next step was confirmed but left somewhat open-ended in timing, with no specific date locked for the follow-up meeting."
+      }
+    },
+    {
+      "id": "b319cacf-ba74-431c-af4f-0ec46f6c2fee",
+      "rep": "Juan",
+      "account": "Mastercargoinc",
+      "subtype": "call",
+      "date": "Jul 22",
+      "callId": "b319cacf-ba74-431c-af4f-0ec46f6c2fee",
+      "gatesConfirmed": [],
+      "analysis": null,
+      "error": "no transcript"
+    },
+    {
+      "id": "8c1cc0b7-8624-46fe-b130-e3529ad26437",
+      "rep": "Eduardo",
+      "account": "Alba Wheels Up",
+      "subtype": "Demo",
+      "date": "Jul 22",
+      "callId": "8c1cc0b7-8624-46fe-b130-e3529ad26437",
+      "gatesConfirmed": [
+        "why_looking",
+        "timeline_notes",
+        "why_looking_now",
+        "existing_systems",
+        "next_step_confirmed",
+        "sql2_demo_completed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "You work with these LCL carriers, right, Sujit? Awesome.",
+              "why": "Confirming which LCL consolidators the prospect uses to validate coverage and tailor the proposal"
+            },
+            {
+              "asked": "Did we already cover the reports and dashboards that we have here?",
+              "why": "Checking what had been shown to avoid repetition and segue into a discovery question about reporting needs"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [
+            {
+              "asked": "You're looking for a report of the current contracts or the quotes that you have there. What exactly is the report?",
+              "why": "Drilling into the specific reporting pain to understand what data outputs the prospect needs and whether the system can satisfy them"
+            },
+            {
+              "asked": "How hard is that to insert any field there for that purpose? Or kind of like a floating or free field that you could put — that kind of customizable field, if you will.",
+              "why": "Probing whether a product gap (on-time performance tracking field) could be addressed, surfacing a potential blocker and showing responsiveness to the pain"
+            }
+          ],
+          "competition": [
+            {
+              "asked": "(Implicit, via active listening) That is one of the pain points while you're looking around for different options — slow feature delivery from your current vendor?",
+              "why": "Eduardo let Surjit articulate the competitive pain point unprompted; he did not interrupt, allowing the prospect to self-disclose the incumbent's weakness"
+            }
+          ],
+          "budget": [],
+          "decisionProcess_authority": [],
+          "timeline": [
+            {
+              "asked": "I'm going on vacation tomorrow and coming back on [X]. So I want to have this next step set up today if possible.",
+              "why": "Creating urgency around scheduling the next step before Eduardo's absence, anchoring a commitment before the call ends"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Can we stay at the end of this one as we did? If you have time, we go really quick and then you and I will stay in this call and then cover that.",
+              "why": "Preserving the commercial/proposal conversation for a private sub-call at the end rather than letting it get deferred to a separate meeting"
+            },
+            {
+              "asked": "I want to confirm the points you sent us — we're going to start with the demo, and at the end we do the commercial proposal so we don't break the flow. Right?",
+              "why": "Agenda-setting and gaining explicit buy-in on the call structure to keep the demo on track and ensure the proposal is reviewed same session"
+            }
+          ]
+        },
+        "techniques": [
+          "Agenda-setting with explicit customer buy-in at the top of the call to control flow and protect time for the commercial proposal",
+          "Deferring the commercial proposal to the end to avoid breaking demo momentum — stated explicitly: 'so we don't break the flow'",
+          "Creating personal urgency to lock in next step: volunteering his vacation schedule as a reason to commit to next steps today",
+          "Redirecting a request for a separate proposal call back into the current call to prevent deal slippage: 'Can we stay at the end of this one as we did?'",
+          "Active listening and letting the customer self-disclose competitive pain (incumbent's slow feature delivery) without interrupting",
+          "Bridging product gaps in real time by escalating to SMEs (Dan, Justine) rather than deflecting or over-promising",
+          "Confirming existing systems/carrier relationships mid-demo ('You work with these LCL carriers, right?') to validate fit and tailor the proposal",
+          "Using the new stakeholder's presence (Jose, ex-Expediter) as social proof and a reason to re-run the demo without it feeling redundant",
+          "Offering to send the recording to the customer to reduce friction and enable internal sharing — proactively before the customer had to ask",
+          "Layered follow-up on feature gaps: acknowledging the gap, explaining the roadmap process, and inviting the customer to submit requests — managing expectations without losing the deal"
+        ],
+        "whatWorked": [
+          "Proposing to stay on the same call for the commercial discussion rather than scheduling a separate one: Surjit agreed immediately ('that's good') — this directly produced the next_step_confirmed gate and prevented a delay",
+          "Anchoring urgency with his vacation: 'I'm going on vacation tomorrow… I want to have this next step set up today if possible' — Surjit responded 'Okay, that's good,' locking in the commitment on the call",
+          "Letting Surjit self-disclose the incumbent's pain without prompting: Surjit volunteered 'that is one of the pain points while we're looking around for different options' — this confirmed why_looking and why_looking_now without Eduardo having to ask directly",
+          "Confirming LCL carrier relationships mid-demo ('You work with these LCL carriers, right, Sujit?'): Surjit confirmed 'we do. Yeah. We will work with Shipco, ATQ, Vanguard' — surfacing existing_systems data and giving Eduardo a note to include in the proposal",
+          "Structured agenda-setting at the open: Surjit explicitly agreed to the demo-first, proposal-at-end structure, which kept the sql2_demo_completed gate on track and prevented the commercial conversation from derailing the demo"
+        ],
+        "phrasings": [
+          "I want to have this next step set up today if possible.",
+          "So we don't break the flow. Right? Stay on the solution and at the end we do that.",
+          "Can we stay at the end of this one as we did? If you have time, we go really quick and then you and I will stay in this call and then cover that.",
+          "I gotta include that in your proposal.",
+          "We build it with our customer feedback and then we try always to… if you ask us something that nobody else has asked before, the weight we assign to that is not the same as — oh yeah, we have Vanguard asking for this and some of our customers have been asking.",
+          "You bring it to us and then we put it in our backlog and then we start adding value to that.",
+          "Kind of like a floating or free field that you could put — that kind of customizable field, if you will."
+        ],
+        "objections": [
+          {
+            "objection": "Surjit wanted a separate call to review the commercial proposal, citing internal contract clauses with an existing vendor causing delays",
+            "handling": "Eduardo acknowledged the need but immediately redirected: 'Can we stay at the end of this one as we did? If you have time, we go really quick and then you and I will stay in this call and then cover that.' He also added personal urgency (vacation) to justify doing it today. Surjit agreed."
+          },
+          {
+            "objection": "Feature gap: no way to tie customers to a specific sales rep / account manager for reporting and win-ratio analysis",
+            "handling": "Eduardo and Ernesto acknowledged the gap honestly, committed to checking internally ('we'll check with the team and revert to you with the answer'), and partially bridged it by noting that quote history is filterable by user and that customer groupings may be configurable"
+          },
+          {
+            "objection": "Feature gap: no field to capture the customer's quote-request date for on-time performance KPI tracking",
+            "handling": "Eduardo explored workarounds in real time (quote creation date, notes field), asked his team whether a custom field was feasible, and framed it as a product roadmap request — setting expectations without dismissing the need"
+          },
+          {
+            "objection": "Demo data was incomplete / rates not showing up for certain searches, causing friction during the ground/door-to-door demo",
+            "handling": "Eduardo and the team worked through it collaboratively in real time; Surjit acknowledged the same issue had occurred in a prior demo session, normalizing it. Eduardo offered to send a follow-up example rather than letting the live struggle undermine confidence."
+          },
+          {
+            "objection": "Concern about slow feature development based on bad experience with the incumbent vendor",
+            "handling": "Eduardo validated the concern, explained the roadmap prioritization process transparently (customer requests + industry standards + volume of similar requests = weight assigned), and used a concrete example (NAA integration) to show responsiveness. He set honest expectations without over-promising."
+          }
+        ],
+        "nextStepMove": "Eduardo set the next step during the opening minutes of the call rather than the end. When Surjit proposed a separate call for the commercial proposal, Eduardo redirected him to stay on the current call after the demo, citing his upcoming vacation as a reason to close the loop today: 'I'm going on vacation tomorrow and coming back on [X]. So I want to have this next step set up today if possible.' Surjit agreed. The plan was for Eduardo and Surjit to remain on the call after the demo to review the commercial proposal privately. This was confirmed verbally by Surjit ('Okay, that's good'). The transcript ends before that sub-call occurs, but the commitment was secured mid-call rather than left to chance at the end."
+      }
+    },
+    {
+      "id": "960af959-c5be-447b-8849-ad83a4a91e1d",
+      "rep": "Juan",
+      "account": "Acecustomsinc",
+      "subtype": "call",
+      "date": "Jul 22",
+      "callId": "960af959-c5be-447b-8849-ad83a4a91e1d",
+      "gatesConfirmed": [],
+      "analysis": null,
+      "error": "no transcript"
+    },
+    {
+      "id": "35cf7ac6-dea1-475a-a7e4-60a28e75c3cc",
+      "rep": "Eduardo",
+      "account": "IFF Inc",
+      "subtype": "Demo",
+      "date": "Jul 22",
+      "callId": "35cf7ac6-dea1-475a-a7e4-60a28e75c3cc",
+      "gatesConfirmed": [
+        "why_looking",
+        "existing_systems",
+        "competition_notes",
+        "next_step_confirmed",
+        "sql2_demo_completed",
+        "why_looking_now"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "Do you have previous experience when it comes to BI solutions, or do you have within the company any reporting tool?",
+              "why": "To calibrate the technical depth of the demo and avoid over-explaining basics to an experienced audience or under-explaining to a novice one"
+            },
+            {
+              "asked": "You use Power BI today, Winnie?",
+              "why": "To confirm whether the prospect already has the Microsoft tooling that the BI solution runs on, establishing fit and reducing adoption friction"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [
+            {
+              "asked": "Were you guys impacted by the outage that we had the other day, or not, or you're not using the Net CSV platform with the card?",
+              "why": "To probe whether a known competitor (Descartes) reliability issue had caused pain, surfacing a reason to move"
+            }
+          ],
+          "competition": [
+            {
+              "asked": "Were you guys impacted by the outage that we had the other day, or not, or you're not using the Net CSV platform with the card?",
+              "why": "To surface Descartes' outage as a competitive vulnerability and contrast Magaya's reliability"
+            }
+          ],
+          "budget": [],
+          "decisionProcess_authority": [],
+          "timeline": [],
+          "other": [
+            {
+              "asked": "Any questions until here?",
+              "why": "Repeated check-in to surface confusion or objections before moving to the next section of the demo"
+            },
+            {
+              "asked": "Are you seeing my screen?",
+              "why": "Basic logistics confirmation to ensure the demo was visible before proceeding"
+            }
+          ]
+        },
+        "techniques": [
+          "Calibration question at the top of the call to set demo depth based on audience experience level",
+          "Repeated comprehension check-ins ('Any questions until here? All good?') to create space for objections mid-demo",
+          "Real-time course correction: Eduardo stepped in when the demo went too technical, reframing the BI tool's value in plain language for non-technical stakeholders",
+          "Competitor pain surfacing: Eduardo introduced the Descartes outage unprompted to plant a reliability concern without directly attacking the competitor",
+          "Role-based reframing: Eduardo redirected the conversation to Winnie as the super-user/power user who would own the BI layer, reducing the perceived complexity burden on the rest of the team",
+          "Ownership of open items: Eduardo verbally logged action items on the call (JSON file inquiry, Alejandro's presentation) to maintain accountability and momentum",
+          "Proactive next-step setting: Eduardo proposed a follow-up deep-dive demo before the call ended, named a specific backup presenter (Ernesto), and asked Winnie to send availability"
+        ],
+        "whatWorked": [
+          "Eduardo's real-time reframe after the BI demo went too technical: when Trimika said 'there's a lot of layers to this' and the group started questioning the tool's relevance, Eduardo stepped in to explain that Winnie would own the BI layer and the rest of the team would simply receive scheduled reports in their inbox — Trimika responded 'Got you' and the tension dissipated",
+          "The Descartes outage probe: Eduardo asked whether the team was impacted by the outage, and Katrin confirmed 'CHB has had several outages since December' and Eduardo noted one was 24 hours — this surfaced a live competitive pain point and Eduardo closed it with 'Glad that you were not impacted by that,' implicitly positioning Magaya as more stable",
+          "Winnie's experience-level question at the start: asking about prior BI experience before the demo caused Winnie to self-identify as the most technical person in the room, which Eduardo later leveraged to position her as the super-user who would shield the rest of the team from complexity",
+          "Eduardo's next-step proposal: by naming a specific follow-up (deep-dive import demo with Ernesto as backup), asking Winnie to send availability, and committing to not delay past his return, Eduardo secured a confirmed next step — gate next_step_confirmed was achieved"
+        ],
+        "phrasings": [
+          "I have prepared this small presentation — are you seeing my screen?",
+          "That can give me some information to just see at which level I should go, just to repeat the basic things if you guys are covering them in some way today.",
+          "Any questions until here? All good?",
+          "I knew it, I was still watching that and I was like, oh, this is not going the right way.",
+          "Typically you probably would never work there. What's gonna happen is this kind of reports that are more complex will be created there, and then Winnie says, 'OK, who needs to receive this report on a weekly basis?' and then that report will be generated and landed into your inbox every day if you want to.",
+          "Sorry, Winnie, I'm pushing work to you.",
+          "I don't want to leave that for my return. I want to get us over that, if possible.",
+          "Were you guys impacted by the outage that we had the other day or not?",
+          "Glad that you were not impacted by that."
+        ],
+        "objections": [
+          {
+            "objection": "Trimika said the BI demo had 'a lot of layers' and she would need to talk to Winnie after the call to digest it and assess usefulness versus what Winnie already provides",
+            "handling": "Eduardo acknowledged the complexity, reframed the tool as Winnie's domain (not the broader team's), and explained that the team would only ever receive finished scheduled reports — they would never need to interact with the BI layer directly"
+          },
+          {
+            "objection": "Winnie said she could build the same reports herself using Python and questioned whether Power BI added value over her existing workflow",
+            "handling": "Eduardo validated Winnie's skill, positioned her as the super-user who would own the BI layer, and offered to provide out-of-the-box templates plus custom report creation on request — also committed to investigating JSON file access as an alternative path for Winnie"
+          },
+          {
+            "objection": "Trimika expressed frustration that the system did not allow ad hoc report creation with selectable columns from within the application, comparing it unfavorably to Descartes' capability",
+            "handling": "Alexandra acknowledged the limitation honestly, explained that ad hoc customization lives in the Power BI layer, and Eduardo reinforced that complex custom reports would be built by Winnie or the Magaya team and delivered on a schedule — framing the workflow as a feature rather than a gap"
+          },
+          {
+            "objection": "Winnie said she does not love Power BI and would prefer direct JSON file access to build her own tools",
+            "handling": "Eduardo and Alexandra committed to checking with their technical team on JSON file availability, logging it as an open action item on the call"
+          }
+        ],
+        "nextStepMove": "Eduardo set the next step verbally near the end of the call by proposing a follow-up deep-dive demo focused on the import workflow, named Ernesto as the backup presenter in case Eduardo was unavailable due to travel, and asked Winnie to send available times. Winnie agreed to check with the ops team and send time ranges. Alexandra reinforced by offering to help coordinate. Eduardo also logged two open action items: Alejandro's BI presentation to be shared, and the JSON file inquiry to be investigated. The next step was confirmed but not formalized with a specific date on the call."
+      }
+    },
+    {
+      "id": "d1ab0746-850c-46c1-a8aa-98ff0081a3bf",
+      "rep": "Eduardo",
+      "account": "Fmgloballogistics",
+      "subtype": "Discovery",
+      "date": "Jul 22",
+      "callId": "d1ab0746-850c-46c1-a8aa-98ff0081a3bf",
+      "gatesConfirmed": [
+        "why_looking",
+        "existing_systems",
+        "next_step_confirmed",
+        "decision_process_mapped",
+        "key_decision_maker_identified",
+        "sql3_legal_internal"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "How do you manage rates and contracts today?",
+              "why": "Uncover current state of rate management process"
+            },
+            {
+              "asked": "You say manually — it's an Excel sheet, Excel files?",
+              "why": "Confirm and sharpen the manual process pain"
+            },
+            {
+              "asked": "What are the main carriers that you work with?",
+              "why": "Understand scope and complexity of carrier relationships"
+            },
+            {
+              "asked": "How about quoting your customers today — that quoting tool is connected to your TMS, your ERP?",
+              "why": "Map the current quoting workflow and integration points"
+            },
+            {
+              "asked": "You are a consolidator yourself?",
+              "why": "Clarify business model to scope the solution correctly"
+            },
+            {
+              "asked": "How many employees in total?",
+              "why": "Size the account for licensing and deal value"
+            },
+            {
+              "asked": "Are you related to the French company FM Logistics or not?",
+              "why": "Disambiguate the account and understand corporate structure"
+            },
+            {
+              "asked": "How many people do you have in your pricing team, ballpark?",
+              "why": "Estimate seat count for licensing scope"
+            }
+          ],
+          "whyNow": [
+            {
+              "asked": "You said you already have executive approval for this — is management invested in getting a new solution, or are you still at a stage where you're exploring?",
+              "why": "Qualify urgency and whether there is organizational commitment behind the initiative"
+            }
+          ],
+          "need_pain": [
+            {
+              "asked": "How do you manage rates and contracts today?",
+              "why": "Surface the manual/inefficient process as a pain point"
+            },
+            {
+              "asked": "How many amendments do you have per month on the contracts?",
+              "why": "Quantify the volume of manual work to size the pain"
+            },
+            {
+              "asked": "Do you guys do LCL, less than container load?",
+              "why": "Expand scope of pain and solution fit"
+            }
+          ],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "Do you guys have allocated some budget for this new acquisition of the software, or are you still exploring and then you need to?",
+              "why": "Determine whether budget exists or needs to be created"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "What was your team — you are on the IT side?",
+              "why": "Identify the contact's role and flag that other stakeholders are needed"
+            },
+            {
+              "asked": "Typically if we need to get someone else involved, we're going to need the pricing manager — correct?",
+              "why": "Multi-thread to the operational decision influencer"
+            },
+            {
+              "asked": "When you buy software, who signs off on it — is it the CEO, the procurement manager, how does the acquisition of a solution work?",
+              "why": "Map the formal decision-making and approval chain"
+            },
+            {
+              "asked": "His name?",
+              "why": "Identify the key decision maker by name"
+            },
+            {
+              "asked": "Typically it goes through you, the operating team — they will probably need to see it?",
+              "why": "Confirm the evaluation committee and internal review process"
+            }
+          ],
+          "timeline": [
+            {
+              "asked": "What is the timeline for this, Matthew?",
+              "why": "Establish urgency and sales cycle length"
+            },
+            {
+              "asked": "To go live, to go to production — or to make a decision?",
+              "why": "Clarify whether the stated timeline is for decision or implementation"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Would that be okay if we sent you a mutual NDA to sign?",
+              "why": "Advance the deal to the next formal gate and test willingness to commit"
+            },
+            {
+              "asked": "For the next meeting, do you want to bring your pricing team? And if you want to include any decision maker, the managing director?",
+              "why": "Set up a multi-stakeholder next meeting to accelerate the process"
+            }
+          ]
+        },
+        "techniques": [
+          "Upfront agenda-setting: Eduardo opened by explicitly stating the call structure — understand situation, find alignment, set next steps — before asking a single question",
+          "Role clarification mid-call: when it became clear Matthew was IT not operations, Eduardo immediately pivoted to identify the correct stakeholder (pricing manager) rather than continuing with the wrong contact",
+          "Layered follow-up on manual process: after Matthew said 'manual,' Eduardo drilled down with 'Excel sheet, Excel files?' to sharpen the pain rather than accepting the surface answer",
+          "Timeline disambiguation: after Matthew said '3 to 6,' Eduardo immediately asked 'to go live or to make a decision?' to prevent ambiguity",
+          "Multi-threading: Eduardo explicitly named the pricing manager and managing director as required participants for the next call, mapping the buying committee in real time",
+          "Key decision maker identification by name: Eduardo asked 'his name?' directly after Matthew identified the managing director as the final approver",
+          "NDA as a deal-advancement gate: Eduardo used the mutual NDA as a natural next step to create commitment and begin information exchange",
+          "Demo withholding as qualification filter: Eduardo declined to demo on the first call, using it as a lever to gauge seriousness and set a structured next step",
+          "Recap email and recording as follow-through tools: Eduardo committed to a written recap and recording to keep absent stakeholders informed and maintain momentum",
+          "Scope expansion through product-led questions: Eduardo introduced LCL, FMC filing, free time, and customer portal to expand the solution footprint and uncover additional use cases",
+          "Confirming integration requirements proactively: Eduardo flagged the need to integrate with the in-house ERP early, setting realistic expectations and surfacing a technical stakeholder need"
+        ],
+        "whatWorked": [
+          "Role clarification unlocked the decision process map: when Eduardo said 'Sorry, we should have started by asking what your team was — you are IT,' Matthew confirmed his role and immediately named the pricing manager as the operational evaluator, directly producing the decision_process_mapped and key_decision_maker_identified gates",
+          "Direct question on decision authority produced the key decision maker by name: 'Who signs off on it — is it the CEO, the procurement manager?' led Matthew to name 'Mr. Young, my managing director,' confirming key_decision_maker_identified",
+          "NDA framing as mutual protection advanced the legal gate: Eduardo framed the NDA as protecting both sides ('you are sharing sensitive information about your operations'), and Matthew agreed immediately — 'Yes, I will get my approval' — producing the sql3_legal_internal gate",
+          "Timeline disambiguation clarified the sales cycle: asking 'to go live or to make a decision?' got a clean answer of '3 to 6 months to make a decision,' confirming a workable timeline",
+          "Demo withholding forced a concrete next step: by declining to demo on the first call, Eduardo created the condition for Matthew to agree to a specific date (August 12th, same time), confirming next_step_confirmed",
+          "Open question on current process surfaced the core pain: 'How do you manage rates and contracts today?' led Matthew to volunteer 'manual' and then 'our system doesn't link with carriers so we don't have real-time rates,' confirming why_looking and existing_systems in a single exchange"
+        ],
+        "phrasings": [
+          "The idea today is that we get more details, we understand better what's up, what this project is about — your current situation, every detail possible you can provide — to see if there is alignment in what your goals are and what value we can offer.",
+          "How do you manage rates and contracts today?",
+          "You say manually — it's an Excel sheet, Excel files?",
+          "Typically if we need to get someone else involved here, we're going to need the pricing manager.",
+          "Do you guys have allocated some budget for this new acquisition of the software, or are you still exploring?",
+          "You said you already have executive approval for this — is management invested in getting a new solution, or are you still at a stage that you're still exploring?",
+          "What is the timeline for this, Matthew?",
+          "To go live, to go to production — or to make a decision?",
+          "We typically don't do demos on the first call. What we do is get information, and then with that information we prepare.",
+          "We ask our prospects to sign a mutual NDA so we can start exchanging information about our solutions, pricing, etc. — and also you are sharing sensitive information about your operations. Would that be okay?",
+          "When you buy software, who signs off on it — is it the CEO, the procurement manager, how does the acquisition of a solution work?",
+          "His name?",
+          "I'll put together a recap email with all the information.",
+          "For the next meeting, typically you're going to need the pricing team. If you want to include any decision maker, the managing director, he can be part of it — or you want to give him the recording."
+        ],
+        "objections": [
+          {
+            "objection": "Matthew asked to see a screen or demo during the first call ('you have any screen or any cache? Can you show me?')",
+            "handling": "Eduardo held the line firmly but non-confrontationally: 'We typically don't do demos on the first call. What we do is get information, and then with that information we prepare.' He then offered videos as an interim asset and immediately pivoted to scheduling the formal demo call, converting the objection into a next-step commitment."
+          }
+        ],
+        "nextStepMove": "Eduardo set a concrete, dated next step: a demo call on August 12th at 9am Eduardo's time (9pm Matthew's time), confirmed verbally on the call. He also committed to three parallel actions before that meeting: (1) send the mutual NDA in Word format for legal review, (2) send product videos for Matthew to share internally, and (3) send a recap email with the call recording. He explicitly told Matthew to bring the pricing team to the next call and flagged the managing director as a potential attendee or recipient of the recording, ensuring multi-stakeholder coverage going into the demo."
+      }
+    },
+    {
+      "id": "8a3ff1ee-9b85-443b-9739-7546c9ac49ac",
+      "rep": "Juan",
+      "account": "Gmail",
+      "subtype": "Proposal",
+      "date": "Jul 22",
+      "callId": "8a3ff1ee-9b85-443b-9739-7546c9ac49ac",
+      "gatesConfirmed": [
+        "why_looking",
+        "existing_systems",
+        "next_step_confirmed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "What is your company, freight forwarder or warehouse provider, what exactly are you looking to solve with Magaya software?",
+              "why": "To classify the prospect's business type and scope before diving into pain or solution"
+            },
+            {
+              "asked": "Do you have a warehouse or is it a third party warehouse?",
+              "why": "To understand the operational structure and who controls the physical touchpoints"
+            },
+            {
+              "asked": "Are you the freight forwarder or are you shipping with a third party freight forwarder also?",
+              "why": "To map the full supply chain and identify where Magaya would sit in the workflow"
+            },
+            {
+              "asked": "Is it just one warehouse or do you have more than one warehouse provider?",
+              "why": "To size the license requirement and scope the deal accurately"
+            },
+            {
+              "asked": "How many customers do you have? How many would need access to the soft portal to have visibility and tracking?",
+              "why": "To determine which product tier and pricing applies"
+            },
+            {
+              "asked": "Are you in Miami by chance, or South Florida?",
+              "why": "To establish geographic context and build rapport through shared market knowledge"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [
+            {
+              "asked": "What challenges are you facing in your process that you're looking to solve with software?",
+              "why": "Open-ended pain discovery to let the prospect articulate their own problem in their own words"
+            },
+            {
+              "asked": "Does your warehouse provider have a system in place today?",
+              "why": "To identify whether the warehouse is a gap in the visibility chain and a blocker to the solution working"
+            }
+          ],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "At minimum you're going to be at 475 per month... [implied: does that work?]",
+              "why": "Anchoring a floor price to test budget tolerance before presenting the full package"
+            },
+            {
+              "asked": "If you do three years I can get to 650... if you don't want your contract it'll be 875... if you do two years it'll be somewhere between those two numbers",
+              "why": "Presenting tiered contract options to surface budget flexibility and preferred commitment level"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "I know you said you connect Canada, US and Guyana — you're in Miami by chance, or South Florida?",
+              "why": "Indirectly probing the prospect's base of operations to understand who else is involved in the decision"
+            },
+            {
+              "asked": "[Implicit in] I want to make sure that the budget makes sense for your investment and your stakeholder",
+              "why": "Acknowledging there are stakeholders beyond Quincy without directly asking who they are"
+            }
+          ],
+          "timeline": [
+            {
+              "asked": "Let's say hypothetically you send a contract by August 15th — I can have you live in 30 days, so by September 15th you'll be live and I'll start your bill on October 1st",
+              "why": "Proposing a concrete timeline to create urgency and make the next step tangible"
+            }
+          ],
+          "other": [
+            {
+              "asked": "Have you come to an agreement with them where they'll be using your system? Like if you obtain a system — because what you described, for your customer to have a notification when the warehouse scans a package, they need to use your system or integrate their system to your system",
+              "why": "Probing for a potential implementation blocker (third-party buy-in) before committing to a solution fit"
+            }
+          ]
+        },
+        "techniques": [
+          "Rapid business classification at the open: asking freight forwarder vs. warehouse provider before anything else to route the conversation",
+          "Layered follow-up questions: warehouse owned or 3PL? → freight forwarder or 3PF? → one warehouse or multiple? — each answer narrowed scope and pricing",
+          "Consultative reframing: explaining the mirroring concept (you're the broker in the middle, your customers only see what you update) to reframe the prospect's stated need into a more complex solution requirement",
+          "Anchoring with a floor price first ($475/month) before revealing the full package ($875), making the full price feel incremental",
+          "Tiered pricing presentation: listing 1-year, 2-year, and 3-year options to let the customer self-select commitment level",
+          "Hypothetical close / future-pacing: 'let's say hypothetically you sign by August 15th — you'd be live September 15th, first bill October 1st' to make the outcome concrete and reduce perceived risk",
+          "Pay-as-you-go framing for implementation: comparing it to school ('if you practice when you're not in class') to reduce sticker shock on the $7,200 estimate",
+          "Social proof / vertical credibility: 'that's what our bread and butter is here, a lot of our clients when we first started 25 years ago, that's what they do — consolidators to the Caribbean'",
+          "Transparency as a trust-building move: 'we're very transparent, I want to make sure your needs are going to be met and the budget makes sense'",
+          "Soft next-step setup: offering a video tour and data sheet as a bridge to a demo, lowering the commitment bar for the next interaction"
+        ],
+        "whatWorked": [
+          "Asking 'what challenges are you facing in your process?' unlocked Quincy's core need unprompted — he described the warehouse scanning, customer notification, and account-linking requirement in detail, confirming why_looking",
+          "Asking 'does your warehouse provider have a system in place today?' confirmed they have no existing system, which established existing_systems and opened the door for Juan to position the Flow WMS mobile license as the solution — Quincy responded 'No, they don't'",
+          "The mirroring explanation ('you're the broker, you're in the middle — your customers need to see what your providers are doing') got immediate buy-in: Quincy said 'yes, exactly, exactly,' confirming he understood and accepted the solution architecture Juan was proposing",
+          "Offering the video tour and data sheet as a concrete deliverable for Quincy to share with business partners produced a clear next-step confirmation — Quincy said 'Sounds like a plan... definitely the video will help so I can make a good presentation to my business partners and definitely we'll be in touch,' confirming next_step_confirmed"
+        ],
+        "phrasings": [
+          "What is your company, freight forwarder or warehouse provider, what exactly are you looking to solve with Magaya software?",
+          "What challenges are you facing in your process that you're looking to solve with software?",
+          "You're the broker, you're in the middle — your customers, it's your book of business. For them to have visibility of what's happening, you need to mirror what your third party providers are doing.",
+          "We're very transparent. I want to make sure that one, your needs are going to be met — we check off all the boxes there — and two, that the budget makes sense for your investment and your stakeholder.",
+          "Let's say hypothetically you send a contract by August 15th — I can have you live in 30 days, so by September 15th you'll be live, and I'll start your bill on October 1st.",
+          "Even though I'm estimating 40 hours, if you end up using 30 or 35 hours, you'll pay for that — not the estimated time. It's like you're going to school: if you practice when you're not in class, you're going to use the best time.",
+          "I'm gonna send you a video so you can get a better familiarity of the user interface and the capabilities, and I'll send the data sheet as well so you can speak with your partners and stakeholders. And if you think it makes sense to look at Magaya deeper, we can schedule a demo where we'll meet with my solution specialist and do a tailored presentation based on your process.",
+          "That's what our bread and butter is here. A lot of our clients when we first started 25 years ago, that's what they do — consolidators to the Caribbean."
+        ],
+        "objections": [],
+        "nextStepMove": "Juan set a soft next step by offering to send a product video tour and data sheet for Quincy to review and share with his business partners, with a follow-on demo with a solution specialist as the explicit next meeting. He did not lock in a specific date or time for the demo, leaving it open-ended ('if you think it makes sense to look at Magaya deeper, we can schedule a demo'). Quincy verbally confirmed ('sounds like a plan... definitely we'll be in touch'), so a next step was acknowledged but not calendared, making it a weak commitment."
+      }
+    },
+    {
+      "id": "3942f4bf-899c-487a-9ed8-2e33e12ea62a",
+      "rep": "Juan",
+      "account": "Ztransportation",
+      "subtype": "Discovery",
+      "date": "Jul 23",
+      "callId": "3942f4bf-899c-487a-9ed8-2e33e12ea62a",
+      "gatesConfirmed": [
+        "why_looking",
+        "timeline_notes",
+        "why_looking_now",
+        "existing_systems",
+        "next_step_confirmed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "Do you already have the warehouse or are you in process of obtaining the space?",
+              "why": "Establish how far along they are in their 3PL buildout and whether urgency is real"
+            },
+            {
+              "asked": "And do you have an idea what type of inventory? Like what's the commodity, what part of the managing?",
+              "why": "Understand what WMS features will actually be needed"
+            },
+            {
+              "asked": "Do you have any customers in place right now when you already know what their inventory is?",
+              "why": "Determine whether they have committed demand driving the purchase or are speculative"
+            },
+            {
+              "asked": "How you identify the inventory — is it by part number, lot number, expiration date?",
+              "why": "Qualify the complexity of inventory tracking required"
+            },
+            {
+              "asked": "Are you notified about the inventory before it's coming to your warehouse, or is it going to be blind?",
+              "why": "Understand receiving workflow to scope the demo correctly"
+            },
+            {
+              "asked": "What are your plans for accounting? Are you gonna keep your system that you have today for your fleet maintenance, your TMS for dispatching?",
+              "why": "Map existing tech stack and identify integration points"
+            },
+            {
+              "asked": "QuickBooks — is it online or desktop?",
+              "why": "Confirm compatibility with Magaya's QuickBooks Online integration"
+            },
+            {
+              "asked": "Where's your warehouse located?",
+              "why": "Situational context; also used to build rapport"
+            },
+            {
+              "asked": "About how many employees are you — will you need for your software?",
+              "why": "Size the licensing and price the deal"
+            }
+          ],
+          "whyNow": [
+            {
+              "asked": "You have a customer that's driving you like and getting a solution — do you have any customers in place right now?",
+              "why": "Determine whether external customer pressure is creating urgency to buy now"
+            }
+          ],
+          "need_pain": [
+            {
+              "asked": "Do you require e-commerce connectivity, like for us to connect to eBay and Amazon and Shopify — do you need your WMS system to do that out of the box?",
+              "why": "Surface a specific functional requirement that could be a pain point or gap"
+            },
+            {
+              "asked": "Right now you don't really know what you're getting into — various commodities, blind receiving?",
+              "why": "Confirm the ambiguity of their situation to frame the need for a robust, scalable solution"
+            }
+          ],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "The only other thing you should consider, Michelle and Brian, is the initial implementation fee — like the training and onboarding.",
+              "why": "Introduce and anchor the implementation cost before the customer asks, controlling the framing"
+            },
+            {
+              "asked": "If you used the 50 hours we estimate at 180 an hour, the initial implementation could be $9,000 or less — and your quarterly bill will be $4,050 every quarter.",
+              "why": "Lay out total cost of ownership clearly so budget objections surface now rather than later"
+            }
+          ],
+          "decisionProcess_authority": [],
+          "timeline": [
+            {
+              "asked": "Do you have a date when you want to have your software installed and ready to be in use — like are other customers saying hey, you have this ready by September, October, or is there a day you're working to have it ready by?",
+              "why": "Establish a go-live target to create a backwards timeline and drive urgency around signing"
+            }
+          ],
+          "other": [
+            {
+              "asked": "The TMS software that you use — does that have accounting or do you have a different accounting system?",
+              "why": "Understand whether accounting is handled in TMS or separately, to scope the integration story"
+            }
+          ]
+        },
+        "techniques": [
+          "Process-gating the demo behind an NDA and discovery call — used to reset expectations and control the sales process when the customer arrived expecting a demo",
+          "Backwards timeline construction — took the customer's vague 'end of August' staffing date and built a concrete sign-by-September, live-by-December timeline with specific payment dates to create urgency",
+          "Anchoring pricing early and unprompted — introduced per-user rates, contract lengths, and total implementation cost before the customer asked, controlling the framing",
+          "Tiered pricing disclosure — offered two price points (135 vs 175 per user) tied to volume threshold to nudge toward larger license commitment",
+          "Rapport-building through personal connection — leveraged shared geography (Dover, NJ / Rockaway Mall) to warm the call and soften resistance after the demo misunderstanding",
+          "Layered follow-up questions — after learning they were a trucking company going 3PL, immediately drilled into commodity type, inventory identification method, and whether receiving would be blind",
+          "Scoping the demo in advance — explicitly explained that discovery questions were to ensure the demo would be tailored, not generic",
+          "Proactive objection handling on e-commerce gap — acknowledged the out-of-box limitation before the customer discovered it, then minimized it by offering a manual workaround and a scalable API path",
+          "Summarizing total investment in concrete dollar figures — calculated quarterly subscription and implementation cost live on the call to make budget tangible",
+          "Setting a clear next-step artifact — committed to sending a data sheet and video to keep the prospect engaged between calls and move toward NDA signing"
+        ],
+        "whatWorked": [
+          "Process-gating the demo behind NDA/discovery: after the customer pushed back ('we already did that part, today was just about getting a demo'), Juan calmly explained the process and the customer immediately pivoted to sharing their situation — 'So we're looking for a WMS at the moment. We're setting up our warehouse. We're becoming a 3PL.' This unlocked the core discovery and confirmed why_looking and why_looking_now.",
+          "Asking whether they had a go-live date: the question 'Do you have a date when you want to have your software installed and ready?' surfaced that they had no date set, which allowed Juan to construct a concrete backwards timeline (sign September → live December) and anchor the payment schedule — directly supporting timeline_notes confirmation.",
+          "Asking about existing accounting system: 'What are your plans for accounting — QuickBooks online or desktop?' confirmed QuickBooks Online, which Juan immediately used to demonstrate a native integration, reducing a potential objection and confirming existing_systems.",
+          "Rapport via Dover/Rockaway Mall geography: after the demo misunderstanding created friction, the shared-location moment visibly warmed the call and Juan explicitly used it to justify giving best pricing ('just because you're in Dover'), which softened the budget conversation.",
+          "Closing with a defined next step (NDA + email with data sheet and video): Mishel responded 'Sounds good. We'll expect your email and we'll get back to you on our decision' — confirming next_step_confirmed gate."
+        ],
+        "phrasings": [
+          "She didn't join? Unfortunately I don't know, she dropped on another call. But if you could just share a bit more about what your processes are and workload, what you're looking for in the software to see how we can help you.",
+          "The demos on this — after this call we have a personal discovery call to understand your needs, processes. We go over the time and the budget. If after this call makes sense, then you sign an NDA and after you sign the NDA then we can do a demo. We can't do them before the NDA is not signed, unfortunately.",
+          "We go through this process first before doing the demo. So when we meet for the demo, we know exactly how to show you the system because the system works in many different ways.",
+          "Do you have a date when you want to have your software installed and ready to be in use — like are other customers saying hey, you have this ready by September, October, or is there a day you're working to have it ready by?",
+          "If you were working towards like a December implementation, for you to be live in December, you want to have your contract and everything signed like by beginning of September.",
+          "When you send a contract with us, you don't pay anything up front.",
+          "If you think that Magaya makes sense and it's a good option for you to explore further, then you can sign the NDA — the Mutual Disclosure Agreement — so that we can schedule our next meeting to do the demo presentation.",
+          "Today I'm going to send you a data sheet and video so you can get more familiar with the solution. The videos give you a high-level tour of the capabilities and then the data sheet is outlined in black and white.",
+          "If you used the 50 hours we estimate at 180 an hour, the initial implementation could be $9,000 or less — again depending on your learning curve.",
+          "It's something that can always scale and grow when you do need it."
+        ],
+        "objections": [
+          {
+            "objection": "We already did that part with her. Today was just about getting a demo.",
+            "handling": "Juan acknowledged the misunderstanding, calmly explained the mandatory process (discovery → NDA → demo), and reframed it as protecting the customer's time so the demo would be relevant. He did not apologize for the process or offer to skip it."
+          },
+          {
+            "objection": "Brian asked about hardware/label equipment needs, implying concern about additional costs or compatibility.",
+            "handling": "Juan clarified that the software is compatible with any Windows, Cloud, or Apple device with Internet, then offered to send a certified hardware compatibility list (recommending Zebra), reducing the perceived risk."
+          }
+        ],
+        "nextStepMove": "Juan set a conditional next step: if the prospect decides Magaya is a good fit after reviewing the materials, they sign the NDA, which then unlocks the demo. He committed to sending a data sheet and product video immediately after the call. He did not schedule a specific follow-up date or time, leaving the ball in the prospect's court. Mishel confirmed acceptance — 'Sounds good. We'll expect your email and we'll get back to you on our decision' — which confirms next_step_confirmed, though the lack of a booked follow-up call is a gap in commitment."
+      }
+    },
+    {
+      "id": "8a2b331b-9d87-4161-aba7-7a32ef869b7c",
+      "rep": "Juan",
+      "account": "Dpworld",
+      "subtype": "Proposal",
+      "date": "Jul 23",
+      "callId": "8a2b331b-9d87-4161-aba7-7a32ef869b7c",
+      "gatesConfirmed": [
+        "why_looking",
+        "existing_systems",
+        "competition_notes",
+        "sql2_demo_completed",
+        "champion_internal_action",
+        "next_step_confirmed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "Are you planning on having them in a single location?",
+              "why": "To understand deployment scope across sites before pricing"
+            },
+            {
+              "asked": "Do you have any teams that can do the integration or do you rely on us to integrate it for you?",
+              "why": "To determine who owns the integration work and whether professional services revenue is in scope"
+            },
+            {
+              "asked": "Is your customer asking you — do you have a dimensioner today with JDA?",
+              "why": "To confirm whether an existing dimensioner is already integrated with their WMS"
+            },
+            {
+              "asked": "Is it a TB stand?",
+              "why": "To identify the specific model of the existing cubic scan hardware"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [
+            {
+              "asked": "What's motivating to switch to a new dimensioner? I guess what's motivating to switch?",
+              "why": "To surface the root cause driving the replacement decision"
+            }
+          ],
+          "competition": [
+            {
+              "asked": "We currently have cubic scans — is it a TB stand?",
+              "why": "To identify the incumbent vendor and specific hardware model being replaced"
+            }
+          ],
+          "budget": [],
+          "decisionProcess_authority": [
+            {
+              "asked": "Is George part of the developing team?",
+              "why": "To identify whether the technical contact on the call has authority over integration decisions"
+            },
+            {
+              "asked": "Is that the preferred option to integrate to JDA?",
+              "why": "To confirm whether the integration path was a decision already made internally or still open"
+            }
+          ],
+          "timeline": [],
+          "other": [
+            {
+              "asked": "Are you out of New Jersey by chance?",
+              "why": "To establish rapport by referencing a prior DP World touchpoint"
+            },
+            {
+              "asked": "If you think Magaya is a viable option, we can discuss that further — maybe do a demonstration at that point?",
+              "why": "To propose a concrete next step and gauge readiness to advance"
+            }
+          ]
+        },
+        "techniques": [
+          "Warm rapport-building via name recognition of DP World before discovery began",
+          "Clarifying the preferred option immediately after the customer stated a requirement: 'Is that the preferred option to integrate to JDA?'",
+          "Proactively surfacing the competing WMS option (Magaya WMS) and then gracefully backing off when the customer signaled they wouldn't switch",
+          "Quantifying pain in dollars: broke down pricing into per-unit setup ($5,500), monthly subscription ($1,500/unit), and integration hourly rate ($180–$225/hr, 20–30 hrs) in a single call",
+          "Recommending a specific package tier based on inferred volume ('I think your volume might be on the unit side') to demonstrate consultative understanding",
+          "Multi-threading: immediately pulled in George (the engineer) and captured his email to include him on follow-up",
+          "Gating written pricing behind an NDA to create a formal next step and protect deal structure",
+          "Proposing a demo as the explicit next milestone tied to the NDA and written proposal",
+          "Referencing a known mutual customer (Expeditious) as social proof after the customer raised it"
+        ],
+        "whatWorked": [
+          "Asking 'What's motivating to switch to a new dimensioner?' directly unlocked the pain: Paulette disclosed weight and dims accuracy issues with the incumbent cubic scan units — confirming why_looking gate. Customer said: 'We've been having some issues as far as weight issues. Weight and dims issues.'",
+          "Asking whether they had an internal integration team vs. relying on Magaya brought George into the conversation and confirmed the customer's team handles integration — confirming existing_systems and clarifying the integration cost scope. George said: 'They have a team that configures and sets up the equipment that communicates with our WMS system.'",
+          "Identifying the incumbent hardware ('Is it a TB stand?') confirmed competition_notes: George disclosed three CubeScan S9s and one CubeScan 110.",
+          "Proposing the demo tied to the NDA and written pricing created a clear champion action: Paulette committed to presenting to her customer that afternoon and said she would move forward based on that meeting — confirming champion_internal_action and next_step_confirmed.",
+          "Referencing Expeditious as a known customer validated credibility at a key moment: Paulette confirmed she had already seen the product in action there, which removed the need for a cold demo and accelerated trust. She said: 'We did see the way it works at Expeditious. I know that's one of your customers.'"
+        ],
+        "phrasings": [
+          "Is that the preferred option to integrate to JDA?",
+          "What's motivating to switch to a new dimensioner?",
+          "It's not reliable in the weights and the dims the unit does.",
+          "If you think Magaya is a viable option, we can discuss that further — maybe do a demonstration at that point.",
+          "Once you send an NDA, then I can send it in writing — no problem. But for now I can send you the specs, the process, and everything else.",
+          "The scale is yours, the indicator is yours when you purchase those — but the actual dimensioner itself is leased.",
+          "Anywhere between 180 to 225 per hour — the number of hours depends on who we're integrating to and the complexity of the API. It's usually about 20 to 30 hours, ballpark.",
+          "I'll include you with all the information — consent or not, we have the NDA — and anything that comes up, happy to help."
+        ],
+        "objections": [
+          {
+            "objection": "I don't think they're going to change the WMS system, if I'm being honest.",
+            "handling": "Juan acknowledged it without pushing back, pivoted to offering a WMS data sheet for a future exploratory meeting, and kept focus on the dimensioner — preserving the deal without overreaching."
+          },
+          {
+            "objection": "Would you be able to send me all of this in writing?",
+            "handling": "Juan gated written pricing behind an NDA, explained the reason clearly, but verbally confirmed all figures on the call so the customer had what she needed to present internally."
+          },
+          {
+            "objection": "If we needed you to do the integration — I know we have our own team — what would that cost?",
+            "handling": "Juan gave a clear hourly rate range ($180–$225/hr) and estimated hours (20–30), framing it as a ballpark that his team could scope more precisely once they understood the API."
+          }
+        ],
+        "nextStepMove": "Juan proposed a demo tied to the NDA and written proposal as the explicit next step: 'If you think Magaya is a viable option, we can discuss that further — maybe do a demonstration at that point, we'll be able to meet from the soldier agreement signed.' He also committed to sending specs, process documentation, and the Smith Scale indicator link to both Paulette and George. Paulette confirmed she had a meeting with her customer that afternoon to present the information and would move forward based on that outcome. The next step was confirmed but loosely structured — no specific date or follow-up call was booked, leaving the advance dependent on Paulette's internal meeting."
+      }
+    },
+    {
+      "id": "e99b632b-77cc-4b98-940c-3d83bdbb6e1d",
+      "rep": "Juan",
+      "account": "Unitedchb",
+      "subtype": "Demo",
+      "date": "Jul 27",
+      "callId": "e99b632b-77cc-4b98-940c-3d83bdbb6e1d",
+      "gatesConfirmed": [
+        "next_step_confirmed",
+        "sql2_demo_completed"
+      ],
+      "analysis": {
+        "questionsByGoal": {
+          "situation": [
+            {
+              "asked": "I know you've had your initial discussions and conversation with our colleague Steven Johnson where you know, primarily customs compliance — am I remembering correctly that you already had a demo?",
+              "why": "To confirm prior touchpoints and scope of what had already been covered so the demo could be scoped correctly to accounting only"
+            },
+            {
+              "asked": "Where are you located?",
+              "why": "To qualify geographic proximity for an in-person event and deepen the relationship"
+            }
+          ],
+          "whyNow": [],
+          "need_pain": [
+            {
+              "asked": "As you saw in the checklist that you've already sent to us, we can cover almost 80% of your needs — there's only two items, one is with the custom field and the other is just a manual process.",
+              "why": "To surface and pre-empt known gaps before the customer raised them, framing them as minor rather than blockers"
+            }
+          ],
+          "competition": [],
+          "budget": [
+            {
+              "asked": "The licensing for just accounting is between 100 and 150 per month — I want to give you a ballpark to have an idea what the solution would cost for this day model.",
+              "why": "To anchor price expectations before a formal proposal and test for sticker shock"
+            }
+          ],
+          "decisionProcess_authority": [
+            {
+              "asked": "I'm happy to get with Stephen and prepare a formal proposal that we could read all together — the customs and the supply chain.",
+              "why": "To confirm that Stephen (customs side AE) is a co-stakeholder and that a combined proposal reviewed together is the right next step"
+            }
+          ],
+          "timeline": [],
+          "other": [
+            {
+              "asked": "Tim, is there anything else you want to cover for the accounting side?",
+              "why": "To check for unmet needs before closing the demo and transitioning to next steps"
+            },
+            {
+              "asked": "Any other concerns or questions that you have to share before we kick it off here with Ernesto?",
+              "why": "To surface objections or agenda items before the demo began so they could be addressed in the flow"
+            }
+          ]
+        },
+        "techniques": [
+          "Pre-framing the demo scope: Juan explicitly set context before handing to Ernesto, explaining why only the accounting module was being shown and pre-handling the 'why not QuickBooks' objection before it could arise",
+          "Gap inoculation: proactively named the two checklist items Magaya couldn't cover (80% framing) before the customer raised them, minimizing their weight",
+          "Ballpark pricing drop before formal proposal: gave a $100–$150/month range verbally to anchor expectations and test reaction without committing to a number",
+          "Soft multi-threading: referenced Stephen Johnson as a co-stakeholder and proposed a joint proposal review, keeping both deal tracks (customs + accounting) connected",
+          "Relationship-building close: invited Tim to an industry event (Craft Feast) with a free ticket after the call formally ended, extending the relationship beyond the transaction",
+          "Confirmation of prior discovery artifacts: referenced the checklist Tim had already submitted to demonstrate preparation and build credibility"
+        ],
+        "whatWorked": [
+          "Pre-framing the accounting-only scope before the demo: Tim responded 'sounds good' and did not raise confusion about the broader TMS platform during the demo, suggesting the framing prevented scope distraction. This plausibly supported sql2_demo_completed.",
+          "Proactively naming the 80% coverage and two gaps: Tim did not raise the gaps as objections during or after the demo, and closed with 'I think it contains all the features that we were hoping for' — the inoculation appears to have neutralized potential blockers.",
+          "Ballpark pricing drop: Tim immediately engaged with a clarifying question ('that's the price per license for specifically that module') rather than expressing sticker shock, indicating the range was acceptable and the framing was clear.",
+          "Proposing a joint proposal with Stephen: Tim confirmed the next step organically — 'we'll touch base with Stephen one more time for the custom side and then after that we'll do a little in-house roundtable' — aligning with the next_step_confirmed gate."
+        ],
+        "phrasings": [
+          "Rather than getting a third party solution like a QuickBooks or a Peachtree, what some of our custom brokerage companies are doing is they're using our supply chain solution only for the accounting module.",
+          "As you saw in the checklist that you've already sent to us, we can cover almost 80% of your needs. There's only two items there.",
+          "The licensing for just accounting is between 100 and 150 per month. I want to give you a ballpark to have an idea what the solution would cost.",
+          "I'm happy to get with Stephen and prepare a formal proposal that we could read all together — the customs and the supply chain.",
+          "You'll send the trigger whenever you want that data to come over to finalize the accounting on our side.",
+          "Our side we don't charge by transaction, it's unlimited. We just charge by the user."
+        ],
+        "objections": [
+          {
+            "objection": "Is the data integration between the custom side and the accounting side automatic or will there be some periodic activity to run?",
+            "handling": "Ernesto answered directly that it is manual — you push invoices and bills from one side to the other. Juan reinforced this post-demo by reframing it as user-controlled: 'you'll send the trigger whenever you want that data to come over,' making the manual step sound like flexibility rather than a limitation."
+          }
+        ],
+        "nextStepMove": "Juan proposed a joint formal proposal with Stephen covering both customs and supply chain, and gave a verbal price ballpark to set expectations. Tim self-defined the next step: touch base with Stephen on the custom side, then an internal roundtable, then feedback to the team. Juan accepted this without pushing for a specific date or owner, leaving the next step somewhat open-ended. No calendar commitment or follow-up date was secured, though the next_step_confirmed gate was met at the directional level."
+      }
+    },
+    {
+      "id": "f694145b-9cdd-40ec-9c2e-640f00bf5dc8",
+      "rep": "Juan",
+      "account": "Flyfreight",
+      "subtype": "call",
+      "date": "Jul 28",
+      "callId": "f694145b-9cdd-40ec-9c2e-640f00bf5dc8",
+      "gatesConfirmed": [],
+      "analysis": null,
+      "error": "no transcript"
+    },
+    {
+      "id": "b804432d-6d6f-491e-bb37-112ad54f2df9",
+      "rep": "Juan",
+      "account": "CLT AIR",
+      "subtype": "call",
+      "date": "Jul 28",
+      "callId": "b804432d-6d6f-491e-bb37-112ad54f2df9",
+      "gatesConfirmed": [],
+      "analysis": null,
+      "error": "no transcript"
+    }
+  ]
+}

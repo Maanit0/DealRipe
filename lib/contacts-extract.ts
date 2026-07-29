@@ -78,7 +78,8 @@ Return ONLY a JSON array, nothing else. Each element:
 { "name": string, "role": string, "relationship": "champion"|"economic_buyer"|"influencer"|"user"|"unknown", "onCall": boolean, "evidence": string }
 
 Rules:
-- Include only NAMED INDIVIDUALS on the customer/buyer side. Exclude the seller/vendor representatives.
+- The SELLER is Magaya. Include only NAMED INDIVIDUALS who work for the customer/prospect "${args.account}". EXCLUDE anyone on the Magaya side: their sales reps, sales operations or coordinators, solutions engineers, account managers, and their data, reporting, Salesforce, or IT staff.
+- If it is ambiguous whether a person is Magaya-internal or on the customer side, EXCLUDE them. Signals a person is Magaya-internal: they discuss the seller's own CRM, Salesforce reports, internal lead lists or pipeline (for example "SQL zeros", "our reports", running a report for the team), or coordinating internally, rather than speaking as the buyer about their own operations.
 - Do NOT include groups or teams (e.g. "the board", "operations team", "partners", "leadership"). Only specific named people.
 - role: their title or function if stated; otherwise a short description, or "" if none.
 - relationship: champion = the main advocate/driver on the call; economic_buyer = controls budget or gives final sign-off; influencer = weighs in on the decision; user = hands-on end user; unknown = unclear.

@@ -110,6 +110,7 @@ export async function generateBriefingFromState(
           extraction,
           currentGaps,
           nextGaps,
+          today: new Date().toISOString().slice(0, 10),
         }),
       },
     ],
