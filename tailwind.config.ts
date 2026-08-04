@@ -14,7 +14,9 @@ const config: Config = {
         warnSoft: "#fef3c7",
         bg: "#f8fafc",
         line: "#e5e7eb",
-        muted: "#64748b",
+        // Darkened from #64748b: secondary text stays clearly readable, never
+        // light grey. Hierarchy comes from size and weight, not faintness.
+        muted: "#334155",
         ink: "#0f172a",
       },
       boxShadow: {

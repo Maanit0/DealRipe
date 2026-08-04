@@ -619,8 +619,15 @@ export async function getPipelineChanges(
     const inRolldog = oppByDeal.has(d.id);
 
     // Non-opportunity meetings (existing customer / internal) are not pipeline.
-    const types = (callsBy[d.id] ?? []).map((c) => c.meeting_type).filter((t): t is string => !!t);
-    if (types.length > 0 && types.every((t) => t !== "new_opportunity")) continue;
+    // EXCEPT a customer no-show: when the customer never joins, only internal
+    // voices are on the transcript, so the call classifies as "internal" even
+    // though it was a real opportunity meeting. Dropping the deal here would
+    // hide the exact thing the digest exists to surface (a meeting that may
+    // mean the deal is dead). Keep any deal with a no-show on the record.
+    const callRows = callsBy[d.id] ?? [];
+    const types = callRows.map((c) => c.meeting_type).filter((t): t is string => !!t);
+    const hasNoShowCall = callRows.some((c) => NO_SHOW_OUTCOMES.has(String(c.outcome ?? "")));
+    if (types.length > 0 && types.every((t) => t !== "new_opportunity") && !hasNoShowCall) continue;
 
     const account = prettyAccount({ externalId: d.external_id, account: d.account, rolldogAccountName: s?.accountName });
     const stageName = s?.stageName ?? null;

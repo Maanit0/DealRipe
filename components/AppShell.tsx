@@ -1,28 +1,41 @@
 import Link from "next/link";
 import { DEFAULT_TENANT_SLUG, pipelineHref, withTenant } from "@/lib/tenant-nav";
+import { WATCHER_ONLY_SLUGS, WATCHER_SLUGS } from "@/lib/watcher/slugs";
 
-export type NavKey = "deals" | "meetings" | "actions" | "activity" | "review" | "report" | "audit";
+export type NavKey = "today" | "dashboard" | "deals" | "meetings" | "actions" | "activity" | "review" | "report" | "forecastBoard" | "oneOnOnes" | "audit";
 
 // Base paths. The Deals tab points at the pipeline, which always carries the
 // tenant param; the rest are plain paths that withTenant leaves untouched for
 // magaya and tags with ?tenant=<slug> for other tenants.
 const ITEMS: Record<NavKey, { label: string; base: string }> = {
+  today: { label: "Today", base: "/today" },
+  dashboard: { label: "Forecast", base: "/dashboard" },
   deals: { label: "Deals", base: "/pipeline" },
   meetings: { label: "Meetings", base: "/meetings" },
   actions: { label: "Actions", base: "/actions" },
   activity: { label: "Activity", base: "/activity" },
-  review: { label: "Review", base: "/review" },
+  review: { label: "Forecast Room", base: "/review" },
+  forecastBoard: { label: "Forecast Board", base: "/forecast-board" },
+  oneOnOnes: { label: "1-on-1s", base: "/one-on-ones" },
   report: { label: "Report", base: "/report" },
   audit: { label: "Audit", base: "/audit" },
 };
 
-// Default (magaya / pilot) order.
+// Default (magaya / pilot) order. The Forecast Board is a demo-only view, so it
+// is intentionally absent here and the live pilot is unaffected.
 const DEFAULT_ORDER: NavKey[] = ["review", "deals", "meetings", "actions", "report", "activity"];
-// Demo order (keelson and other non-magaya tenants), sequenced to walk the story:
-// the CRO's Forecast Room first, then the pre/post-call content the AE gets
-// (Meetings), then the actions that close the gaps, then the CRM write-back, then
-// the pipeline and the coverage log.
-const DEMO_ORDER: NavKey[] = ["review", "deals", "meetings", "actions", "report", "activity"];
+// Demo order (keelson, second-nature, and other non-magaya tenants), sequenced to
+// walk the story: the CRO's Forecast Room first, then the sales-leader Forecast
+// Board (the live version of the spreadsheet), then the pre/post-call content the
+// AE gets (Meetings), the actions that close the gaps, the CRM write-back, and the
+// coverage log.
+const DEMO_ORDER: NavKey[] = ["review", "forecastBoard", "oneOnOnes", "deals", "meetings", "actions", "report", "activity"];
+// Watcher tenants (the proactive rebuild): the simplified IA. Today is the
+// center; the unified Forecast dashboard replaces Room + Board; Report stays
+// as the write-back receipts. Legacy routes remain reachable by URL.
+const WATCHER_ORDER: NavKey[] = ["today", "dashboard", "oneOnOnes", "deals", "meetings", "report"];
+// Watcher-only tenants (no DB rows): just the watcher surfaces.
+const WATCHER_ONLY_ORDER: NavKey[] = ["today", "dashboard"];
 
 function navHref(base: string, tenant: string): string {
   return base === "/pipeline" ? pipelineHref(tenant) : withTenant(base, tenant);
@@ -45,7 +58,14 @@ export function AppShell({
   tenant?: string;
   children: React.ReactNode;
 }) {
-  const order = tenant === DEFAULT_TENANT_SLUG ? DEFAULT_ORDER : DEMO_ORDER;
+  const order =
+    tenant === DEFAULT_TENANT_SLUG
+      ? DEFAULT_ORDER
+      : WATCHER_ONLY_SLUGS.has(tenant)
+        ? WATCHER_ONLY_ORDER
+        : WATCHER_SLUGS.has(tenant)
+          ? WATCHER_ORDER
+          : DEMO_ORDER;
   return (
     <div className="min-h-screen bg-bg flex">
       <aside className="w-[184px] shrink-0 bg-white border-r border-line flex flex-col sticky top-0 h-screen px-3 py-4">

@@ -23,6 +23,17 @@ const STAGE_LABELS: Record<string, string> = {
   SQL4: "Negotiations",
   SQL5: "Agreement Formalization",
 };
+// NEAT tenants (Second Nature) reuse the SQL stage keys but show a
+// property-management funnel. Selected by framework name, so Magaya/Keelson
+// keep the Rolldog labels above.
+const NEAT_STAGE_LABELS: Record<string, string> = {
+  SQL1: "Discovery",
+  SQL2: "Evaluation",
+  SQL3: "Vendor of Choice",
+  SQL4: "Contract Out",
+  SQL5: "Signed",
+};
+const NEAT_STAGE_PCT: Record<string, number> = { SQL1: 15, SQL2: 30, SQL3: 50, SQL4: 80, SQL5: 95 };
 
 type Health = "at_risk" | "stalled" | "healthy";
 
@@ -110,6 +121,8 @@ export function MagayaPipeline({
   // Pilot (magaya) reads the real rep category from the live Rolldog summary;
   // the keelson demo has no live CRM, so it keeps its tuned seeded categories.
   const isPilot = tenant === DEFAULT_TENANT_SLUG;
+  const stageLabels = framework?.name === "NEAT" ? NEAT_STAGE_LABELS : STAGE_LABELS;
+  const stagePct = framework?.name === "NEAT" ? NEAT_STAGE_PCT : STAGE_PCT;
   const rows: Row[] = framework
     ? visibleDeals.map((deal) =>
         buildRow(deal, framework, isPilot ? summariesByDealId[deal.id]?.forecastCategory ?? null : null),
@@ -245,7 +258,7 @@ export function MagayaPipeline({
             </p>
           </div>
         ) : isDemo ? (
-          <DemoDealTable rows={rows} tenant={tenant} />
+          <DemoDealTable rows={rows} tenant={tenant} stageLabels={stageLabels} stagePct={stagePct} />
         ) : (
           <div className="mt-5 bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
             <table className="w-full text-left">
@@ -285,7 +298,7 @@ export function MagayaPipeline({
                     </td>
                     <td className="py-3.5"><StatusBadge health={row.health} /></td>
                     <td className="py-3.5 text-[12px]">
-                      <div className="text-ink font-medium">{STAGE_LABELS[row.deal.stageKey] ?? row.deal.stageKey}</div>
+                      <div className="text-ink font-medium">{stageLabels[row.deal.stageKey] ?? row.deal.stageKey}</div>
                       <div className={`text-[11px] mt-0.5 ${row.deal.daysInStage > 21 ? "text-danger font-semibold" : "text-muted"}`}>
                         {row.deal.daysInStage} days in stage
                       </div>
@@ -550,7 +563,17 @@ function addDaysIso(iso: string, days: number): string {
 
 // The demo (keelson) deals table: exact columns of the old pipeline view —
 // Account, Status, Stage, ARR, Rep forecast, DealRipe forecast, Qualification.
-function DemoDealTable({ rows, tenant }: { rows: Row[]; tenant: string }) {
+function DemoDealTable({
+  rows,
+  tenant,
+  stageLabels,
+  stagePct,
+}: {
+  rows: Row[];
+  tenant: string;
+  stageLabels: Record<string, string>;
+  stagePct: Record<string, number>;
+}) {
   return (
     <div className="mt-5 bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
       <table className="w-full text-left">
@@ -576,7 +599,7 @@ function DemoDealTable({ rows, tenant }: { rows: Row[]; tenant: string }) {
             const repClose = row.deal.repForecastCloseDate || null;
             // DealRipe pushes the close out a quarter when it reads materially softer.
             const drClose = repClose && drProb < repProb - 0.1 ? addDaysIso(repClose, 75) : repClose;
-            const stageLabel = STAGE_LABELS[row.deal.stageKey] ?? row.deal.stageKey;
+            const stageLabel = stageLabels[row.deal.stageKey] ?? row.deal.stageKey;
             return (
               <tr key={row.deal.id} className={i < rows.length - 1 ? "border-b border-line" : undefined}>
                 <td className="pl-5 py-3.5">
@@ -587,7 +610,7 @@ function DemoDealTable({ rows, tenant }: { rows: Row[]; tenant: string }) {
                 </td>
                 <td className="py-3.5"><StatusBadge health={row.health} /></td>
                 <td className="py-3.5 text-[12px]">
-                  <div className="text-ink font-medium">{stageLabel} · {STAGE_PCT[row.deal.stageKey] ?? 0}%</div>
+                  <div className="text-ink font-medium">{stageLabel} · {stagePct[row.deal.stageKey] ?? 0}%</div>
                   <div className={`text-[11px] mt-0.5 ${row.deal.daysInStage > 21 ? "text-danger font-semibold" : "text-muted"}`}>
                     {row.deal.daysInStage} days in stage
                   </div>

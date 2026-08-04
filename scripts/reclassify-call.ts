@@ -27,7 +27,7 @@ config({ path: ".env.local" });
 
 import { customerParticipation } from "../lib/attendance";
 import { extractContactsFromTranscript } from "../lib/contacts-extract";
-import { classifyMeetingType, callSubtypeLabel } from "../lib/meeting-classify";
+import { classifyMeetingType } from "../lib/meeting-classify";
 import { rolldogOppIdForDeal } from "../lib/pilot-config";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
@@ -145,10 +145,8 @@ async function main(): Promise<void> {
   }
 
   // ---- Apply ----
-  const subtype = customerNoShow ? call.data.call_subtype : callSubtypeLabel(call.data.call_subtype) ? call.data.call_subtype : call.data.call_subtype;
   const upd = await db.from("calls").update({ meeting_type: meetingType, outcome: newOutcome }).eq("id", callId);
   if (upd.error) console.error(`  calls update failed: ${upd.error.message}`);
-  void subtype;
 
   if (removable.length) {
     const del = await db.from("contacts").delete().in("id", removable.map((c) => c.id));

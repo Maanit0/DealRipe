@@ -39,7 +39,13 @@ export default async function MeetingPage({
 
   const attendance = attendanceHist.find((a) => a.callId === meeting.callId) ?? null;
   const contacts: Contact[] = deal?.contacts ?? [];
-  const recap = sent.find((m) => m.kind === "recap") ?? null;
+  // Future call: show the pre-call briefing for THIS call. Past call: show the
+  // recap, preferring the one recorded against this exact call.
+  const isUpcoming = !!meeting.date && Date.parse(meeting.date) > Date.now();
+  const forThisCall = sent.filter((m) => m.callId === meeting.callId);
+  const message = isUpcoming
+    ? (forThisCall.find((m) => m.kind === "briefing") ?? sent.find((m) => m.kind === "briefing") ?? null)
+    : (forThisCall.find((m) => m.kind === "recap") ?? sent.find((m) => m.kind === "recap") ?? null);
 
   return (
     <AppShell active="meetings" tenant={tenant}>
@@ -54,7 +60,8 @@ export default async function MeetingPage({
           meeting={meeting}
           attendance={attendance}
           contacts={contacts}
-          recapHtml={recap?.bodyHtml ?? null}
+          recapHtml={message?.bodyHtml ?? null}
+          panelKind={isUpcoming ? "briefing" : "recap"}
         />
       </div>
     </AppShell>

@@ -75,10 +75,16 @@ async function main(): Promise<void> {
     console.error("\n--send requires --to <email>");
     process.exit(1);
   }
-  const res = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, ...(replyTo ? { replyTo } : {}) });
+  // --to accepts a comma-separated list so leadership can be added without a
+  // code change: --to mbuman@magaya.com,mnemmers@magaya.com,ebencomo@magaya.com
+  const recipients = to
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const res = await sendEmail({ to: recipients, subject: email.subject, html: email.html, text: email.text, ...(replyTo ? { replyTo } : {}) });
   await recordDigestSend({
     tenantId,
-    toEmail: to,
+    toEmail: recipients.join(", "),
     subject: email.subject,
     html: email.html,
     text: email.text,

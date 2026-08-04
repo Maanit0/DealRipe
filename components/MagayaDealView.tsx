@@ -247,6 +247,14 @@ export function MagayaDealView({
   })();
   const CRM_SECTIONS = new Set(["Situation", "Timeline", "Budget", "Competition", "People"]);
   const crmFields = (() => {
+    // Salesforce-framework tenants (NEAT): the exact opportunity fields written.
+    const sf = framework.fields
+      .filter((f) => {
+        const wt = f.writeTarget as { system?: string; field?: string } | null;
+        return wt?.system === "salesforce" && wt.field && deal.extraction[f.fieldKey]?.status === "Yes";
+      })
+      .map((f) => String((f.writeTarget as { field?: string }).field));
+    if (sf.length > 0) return Array.from(new Set(sf));
     const distinct = Array.from(new Set(extractGates.map((g) => g.label))).filter((l) => CRM_SECTIONS.has(l));
     return distinct.length > 0 ? distinct : ["Situation", "Budget", "Timeline"];
   })();

@@ -49,6 +49,13 @@ function forecastLine(pct: number, iso: string | null): string {
   return `${pct}% probability${q ? ` · ${q} close` : ""}${s ? ` · ${s}` : ""}`;
 }
 
+function tenantDisplayName(slug: string): string {
+  return slug
+    .split("-")
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
 async function renderTenantExtract(id: string, tenantSlug: string, callId: string | undefined) {
   const tenantId = await resolveTenantId(tenantSlug);
   const deal = await getDealForTenant(tenantId, id);
@@ -85,6 +92,15 @@ async function renderTenantExtract(id: string, tenantSlug: string, callId: strin
     return eb ? { name: eb.name, role: eb.role } : null;
   })();
   const crmFields = (() => {
+    // Salesforce-framework tenants (NEAT): show the exact opportunity fields
+    // written (Primary_Pain__c, Economic_Buyer__c, ...), one per confirmed gate.
+    const sf = framework.fields
+      .filter((f) => {
+        const wt = f.writeTarget as { system?: string; field?: string } | null;
+        return wt?.system === "salesforce" && wt.field && deal.extraction[f.fieldKey]?.status === "Yes";
+      })
+      .map((f) => String((f.writeTarget as { field?: string }).field));
+    if (sf.length > 0) return Array.from(new Set(sf));
     const distinct = framework.fields
       .filter((f) => f.stageKey)
       .map((f) => (deal.extraction[f.fieldKey]?.status === "Yes" ? f.label : null))
@@ -100,10 +116,13 @@ async function renderTenantExtract(id: string, tenantSlug: string, callId: strin
         ? `Close ${dealState.topGaps[0].label} on the next call.`
         : "Well qualified. Confirm timeline and keep momentum.";
 
-  // Resolve the call: prefer the passed id, else the deal's newest call. Falling
-  // back keeps the page working when the link carries a stale call id (e.g. the
-  // deal page was cached before a re-seed changed the call ids).
-  const sortedCalls = [...deal.calls].filter((c) => c.date).sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+  // Resolve the call: prefer the passed id, else the deal's newest PAST call.
+  // Future (upcoming) calls have no transcript and must never win "latest".
+  // Falling back keeps the page working when the link carries a stale call id
+  // (e.g. the deal page was cached before a re-seed changed the call ids).
+  const sortedCalls = [...deal.calls]
+    .filter((c) => c.date && Date.parse(c.date) <= Date.now())
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   const call = (callId ? deal.calls.find((c) => c.id === callId) : null) ?? sortedCalls[0] ?? deal.calls[0] ?? null;
 
   let transcript = "";
@@ -137,7 +156,7 @@ async function renderTenantExtract(id: string, tenantSlug: string, callId: strin
       currentStageKey={deal.stageKey}
       dealId={deal.id}
       capturedByField={history.perGate}
-      labelName="Keelson"
+      labelName={tenantDisplayName(tenantSlug)}
       highlightNewCallId={highlight && call ? call.id : undefined}
       newGapKeys={highlight ? openGateKeys : undefined}
     />

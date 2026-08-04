@@ -127,6 +127,92 @@ export const getRolldogWritePreview = cache(
  * Deals with no Rolldog link are omitted. Used by views that have deal ids but
  * not the opportunity id (e.g. the raw activity log).
  */
+/**
+ * Salesforce-tenant equivalent of the Rolldog preview: composes, per deal, the
+ * exact opportunity-field content DealRipe writes, from the framework's
+ * salesforce write targets + the confirmed extractions (answer + verbatim
+ * evidence, stamped with the call date). Used when a tenant's framework writes
+ * to Salesforce (e.g. the NEAT / second-nature demo), where the Rolldog writer
+ * has nothing to compose.
+ */
+export async function getSalesforceWritePreviewByDeals(
+  tenantSlug: string,
+  dealIds: string[],
+): Promise<Map<string, RolldogFieldWrite[]>> {
+  const out = new Map<string, RolldogFieldWrite[]>();
+  const unique = Array.from(new Set(dealIds.filter(Boolean)));
+  if (unique.length === 0) return out;
+
+  const tenantId = await resolveTenantId(tenantSlug);
+  const db = supabaseAdmin();
+
+  // Framework fields with a Salesforce write target, keyed by field_key.
+  const ff = await db
+    .from("framework_fields")
+    .select("field_key, label, write_target")
+    .eq("tenant_id", tenantId);
+  const targetByKey = new Map<string, { label: string; field: string }>();
+  for (const r of (ff.data ?? []) as Array<{ field_key: string; label: string; write_target: unknown }>) {
+    const wt = r.write_target as { system?: string; field?: string } | null;
+    if (wt && wt.system === "salesforce" && wt.field) targetByKey.set(r.field_key, { label: r.label, field: wt.field });
+  }
+  if (targetByKey.size === 0) return out;
+
+  const [fxRes, callsRes] = await Promise.all([
+    db
+      .from("field_extractions")
+      .select("deal_id, framework_field_key, status, answer, evidence, last_updated_from_call_id")
+      .eq("tenant_id", tenantId)
+      .in("deal_id", unique)
+      .eq("status", "Yes"),
+    db.from("calls").select("id, call_date, scheduled_start").eq("tenant_id", tenantId),
+  ]);
+  const callDate = new Map(
+    ((callsRes.data ?? []) as Array<{ id: string; call_date: string | null; scheduled_start: string | null }>).map((c) => {
+      const iso = c.call_date ?? c.scheduled_start;
+      const label = iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : null;
+      return [c.id, label] as const;
+    }),
+  );
+
+  // Group by deal, then by Salesforce field (several gates can feed one field).
+  type Piece = { label: string; text: string };
+  const byDeal = new Map<string, Map<string, Piece[]>>();
+  for (const r of (fxRes.data ?? []) as Array<{ deal_id: string; framework_field_key: string; answer: string | null; evidence: string | null; last_updated_from_call_id: string | null }>) {
+    const target = targetByKey.get(r.framework_field_key);
+    if (!target || !r.answer) continue;
+    const stamp = r.last_updated_from_call_id ? callDate.get(r.last_updated_from_call_id) : null;
+    // One clean CRM sentence (Magaya style): the fact is woven into the answer,
+    // not appended as a "— quote" (which reads AI-generated). The seeded answers
+    // carry the specifics; the verbatim quote lives on the extraction sheet.
+    const line = `[DealRipe${stamp ? ` · ${stamp} call` : ""}] ${r.answer}`;
+    const fields = byDeal.get(r.deal_id) ?? new Map<string, Piece[]>();
+    const pieces = fields.get(target.field) ?? [];
+    pieces.push({ label: target.label, text: line });
+    fields.set(target.field, pieces);
+    byDeal.set(r.deal_id, fields);
+  }
+
+  for (const [dealId, fields] of byDeal) {
+    const writes: RolldogFieldWrite[] = [];
+    for (const [sfField, pieces] of fields) {
+      writes.push({
+        subResource: sfField,
+        label: pieces[0]?.label ?? sfField,
+        target: `Opportunity › ${sfField}`,
+        payload: pieces.map((p) => p.text).join("\n\n"),
+      });
+    }
+    if (writes.length > 0) out.set(dealId, writes);
+  }
+  return out;
+}
+
+/**
+ * Resolve each deal's Rolldog opportunity and fetch its composed write content.
+ * Deals with no Rolldog link are omitted. Used by views that have deal ids but
+ * not the opportunity id (e.g. the raw activity log).
+ */
 export async function getRolldogWritePreviewByDeals(
   tenantSlug: string,
   dealIds: string[],

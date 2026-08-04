@@ -145,7 +145,9 @@ export default async function MeetingsPage({ searchParams }: { searchParams: SP 
                   const meta = [fmtTime(m.date), m.durationMin != null ? `${m.durationMin} min` : ""]
                     .filter(Boolean)
                     .join(" · ");
-                  const clickable = view === "recorded";
+                  // Upcoming rows open too: the detail page shows the pre-call
+                  // briefing for a future meeting.
+                  const clickable = true;
                   return (
                     <tr key={m.callId} className={i < rows.length - 1 ? "border-b border-line" : undefined}>
                       <td className="pl-5 py-3.5 align-top whitespace-nowrap">

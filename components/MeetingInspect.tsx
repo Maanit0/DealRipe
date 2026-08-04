@@ -40,11 +40,14 @@ export function MeetingInspect({
   attendance,
   contacts,
   recapHtml,
+  panelKind = "recap",
 }: {
   meeting: MeetingDetail;
   attendance: CallAttendance | null;
   contacts: Contact[];
   recapHtml: string | null;
+  /** "recap" for a recorded call, "briefing" for an upcoming one. */
+  panelKind?: "recap" | "briefing";
 }) {
   const [tab, setTab] = useState<Tab>("summary");
   const typeLabel =
@@ -111,15 +114,24 @@ export function MeetingInspect({
             <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
               <div className="px-5 py-3 border-b border-line">
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">
-                  DealRipe recap
+                  {panelKind === "briefing" ? "DealRipe pre-call briefing" : "DealRipe recap"}
                 </div>
-                <div className="text-[12px] text-muted mt-0.5">What the rep received after this call.</div>
+                <div className="text-[12px] text-muted mt-0.5">
+                  {panelKind === "briefing"
+                    ? "What the rep receives before this call: the objective, the questions that close the gaps, and what's at risk."
+                    : "What the rep received after this call."}
+                </div>
               </div>
-              <iframe title="Recap" srcDoc={recapHtml} className="w-full" style={{ height: 640, border: 0 }} />
+              <iframe
+                title={panelKind === "briefing" ? "Briefing" : "Recap"}
+                srcDoc={recapHtml}
+                className="w-full"
+                style={{ height: 640, border: 0 }}
+              />
             </div>
           ) : (
             <div className="bg-white rounded-xl2 shadow-card border border-line px-5 py-4 text-[13px] text-muted">
-              No recap generated for this meeting yet.
+              {panelKind === "briefing" ? "No briefing generated for this meeting yet." : "No recap generated for this meeting yet."}
             </div>
           )}
         </div>

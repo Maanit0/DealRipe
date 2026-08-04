@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
+  FORECAST_UPDATE,
+  MEETING_HISTORY,
   NEAT_AFTER,
   NEAT_BEFORE,
   NEAT_FIELDS,
@@ -95,6 +98,9 @@ export function NeatDemoView() {
           </div>
         </div>
       </div>
+
+      {/* Meeting history + gaps (the flow) */}
+      <MeetingHistoryCard />
 
       {/* Transcript + Zoom source */}
       <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
@@ -198,13 +204,101 @@ export function NeatDemoView() {
         </div>
       </div>
 
-      {/* Salesforce writeback + Slack briefing appear after extraction */}
+      {/* Salesforce writeback, forecast update, and briefing appear after extraction */}
       {revealed && (
         <>
           <SalesforceWritebackCard />
+          <ForecastUpdateCard />
           <SlackBriefingCard />
         </>
       )}
+    </div>
+  );
+}
+
+function MeetingHistoryCard() {
+  return (
+    <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
+      <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[15px] font-semibold text-ink">This account, call by call</h2>
+          <p className="text-[12px] text-muted mt-0.5">
+            What each meeting closed and what it left open. Gong shows you the calls. DealRipe shows you what moved.
+          </p>
+        </div>
+      </div>
+      <div className="divide-y divide-line">
+        {MEETING_HISTORY.map((m) => (
+          <div key={m.date} className={`px-5 py-4 ${m.current ? "bg-bg" : ""}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold text-ink">{m.title}</span>
+              <span className="text-[11px] text-muted">· {m.date}</span>
+              {m.current && (
+                <span className="text-[9px] uppercase tracking-wider font-bold text-accent px-1.5 py-0.5 rounded bg-accent/10">
+                  This call
+                </span>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {m.filled.map((f) => (
+                <span key={f} className="text-[11px] text-ink bg-accent/10 border border-accent/20 rounded px-2 py-0.5">
+                  ✓ {f}
+                </span>
+              ))}
+              {m.gaps.map((g) => (
+                <span key={g} className="text-[11px] text-danger bg-danger/[0.06] border border-danger/20 rounded px-2 py-0.5">
+                  ✗ {g}
+                </span>
+              ))}
+            </div>
+            <div className="text-[12px] text-muted leading-snug mt-2">{m.note}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ForecastUpdateCard() {
+  const f = FORECAST_UPDATE;
+  return (
+    <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
+      <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[15px] font-semibold text-ink">Forecast updated</h2>
+          <p className="text-[12px] text-muted mt-0.5">
+            DealRipe re-read the deal and corrected its own number. This flows straight to the leader&apos;s Forecast Board, no rep input.
+          </p>
+        </div>
+        <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold text-accent px-2 py-1 rounded bg-accent/10 shrink-0">
+          Auto
+        </span>
+      </div>
+      <div className="p-5">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="rounded-lg border border-line px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">Rep forecast</div>
+            <div className="text-[15px] font-semibold text-ink mt-1">
+              {Math.round(f.repProb * 100)}% · {f.repClose}
+            </div>
+            <div className="text-[11px] text-muted mt-0.5">{f.repQuarter}</div>
+          </div>
+          <div className="rounded-lg border border-danger/30 bg-danger/[0.03] px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">DealRipe forecast</div>
+            <div className="text-[15px] font-semibold text-danger mt-1">
+              {Math.round(f.ripeProb * 100)}% · {f.ripeClose}
+            </div>
+            <div className="text-[11px] text-muted mt-0.5">{f.ripeQuarter}</div>
+          </div>
+        </div>
+        <div className="text-[12.5px] text-muted leading-snug mt-3">{f.reason}</div>
+        <Link
+          href="/demo/second-nature/forecast-board"
+          className="inline-flex items-center gap-1.5 mt-3 text-[12px] font-semibold text-ink hover:opacity-80 transition"
+        >
+          See this on the Forecast Board →
+        </Link>
+      </div>
     </div>
   );
 }
@@ -295,6 +389,8 @@ function StatusDot({ status }: { status: "Yes" | "No" | "Unknown" }) {
 }
 
 function SalesforceWritebackCard() {
+  const standard = SALESFORCE_WRITEBACK.filter((r) => r.group === "Standard");
+  const qual = SALESFORCE_WRITEBACK.filter((r) => r.group === "Qualification");
   return (
     <div className="bg-white rounded-xl2 shadow-card border border-line overflow-hidden">
       <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-3">
@@ -303,28 +399,58 @@ function SalesforceWritebackCard() {
             Written back to Salesforce
           </h2>
           <p className="text-[12px] text-muted mt-0.5">
-            Fields updated automatically from the Zoom recording, with the quote behind each
+            The exact opportunity fields you fill by hand today, updated from the Zoom recording with the quote behind each. No dumping the transcript into Claude, no manual entry.
           </p>
         </div>
-        <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold text-accent px-2 py-1 rounded bg-accent/10 shrink-0">
-          Auto · no rep action
-        </span>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold text-accent px-2 py-1 rounded bg-accent/10">
+            Auto · no rep action
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-semibold text-muted px-2 py-1 rounded border border-line">
+            Rep can review &amp; edit before it saves
+          </span>
+        </div>
+      </div>
+
+      <WritebackGroup title="Standard opportunity fields" rows={standard} />
+      <WritebackGroup title="NEAT qualification fields" rows={qual} />
+
+      <div className="px-5 py-2.5 border-t border-line bg-bg text-[11px] text-muted">
+        Pulled from the Zoom cloud recording via API, the instant the call ends. Runs on every deal, every meeting, with no Gong-to-Salesforce connection required.
+      </div>
+    </div>
+  );
+}
+
+function WritebackGroup({ title, rows }: { title: string; rows: typeof SALESFORCE_WRITEBACK }) {
+  return (
+    <div>
+      <div className="px-5 pt-3 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted">
+        {title}
       </div>
       <div className="divide-y divide-line">
-        {SALESFORCE_WRITEBACK.map((row) => (
-          <div key={row.sfField} className="px-5 py-3">
+        {rows.map((row) => (
+          <div key={row.sfField} className={`px-5 py-3 ${row.gap ? "bg-danger/[0.03]" : ""}`}>
             <div className="flex items-baseline gap-2 flex-wrap">
               <span className="font-mono text-[11px] text-muted">{row.sfField}</span>
-              <span className="text-[13px] text-ink font-medium">{row.value}</span>
+              <span className={`text-[13px] font-medium ${row.gap ? "text-danger" : "text-ink"}`}>{row.value}</span>
+              <span
+                className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded ${
+                  row.gap
+                    ? "bg-danger/10 text-danger"
+                    : row.state === "new"
+                      ? "bg-accent/10 text-accent"
+                      : "bg-bg text-muted border border-line"
+                }`}
+              >
+                {row.gap ? "gap" : row.state}
+              </span>
             </div>
-            <div className="text-[12px] text-muted italic leading-snug mt-1">
-              &ldquo;{row.evidence}&rdquo;
+            <div className="text-[12px] text-muted leading-snug mt-1">
+              {row.group === "Qualification" ? `“${row.evidence}”` : row.evidence}
             </div>
           </div>
         ))}
-      </div>
-      <div className="px-5 py-2.5 border-t border-line bg-bg text-[11px] text-muted">
-        Pulled from Zoom cloud recording via API. No Gong-to-Salesforce connection required.
       </div>
     </div>
   );
@@ -365,7 +491,7 @@ function SlackBriefingCard() {
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">
-                Ask these (NEAT gaps)
+                Ask these · the moves your best reps make
               </div>
               <div className="space-y-1.5">
                 {b.questions.map((q, i) => (

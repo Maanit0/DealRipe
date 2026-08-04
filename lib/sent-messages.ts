@@ -14,6 +14,8 @@ export type SentMessageKind = "briefing" | "recap" | "no_show_draft";
 export type SentMessage = {
   id: string;
   kind: SentMessageKind;
+  /** The call this message belongs to, when recorded with one. */
+  callId: string | null;
   toEmail: string;
   subject: string;
   bodyHtml: string;
@@ -129,13 +131,14 @@ export async function getDigestSends(tenantId: string): Promise<DigestSend[]> {
 export async function getSentMessages(dealId: string): Promise<SentMessage[]> {
   const res = await supabaseAdmin()
     .from("sent_messages")
-    .select("id, kind, to_email, subject, body_html, body_text, provider_id, sent_at")
+    .select("id, kind, call_id, to_email, subject, body_html, body_text, provider_id, sent_at")
     .eq("deal_id", dealId)
     .order("sent_at", { ascending: false });
   if (res.error || !res.data) return [];
   return res.data.map((r) => ({
     id: r.id,
     kind: (r.kind === "recap" || r.kind === "no_show_draft" ? r.kind : "briefing") as SentMessageKind,
+    callId: (r as { call_id?: string | null }).call_id ?? null,
     toEmail: r.to_email,
     subject: r.subject,
     bodyHtml: r.body_html,

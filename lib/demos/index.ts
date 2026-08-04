@@ -4,6 +4,7 @@ import { AWARE } from "./aware";
 import { COBALT } from "./cobalt";
 import { WESTCHESTER } from "./westchester";
 import { KEELSON } from "./keelson";
+import { SECOND_NATURE } from "./second-nature";
 
 export * from "./types";
 
@@ -24,6 +25,7 @@ export const DEMOS: Record<string, ForecastTenant> = {
   cobalt: COBALT,
   westchester: WESTCHESTER,
   keelson: KEELSON,
+  "second-nature": SECOND_NATURE,
 };
 
 export const DEMO_LIST: ForecastTenant[] = Object.values(DEMOS);

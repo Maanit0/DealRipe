@@ -140,6 +140,109 @@ const SPECS: Record<string, DraftSpec> = {
     timesLead: "Some times that work on my side:",
     signoff: "Priya",
   },
+
+  // ----- Second Nature (property management / RBP). Written the way a good AE
+  // actually writes after a call: grounded in what the customer said, one clear
+  // ask, no pitch language. -----
+  "Rowan Hill Residential": {
+    toName: "Renee Alvarez",
+    toRole: "Director of Operations at Rowan Hill Residential",
+    subject: "The numbers for Greg, before we talk pricing",
+    intro: [
+      "Something you said stuck with me: Greg won't move on a case that isn't airtight, especially after Beagle. So before we talk pricing, I want to hand you a case he can't poke holes in.",
+      "I pulled the per-door math on your 400 doors, what a two-point retention lift and the drop in filter tickets is worth a year, and exactly where Beagle's rollout went sideways versus how we run ours. One page, not a deck.",
+      "The next step I'd suggest is 30 minutes with Greg to walk it together. Happy for you to make the intro, or I'll frame the numbers and you fill in the context, whatever plays better with him.",
+    ],
+    wantsTimes: true,
+    timesLead: "A few windows on my side:",
+    signoff: "Casey",
+  },
+  "Kestrel Property Group": {
+    toName: "Priya Raman",
+    toRole: "Operations Director at Kestrel Property Group",
+    subject: "The per-door number for your 352 doors",
+    intro: [
+      "I know things went quiet after the evaluation, no worries, I know what leasing season does to a calendar.",
+      "Rather than a check-in, I wanted to send something useful: on 352 doors, the retention lift plus the filter-ticket drop pencils out to a real number per year, and I'd like 20 minutes to show you how we got there so you can pressure-test it.",
+      "If the timing's wrong, tell me and I'll come back when it's right. But you mentioned wanting this live before September renewals, and working back from that, the window is now.",
+    ],
+    wantsTimes: true,
+    timesLead: "Two windows this week if either works:",
+    signoff: "Casey",
+  },
+  "Meridian Property Management": {
+    toName: "Owen Marsh",
+    toRole: "Managing Partner at Meridian Property Management",
+    subject: "The rollout steps you asked for, in writing",
+    intro: [
+      "You asked for the rollout mapped before you commit, that's the right ask, so here it is in writing rather than another meeting.",
+      "Working back from September renewals: order form this week, resident notices out the week after, filter program live on the first tranche of doors by mid-August, full portfolio before renewals. Each step has an owner and a date on the attached one-pager.",
+      "If that sequence works for you, the only thing left is your signature on the order form. If any step doesn't sit right, tell me which and I'll rework it.",
+    ],
+    wantsTimes: false,
+    outro: "Happy to walk it live if that's faster, but I didn't want to make you take a meeting just to see the plan.",
+    signoff: "Marcus",
+  },
+  "Fairway Rental Management": {
+    toName: "Grant Sutter",
+    toRole: "Broker / Principal at Fairway Rental Management",
+    subject: "How this sits on top of Buildium, no rip-and-replace",
+    intro: [
+      "You've asked me the same fair question twice now, at the conference and on our call, and you deserve a straight answer instead of another meeting: does this sit on top of Buildium or replace it?",
+      "It sits on top. Buildium stays your system of record, nothing migrates, and the benefits package runs alongside it. I recorded a four-minute walkthrough on a mixed portfolio like yours showing exactly where each one starts and stops.",
+      "Watch it whenever, and if it answers the question, let's pick the eval back up. If it doesn't, tell me what's still open and I'll address that specifically.",
+    ],
+    wantsTimes: false,
+    signoff: "Marcus",
+  },
+  "Coastline Property Group": {
+    toName: "Sam Ortiz",
+    toRole: "Principal at Coastline Property Group",
+    subject: "The per-door numbers, and locking September",
+    intro: [
+      "You asked to get the September date locked, so let's do that.",
+      "Attached is the per-door value one-pager you wanted the numbers from, retention, filter tickets, and make-ready, on your 262 doors. It's the same math we walked, just on paper for your file.",
+      "If the numbers read the way we discussed, I'd like to put the signing call on the calendar this week so go-live prep starts well before renewals.",
+    ],
+    wantsTimes: true,
+    timesLead: "A few short windows for the signing call:",
+    signoff: "Erin",
+  },
+  "Anchorline Property Management": {
+    toName: "Jordan Diaz",
+    toRole: "Owner / Principal at Anchorline Property Management",
+    subject: "Yes to moving the signing up",
+    intro: [
+      "Got your note, and yes, let's move the signing up a week so the filter program starts before August turns. I like the urgency.",
+      "Everything on my side is ready: the agreement is final, and go-live prep starts the day it's signed.",
+    ],
+    wantsTimes: true,
+    timesLead: "Earlier windows that work on my end:",
+    signoff: "Erin",
+  },
+  "Harbor Point Property Management": {
+    toName: "Alex Mercer",
+    toRole: "VP Operations at Harbor Point Property Management",
+    subject: "Ready the day the counter-signature is back",
+    intro: [
+      "Quick one, no action needed: I know the agreement is with your counsel this week.",
+      "The day it comes back, go-live prep starts, resident notices, the filter schedule, the works, so making it mandatory across the portfolio lands cleanly. If counsel has any questions, send them my way and I'll turn answers around same day.",
+    ],
+    wantsTimes: false,
+    signoff: "Hollis",
+  },
+  "Brightline Property Management": {
+    toName: "Monica Reyes",
+    toRole: "Director of Property Operations at Brightline Property Management",
+    subject: "One thing gating your September go-live",
+    intro: [
+      "Everything from kickoff is on track: notices are ready to go next week and the filter schedule is set for the 228 doors.",
+      "The one open item is the resident and unit data export, which I know landed in limbo when your ops coordinator left. It's the only thing gating the September go-live, so here's the easy version: either name whoever should own it and I'll walk them through it in 20 minutes, or send me a read-only export and we'll handle the mapping on our side.",
+      "Whichever is less work for you. I just don't want this to be the reason residents wait.",
+    ],
+    wantsTimes: false,
+    signoff: "Erin",
+  },
 };
 
 /** The composed customer-facing email for a demo account, or null if not a demo account. */
@@ -148,7 +251,9 @@ export function demoEmailDraft(account: string | null | undefined): EmailDraft |
   const spec = SPECS[account];
   if (!spec) return null;
   const first = spec.toName.split(" ")[0];
-  const lines: string[] = [`Hi ${first},`, "", ...spec.intro];
+  // Blank line between each intro paragraph so the body breathes, not a wall.
+  const introBlock = spec.intro.flatMap((p, i) => (i === 0 ? [p] : ["", p]));
+  const lines: string[] = [`Hi ${first},`, "", ...introBlock];
   if (spec.wantsTimes) {
     lines.push("", spec.timesLead ?? "A few times that work on my side:");
     for (const t of upcomingSlots(3)) lines.push(`  •  ${t}`);

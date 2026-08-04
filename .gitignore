@@ -13,3 +13,4 @@ next-env.d.ts
 
 # Rendered email/preview HTML (may contain customer-derived content)
 .previews/
+dealripe-sf.key

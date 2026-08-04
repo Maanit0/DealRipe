@@ -31,6 +31,16 @@ const STAGE_LABELS: Record<string, string> = {
   SQL4: "Negotiations",
   SQL5: "Agreement Formalization",
 };
+// NEAT tenants (e.g. Second Nature) reuse the SQL stage keys but display a
+// property-management funnel. Chosen by framework name so Magaya/Keelson keep
+// the Rolldog labels above.
+const NEAT_STAGE_LABELS: Record<string, string> = {
+  SQL1: "Discovery",
+  SQL2: "Evaluation",
+  SQL3: "Vendor of Choice",
+  SQL4: "Contract Out",
+  SQL5: "Signed",
+};
 // Forecast-accuracy constants for the calibration tile (DealRipe vs rep commit).
 const CALIBRATION = {
   drAccuracyPct: 90,
@@ -144,6 +154,29 @@ const DEMO_REASONS: Record<string, string> = {
     "Harborview's CFO, Nadia Brandt, joined last week's call and every gate but legal is confirmed. Rep Priya still has this at Expect; DealRipe reads the qualification as a clean Commit.",
   "Tidewater Distribution":
     "A second stakeholder joined Tuesday's call and budget was confirmed on the record. The deal is qualifying faster than the rep's Pipeline call reflects.",
+
+  // ----- Second Nature (property management, NEAT). Each reason pulls from a
+  // different signal: calendar declines, unanswered threads, stale dates vs call
+  // history, customer emails, exec engagement. Fictional accounts only. -----
+  "Rowan Hill Residential":
+    "Greg Hollis, the principal who signs a portfolio-wide switch, has never joined a call, and Renee's invite to him for Thursday's session is still unaccepted. On the Jul 22 call Renee said Greg 'won't move on a fuzzy case', and the per-door impact has never been quantified. After the failed Beagle rollout, he will want proof this one is different before pricing goes out.",
+  "Kestrel Property Group":
+    "Priya Raman went quiet after the May 12 evaluation: two follow-ups from Casey are unanswered, the Jul 10 close date on the deal passed with no meeting on either calendar, and the last customer reply on the thread is 49 days old. The stage clock is still running like this is live.",
+  "Meridian Property Management":
+    "Owen Marsh, the managing partner who signs the expansion, said on the Jul 22 call he wants the rollout steps mapped 'before we commit', and no mutual close plan has been sent since. The close date on the deal predates the vendor-of-choice call that actually happened, so the date on the board is fiction.",
+  "Fairway Rental Management":
+    "Grant Sutter has now raised the same Buildium question twice, at the broker conference and on the Jun 21 call: 'I need to know this sits on top of Buildium, not a rip-and-replace.' No walkthrough has been sent, the eval is 64 days old, and every week that question stays open the incumbent wins by default.",
+  // Deals advancing cleanly: customer-side engagement DealRipe caught that the
+  // rep's number does not yet reflect.
+  "Coastline Property Group":
+    "Sam Ortiz, the principal, replied to Tara's thread on Saturday asking to 'get the September date locked' and forwarded the contract to their bookkeeper unprompted. Every authority gate is confirmed in his own words; the only open item is the per-door one-pager. This is closing customer-side faster than the rep's number shows.",
+  "Anchorline Property Management":
+    "Jordan Diaz emailed Erin unprompted asking to move the signing call up a week so the filter program starts before August turns. All 10 NEAT gates are confirmed with the owner's own quotes. The customer is pulling the close in; DealRipe reads this above the rep.",
+  "Harbor Point Property Management":
+    "Signed intent, mandatory across the portfolio. Alex Mercer confirmed the counter-signature is with their counsel this week; nothing on the customer side is waiting on us.",
+  // Post-close lifecycle: DealRipe keeps reading customer calls after the win.
+  "Brightline Property Management":
+    "Closed won Jul 6, now in onboarding. The Jul 20 kickoff surfaced that nobody on the customer side owns the resident and unit data export after their ops coordinator left, which gates go-live and when this revenue actualizes. Flagged to Erin to re-engage; notices and the filter schedule are on track.",
 };
 
 // Demo-tenant DealRipe probability override (0..1). Only set for the well-qualified
@@ -152,6 +185,11 @@ const DEMO_REASONS: Record<string, string> = {
 export const DEMO_DR_PROB: Record<string, number> = {
   "Harborview Freight": 0.8,
   "Tidewater Distribution": 0.6,
+  // Second Nature: the two deals the customer is actively pulling forward read
+  // ABOVE the rep, so the room shows green deltas with real engagement behind them.
+  "Coastline Property Group": 0.95,
+  "Anchorline Property Management": 0.97,
+  "Brightline Property Management": 1.0,
 };
 
 // Demo-tenant action detail: the "what closes the gap" copy, written the way a
@@ -174,6 +212,22 @@ const DEMO_ACTION_DETAIL: Record<string, string> = {
     "Nothing is broken here; protect the close. Get the signing date on the calendar this week while the CFO is engaged, the way the best reps lock a clean deal before it drifts. Leave with a signing date.",
   "Tidewater Distribution":
     "This is advancing; press the advantage. Confirm the budget in writing and set the proposal review while the second stakeholder is warm. Leave with a proposal-review date on the calendar.",
+
+  // ----- Second Nature (NEAT / property management) -----
+  "Rowan Hill Residential":
+    "Ask Renee to broker 30 minutes with Greg before any pricing goes out, framed on the per-door retention and make-ready numbers, and put the Beagle failure on the table as the reason to choose differently this time. Portfolio-wide switches do not close without the signer in the room. Leave with Greg on a calendar invite that is accepted, not pending.",
+  "Kestrel Property Group":
+    "Re-open with a number, not a check-in. Send Priya the per-door impact on her 352 doors and two concrete windows. Stalled evals recover when there is a fresh reason to meet; they die on 'just circling back'. Leave with a booked meeting or an honest dead-mark so the pipeline stops carrying it.",
+  "Meridian Property Management":
+    "Owen asked for the steps; give him the steps. Send the mutual close plan in writing, security review, order form, signature, go-live, each with a date worked back from September renewals, and correct the close date on the deal to match reality. Leave with Owen's written yes to the plan.",
+  "Fairway Rental Management":
+    "Answer the Buildium question before asking for another meeting. Send Grant a short walkthrough of the RBP running on top of a Buildium portfolio, no rip-and-replace, and confirm the one integration concern from the conference. Leave with the competition gate closed in his own words.",
+  "Coastline Property Group":
+    "The customer is pulling this in; do not let paperwork be the slow part. Deliver the per-door one-pager Sam asked the numbers for and book the signing call this week. Leave with a signing date before month-end.",
+  "Anchorline Property Management":
+    "Jordan asked to move the signing up a week; say yes today and lock it. The only risk on a clean deal is drift. Leave with the earlier signing call confirmed on both calendars.",
+  "Harbor Point Property Management":
+    "Counter-signature is with their counsel; keep it warm without pestering. One short note confirming the go-live prep starts the day it is returned. Leave with a returned-signature date.",
 };
 
 export async function getForecastRoom(
@@ -198,6 +252,7 @@ export async function getForecastRoom(
   ]);
 
   const recById = new Map<string, DealChangeRecord>(pc.deals.map((r) => [r.dealId, r]));
+  const stageLabels = framework?.name === "NEAT" ? NEAT_STAGE_LABELS : STAGE_LABELS;
 
   const roomDeals: ForecastRoomDeal[] = deals.map((d) => {
     const prog = framework ? frameworkProgress(framework, d.extraction) : { confirmed: 0, total: 0 };
@@ -255,7 +310,7 @@ export async function getForecastRoom(
       account: d.account,
       industry: d.industry,
       stageKey: d.stageKey ?? "",
-      stageLabel: STAGE_LABELS[d.stageKey ?? ""] ?? (d.stageKey ?? "—"),
+      stageLabel: stageLabels[d.stageKey ?? ""] ?? (d.stageKey ?? "—"),
       arr,
       repProb,
       drProb,

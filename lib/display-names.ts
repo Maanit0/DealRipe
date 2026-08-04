@@ -18,6 +18,7 @@ const ACCOUNT_BY_KEY: Record<string, string> = {
   "auto:cargocleared.com": "Cargo Cleared",
   "auto:cargoservicesgroup.com": "Cargo Services Group",
   "auto:mastercargoinc.com": "Master Cargo",
+  "auto:flyfreight.com": "Fly Freight",
   "dutyfreeamericas": "Duty Free Americas",
 };
 
@@ -33,11 +34,19 @@ const ACCOUNT_PRETTY: Record<string, string> = {
   Acecustomsinc: "Ace Customs",
   Cargoservicesgroup: "Cargo Services Group",
   Seaboardmarine: "Seaboard Marine",
+  Flyfreight: "Fly Freight",
 };
 
 const REP_NAMES: Record<string, string> = {
   "jlopez@magaya.com": "Juan",
   "ebencomo@magaya.com": "Eduardo",
+  // Net-new AE team, live August 10 2026. Without these the fallback derives
+  // the name from the email local part and renders "Asuntrup", "Sjohnson".
+  "asuntrup@magaya.com": "Alexandra",
+  "sjohnson@magaya.com": "Steven",
+  "arodriguez@magaya.com": "Ariel",
+  "dblitstein@magaya.com": "Daniel",
+  "mnemmers@magaya.com": "Mitch",
 };
 
 export function prettyAccount(opts: {
@@ -52,7 +61,16 @@ export function prettyAccount(opts: {
 
 /** First name of the rep, for the sales-leader voice ("Ask Juan to..."). */
 export function repName(email: string | null | undefined): string {
-  return (email && REP_NAMES[email]) || "the rep";
+  if (email && REP_NAMES[email]) return REP_NAMES[email];
+  // Unknown senders (e.g. demo-tenant reps like casey@secondnature.example):
+  // derive a clean first name from the email local part instead of the
+  // anonymous "the rep", so per-rep views group and label correctly.
+  const local = email?.split("@")[0]?.trim();
+  if (local && /^[a-z][a-z.\-_]*$/i.test(local)) {
+    const first = local.split(/[._\-]/)[0];
+    return first.charAt(0).toUpperCase() + first.slice(1);
+  }
+  return "the rep";
 }
 
 /** Full rep email routing display, when we want the address, not the name. */

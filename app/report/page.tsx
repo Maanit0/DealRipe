@@ -3,7 +3,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { PrintButton } from "@/components/PrintButton";
 import { getActivityLog } from "@/lib/activity-log";
-import { getRolldogWritePreviewByDeals, type RolldogFieldWrite } from "@/lib/crm-preview";
+import { getRolldogWritePreviewByDeals, getSalesforceWritePreviewByDeals, type RolldogFieldWrite } from "@/lib/crm-preview";
 import { repName } from "@/lib/display-names";
 import { callSubtypeLabel } from "@/lib/meeting-classify";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -92,6 +92,8 @@ export default async function ReportPage({ searchParams }: { searchParams: { ten
     for (const c of (callsRes.data ?? []) as Array<{ deal_id: string | null; scheduled_start: string | null; call_date: string | null; meeting_type: string | null; call_subtype: string | null }>) {
       if (!c.deal_id) continue;
       const date = c.scheduled_start ?? c.call_date;
+      // Future (upcoming) calls have no write-back; they must not claim the row.
+      if (date && Date.parse(date) > Date.now()) continue;
       const prev = latestCall.get(c.deal_id);
       if (!prev || (date && prev.date && Date.parse(date) > Date.parse(prev.date)) || (date && !prev.date)) {
         latestCall.set(c.deal_id, { date, type: resolveType(c.call_subtype, c.meeting_type) });
@@ -99,7 +101,12 @@ export default async function ReportPage({ searchParams }: { searchParams: { ten
     }
 
     const dealIds = Array.from(new Set(writes.map((e) => e.dealId as string)));
-    const writesByDeal = await getRolldogWritePreviewByDeals(tenant, dealIds);
+    // Rolldog tenants compose via the live writer's dry run; Salesforce-framework
+    // tenants (e.g. the NEAT demo) compose from the confirmed extractions.
+    let writesByDeal = await getRolldogWritePreviewByDeals(tenant, dealIds);
+    if (writesByDeal.size === 0) {
+      writesByDeal = await getSalesforceWritePreviewByDeals(tenant, dealIds);
+    }
     rows = Array.from(writesByDeal.entries())
       .map(([dealId, w]) => {
         const deal = dealsById.get(dealId);
@@ -176,7 +183,7 @@ export default async function ReportPage({ searchParams }: { searchParams: { ten
                   <div className="flex-1 min-w-0 flex items-center gap-2">
                     <span className="text-[10px] text-muted group-open:rotate-180 transition-transform shrink-0">⌄</span>
                     <span className="text-[13px] text-ink truncate">
-                      {r.writes.map((w) => w.label).join(" · ")}
+                      {Array.from(new Set(r.writes.map((w) => w.label))).join(" · ")}
                     </span>
                     <span className="text-[11px] text-muted shrink-0">{r.writes.length} fields</span>
                   </div>

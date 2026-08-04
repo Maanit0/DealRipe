@@ -144,6 +144,11 @@ export function TenantExtractView({
                 </span>
               </div>
             )}
+            {showCrm && (
+              <div className="text-[11.5px] text-muted pl-6">
+                The rep can review and edit any field before it saves; nothing writes without their name on it.
+              </div>
+            )}
           </div>
 
           {showCrm && signals.length > 0 && (
