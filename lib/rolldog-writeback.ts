@@ -130,6 +130,78 @@ function fmtCallDate(iso: string | null | undefined): string {
   }
 }
 
+/**
+ * Log a single "history backfilled" activity when a deal is linked to its
+ * Rolldog opportunity for the first time.
+ *
+ * Context: a discovery deal lives as a Salesforce lead while DealRipe captures
+ * calls on it. Rolldog only learns about it when the BDR converts the lead, at
+ * which point the qualification fields land in one write and the interactions
+ * tab is empty, as though the earlier calls never happened. This names them.
+ *
+ * Why ONE activity and not one per call: Rolldog's activities endpoint accepts
+ * no caller-set date (see createActivity in lib/rolldog.ts, the payload is
+ * title + is-complete + notes only), so replaying N historical calls would
+ * create N activities all stamped today. That reads as noise, not history. One
+ * dated line naming every call is honest about what happened and stays legible.
+ *
+ * Idempotent via the same crm_access_log guard the no-show path uses, keyed to
+ * the deal's most recent call, so a re-linked deal can never double-log.
+ * Best-effort: never throws, and a failure here must not fail the link.
+ */
+export async function logHistoryBackfillToRolldog(
+  tenantSlug: string,
+  opts: {
+    opportunityId: string;
+    /** Anchor call for idempotency and audit attribution: the newest call. */
+    callId: string;
+    /** Every captured call date on the deal, oldest first. */
+    callDates: Array<string | null>;
+    /** True when the opportunity came from the static pilot allowlist. */
+    staticallyAuthorized?: boolean;
+  },
+): Promise<{ written: boolean; reason?: string }> {
+  const tenantId = await resolveTenantId(tenantSlug);
+  const db = supabaseAdmin();
+
+  const prior = await db
+    .from("crm_access_log")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("operation", "write")
+    .eq("allowed", true)
+    .eq("call_id", opts.callId)
+    .contains("fields", ["activities"])
+    .limit(1);
+  if ((prior.data ?? []).length > 0) {
+    return { written: false, reason: "an activity was already logged for this call" };
+  }
+
+  const dates = opts.callDates.map((d) => fmtCallDate(d)).filter(Boolean);
+  if (dates.length === 0) return { written: false, reason: "no dated calls to report" };
+
+  const n = dates.length;
+  const title = `DealRipe backfilled ${n} captured ${n === 1 ? "call" : "calls"}`;
+  const notes =
+    `[DealRipe] This opportunity was created after DealRipe had already captured ` +
+    `${n === 1 ? "a call" : `${n} calls`} on it (${dates.join(", ")}). ` +
+    `The qualification fields on this record were filled from ${n === 1 ? "that call" : "those calls"}, ` +
+    `in the customer's own words. Ongoing calls now write back automatically.`;
+
+  const runtimeAuth = opts.staticallyAuthorized ? [] : [opts.opportunityId];
+  try {
+    await runWithAuthorizedOpportunities(runtimeAuth, () =>
+      runWithCallContext(opts.callId, () => createActivity(opts.opportunityId, { title, notes })),
+    );
+    return { written: true };
+  } catch (err) {
+    if (err instanceof ScopeViolationError) {
+      return { written: false, reason: `scope blocked: '${opts.opportunityId}' not authorized` };
+    }
+    return { written: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function writeBackDealToRolldog(
   tenantSlug: string,
   dealExternalId: string,

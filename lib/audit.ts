@@ -16,7 +16,12 @@
 
 import { getDealAttendanceHistory } from "./attendance";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
-import { repEmailForDeal, rolldogOppIdForDeal } from "./pilot-config";
+import {
+  accountFromAddress,
+  accountFromDomain,
+  repEmailForDeal,
+  rolldogOppIdForDeal,
+} from "./pilot-config";
 import { supabaseAdmin } from "./supabase";
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
@@ -57,7 +62,24 @@ type CallRow = {
   outcome: string | null;
   has_been_extracted: boolean;
   meeting_type: string | null;
+  briefing_sent_at: string | null;
+  created_at: string;
+  title: string | null;
 };
+
+/**
+ * How far back the briefing check looks. The audit runs daily, so 48 hours
+ * covers a full day plus margin for a missed run without re-reporting the same
+ * miss every morning for a week.
+ */
+const BRIEFING_LOOKBACK_HOURS = 48;
+
+/**
+ * How long an auto-created deal may keep its generated name before the audit
+ * asks for a real one. A working week: long enough that a brand-new deal is not
+ * flagged as a problem, short enough that it cannot reach a second digest.
+ */
+const PLACEHOLDER_NAME_GRACE_DAYS = 5;
 
 function norm(name: string): string {
   return name.toLowerCase().replace(/[^a-záéíóúñü ]+/gi, " ").trim();
@@ -84,7 +106,7 @@ export async function runDailyAudit(
   for (const deal of deals) {
     const callsRes = await db
       .from("calls")
-      .select("id, scheduled_start, call_date, outcome, has_been_extracted, meeting_type")
+      .select("id, scheduled_start, call_date, outcome, has_been_extracted, meeting_type, briefing_sent_at, created_at, title")
       .eq("tenant_id", tenantId)
       .eq("deal_id", deal.id)
       .order("scheduled_start", { ascending: false });
@@ -108,6 +130,78 @@ export async function runDailyAudit(
 
     const push = (f: Omit<AuditFinding, "dealId" | "account">) =>
       findings.push({ dealId: deal.id, account: deal.account, ...f });
+
+    // --- Check: auto-created deal still carrying its machine-derived name ---
+    // Auto deals are named from the customer's email because that is all we
+    // have at creation. That name reaches Mark's weekly digest, and nothing
+    // chased it: the deal literally called "Gmail" survived weeks that way.
+    //
+    // Detection is exact rather than heuristic. We recompute what the name
+    // generator WOULD produce from the deal key and flag only an exact match,
+    // so a rep who renamed it, or a calendar invite that carried a real display
+    // name, never trips this.
+    //
+    // The age gate is what keeps it useful. Every new auto deal starts with a
+    // derived name by definition, so flagging on day one would fire on normal
+    // activity and train you to skim the audit.
+    const autoKey = (deal.external_id ?? "").startsWith("auto:")
+      ? (deal.external_id ?? "").slice(5)
+      : null;
+    if (autoKey) {
+      const derived = autoKey.includes("@")
+        ? accountFromAddress(autoKey, null)
+        : accountFromDomain(autoKey);
+      const oldestCapturedMs = captured
+        .map((c) => Date.parse(c.scheduled_start ?? c.call_date ?? ""))
+        .filter((t) => Number.isFinite(t))
+        .sort((a, b) => a - b)[0];
+      const daysWorked = oldestCapturedMs
+        ? Math.floor((now - oldestCapturedMs) / 86_400_000)
+        : 0;
+      if (deal.account.trim() === derived && daysWorked >= PLACEHOLDER_NAME_GRACE_DAYS) {
+        push({
+          severity: "warn",
+          type: "placeholder_account_name",
+          message: `"${deal.account}" is still the auto-generated name from ${autoKey}, ${daysWorked} days after the first captured call. It appears under that name in the weekly digest.`,
+          fixed: false,
+          action: `Rename this deal to the real company name${autoKey.includes("@") ? " (this key is a person's mailbox, not a company domain)" : ""}.`,
+        });
+      }
+    }
+
+    // --- Check: a meeting happened without its pre-call briefing ---
+    // briefing-sync fails quietly by design: it is best-effort so it can never
+    // block ingest. That means a missed briefing leaves no trace anywhere the
+    // operator looks, and the only reason we found the Groupe Morneau miss was
+    // someone scrolling the coverage page a week later. This surfaces it the
+    // next morning instead, and reports the calls-row lead time so the cause is
+    // legible without opening logs.
+    for (const c of calls) {
+      if (c.briefing_sent_at) continue;
+      if (c.outcome === "placeholder" || c.outcome === "rescheduled") continue;
+      const startMs = Date.parse(c.scheduled_start ?? "");
+      if (!Number.isFinite(startMs)) continue;
+      // Past, but recent enough to still be actionable.
+      if (startMs > now || now - startMs > BRIEFING_LOOKBACK_HOURS * 3_600_000) continue;
+
+      const leadMin = Math.round((startMs - Date.parse(c.created_at)) / 60_000);
+      const cause =
+        leadMin <= 0
+          ? `the meeting only reached the calendar ${Math.abs(leadMin)} min after it started, so a briefing was never possible`
+          : leadMin <= 35
+            ? `the meeting only reached the calendar ${leadMin} min before it started`
+            : `the meeting was on the calendar ${Math.round(leadMin / 60)}h ahead, so the send itself failed`;
+      push({
+        severity: leadMin > 35 ? "error" : "warn",
+        type: "briefing_missed",
+        message: `${deal.account}: no pre-call briefing was sent for "${c.title ?? "untitled meeting"}", ${cause}.`,
+        fixed: false,
+        action:
+          leadMin > 35
+            ? "Check the briefing-sync logs for this meeting: generation or mail failed with time to spare."
+            : "No action needed unless this repeats; briefing-sync now creates the calls row itself.",
+      });
+    }
 
     // --- Check: framework present (else no gates can be extracted) ---
     if (!deal.framework_id) {

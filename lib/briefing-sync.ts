@@ -17,6 +17,7 @@ import { generateBriefingFromState } from "./generate-briefing";
 import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
+import type { Json } from "./database.types";
 import { briefingStateFromContext, getDealContext } from "./deal-context";
 import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-config";
 import { recordSentMessage } from "./sent-messages";
@@ -30,6 +31,12 @@ const SCAN_WINDOW_DAYS = 1;
 // once, roughly 30 to 35 minutes before it starts (or later if a run was
 // missed, which is still better than never).
 const LEAD_MAX_MINUTES = 35;
+// Grace period AFTER the start. Previously the window closed hard at T-0, so a
+// meeting whose calls row landed late (invite accepted at the last minute, Teams
+// link added after the fact) lost every tick it had and the briefing was never
+// sent, silently and unrecoverably. A briefing that arrives a few minutes into a
+// call is still worth having; one that never arrives is not.
+const GRACE_AFTER_START_MINUTES = 10;
 
 export type BriefingSyncCounts = {
   eventsSeen: number;
@@ -39,6 +46,8 @@ export type BriefingSyncCounts = {
   alreadySent: number;
   skippedNoDeal: number;
   skippedNoCall: number;
+  /** Rows briefing-sync created itself because calendar-sync had not yet. */
+  createdCallRow: number;
   errors: number;
 };
 
@@ -73,6 +82,7 @@ export async function runBriefingSync(
     alreadySent: 0,
     skippedNoDeal: 0,
     skippedNoCall: 0,
+    createdCallRow: 0,
     errors: 0,
   };
   const emit = opts.onDecision ?? (() => {});
@@ -152,7 +162,7 @@ async function processEvent(
     return;
   }
   const minutesUntil = Math.round((startMs - now) / 60000);
-  if (minutesUntil <= 0 || minutesUntil > LEAD_MAX_MINUTES) {
+  if (minutesUntil < -GRACE_AFTER_START_MINUTES || minutesUntil > LEAD_MAX_MINUTES) {
     emit({ kind: "skip", eventId: ev.eventId, reason: `outside window (${minutesUntil} min)` });
     return;
   }
@@ -183,14 +193,53 @@ async function processEvent(
     .eq("external_id", ev.eventId)
     .maybeSingle();
   if (callRow.error) throw new Error(`calls lookup failed: ${callRow.error.message}`);
-  if (!callRow.data) {
-    // calendar-sync has not created the row yet; it will, and the next scan
-    // (within a few minutes, still inside the window) will send.
-    counts.skippedNoCall += 1;
-    emit({ kind: "no-call-row", dealExternalId, eventId: ev.eventId });
-    return;
+
+  // Self-heal the race with calendar-sync. Both crons run every 5 minutes, so
+  // when an event reaches the calendar late, calendar-sync may not have created
+  // the row before the window closes, and briefing-sync used to give up: no
+  // briefing, no retry, no alert. We only need the row to hold the
+  // briefing_sent_at marker, so create it ourselves rather than lose the send.
+  //
+  // Safe against the race: calls is unique on (deal_id, external_id), so a
+  // concurrent calendar-sync insert either loses to us or we lose to it, and
+  // either way exactly one row exists. We deliberately insert WITHOUT a bot id,
+  // which is the same shape calendar-sync's own insert uses before createBot;
+  // its "existing row + no bot" branch then dispatches the bot as usual, so
+  // recording is unaffected.
+  let callId: string;
+  let alreadySentAt: string | null;
+  if (callRow.data) {
+    callId = callRow.data.id;
+    alreadySentAt = callRow.data.briefing_sent_at;
+  } else {
+    const created = await db
+      .from("calls")
+      .upsert(
+        {
+          tenant_id: tenantId,
+          deal_id: dealId,
+          external_id: ev.eventId,
+          call_date: new Date(startMs).toISOString().slice(0, 10),
+          scheduled_start: new Date(startMs).toISOString(),
+          participants: ev.attendees as unknown as Json,
+          source: "recall_ai",
+          title: ev.subject,
+        },
+        { onConflict: "deal_id,external_id" },
+      )
+      .select("id, briefing_sent_at")
+      .single();
+    if (created.error || !created.data) {
+      // Losing this is not fatal: count it and let the next tick retry.
+      counts.skippedNoCall += 1;
+      emit({ kind: "no-call-row", dealExternalId, eventId: ev.eventId });
+      return;
+    }
+    counts.createdCallRow += 1;
+    callId = created.data.id;
+    alreadySentAt = created.data.briefing_sent_at;
   }
-  if (callRow.data.briefing_sent_at) {
+  if (alreadySentAt) {
     counts.alreadySent += 1;
     emit({ kind: "already-sent", account: dealExternalId, eventId: ev.eventId });
     return;
@@ -250,7 +299,7 @@ async function processEvent(
   await recordSentMessage({
     tenantId,
     dealId,
-    callId: callRow.data.id,
+    callId: callId,
     kind: "briefing",
     toEmail: to,
     subject: email.subject,
@@ -263,12 +312,12 @@ async function processEvent(
   const upd = await db
     .from("calls")
     .update({ briefing_sent_at: new Date().toISOString() })
-    .eq("id", callRow.data.id);
+    .eq("id", callId);
   if (upd.error) {
     // The email already went out. Log loudly; a duplicate on the next scan is
     // the worst case, which is far better than a failed send.
     console.error(
-      `[briefing-sync] sent briefing for call ${callRow.data.id} but failed to mark briefing_sent_at: ${upd.error.message}`,
+      `[briefing-sync] sent briefing for call ${callId} but failed to mark briefing_sent_at: ${upd.error.message}`,
     );
   }
 

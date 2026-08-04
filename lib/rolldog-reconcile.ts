@@ -25,19 +25,37 @@ import { repName } from "./display-names";
 import { rolldogOppIdForDeal } from "./pilot-config";
 import { listOpportunities, type OppSummary } from "./rolldog";
 import { normalizeName } from "./rolldog-match";
-import { writeBackDealToRolldog, type WriteBackResult } from "./rolldog-writeback";
+import { logHistoryBackfillToRolldog, writeBackDealToRolldog, type WriteBackResult } from "./rolldog-writeback";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 import { extractAndStore } from "./transcript-ingest";
 
-// Rolldog owner user-ids, measured from known pilot deals (Core Logistics = Juan,
-// Alba Wheels Up = Eduardo). If a rep's owner id changes, update here.
-export const REP_UID: Record<"juan" | "eduardo", string> = { juan: "82", eduardo: "79" };
+/**
+ * Rolldog owner user-ids, keyed by the rep's work email.
+ *
+ * Reconciliation walks each rep's OWN opportunities, so a rep missing from this
+ * map is skipped entirely: their promoted deals never link and never backfill.
+ * That failure is silent by nature, so unmappedReps() exists to surface it and
+ * findLinkMatches logs a warning rather than dropping the deal quietly.
+ *
+ * Discover a new id with `npx tsx scripts/rolldog-owner-ids.ts`, which groups
+ * recent opportunities by owner so you can recognise a rep by their accounts.
+ */
+export const REP_UID: Record<string, string> = {
+  "jlopez@magaya.com": "82", // Juan, measured from Core Logistics
+  "ebencomo@magaya.com": "79", // Eduardo, measured from Alba Wheels Up
+  // Net-new AE team, live August 10 2026.
+  "asuntrup@magaya.com": "349", // Alexandra, measured from Cargo Cleared + Karla Regina Baeza
+  // TODO: Steven, Ariel and Daniel. Until their ids are here their deals are
+  // reported by unmappedReps() and skipped. Run scripts/rolldog-owner-ids.ts.
+};
+
 const RECENT_DAYS = 90;
 const MIN_SLUG = 5;
 const MAX_PAGES = 3;
 
-export type RepKey = "juan" | "eduardo";
+/** A rep's work email, lowercased. Keys of REP_UID. */
+export type RepKey = string;
 
 export type LinkMatch = {
   dealId: string;
@@ -51,11 +69,13 @@ export type LinkMatch = {
 };
 
 export function repKey(email: string | null): RepKey | null {
-  const e = (email ?? "").toLowerCase();
-  const n = repName(email).toLowerCase();
-  if (e.includes("jlopez") || n.includes("juan")) return "juan";
-  if (e.includes("ebencomo") || n.includes("eduardo")) return "eduardo";
-  return null;
+  const e = (email ?? "").trim().toLowerCase();
+  return e && REP_UID[e] ? e : null;
+}
+
+/** Human label for a rep key, for log lines and cron output. */
+export function repLabel(key: RepKey): string {
+  return repName(key);
 }
 
 function isRecent(iso: string | null): boolean {
@@ -90,8 +110,8 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
   const tenantId = await resolveTenantId(tenantSlug);
   const db = supabaseAdmin();
 
-  const repOpps: Record<RepKey, OppSummary[]> = { juan: [], eduardo: [] };
-  for (const rep of ["juan", "eduardo"] as const) {
+  const repOpps: Record<RepKey, OppSummary[]> = {};
+  for (const rep of Object.keys(REP_UID)) {
     repOpps[rep] = (await fetchRepOpps(REP_UID[rep])).filter((o) => !o.archived);
   }
 
@@ -106,12 +126,19 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
   const withCall = new Set((callData ?? []).map((c: { deal_id: string | null }) => c.deal_id).filter(Boolean) as string[]);
 
   const out: LinkMatch[] = [];
+  const unmapped = new Set<string>();
   for (const x of deals) {
     const staticOpp = x.external_id ? rolldogOppIdForDeal(x.external_id) : null;
     if (staticOpp || x.rolldog_opportunity_id) continue; // already linked
     if (!withCall.has(x.id)) continue; // no captured call, nothing to write
     const rep = repKey(x.rep_email);
-    if (!rep) continue;
+    if (!rep) {
+      // A rep with no Rolldog user-id in REP_UID cannot be reconciled: we have
+      // no way to fetch their opportunities. Record it instead of dropping it,
+      // otherwise a newly onboarded rep's deals never link and nothing says so.
+      if (x.rep_email) unmapped.add(x.rep_email.trim().toLowerCase());
+      continue;
+    }
 
     const base = { dealId: x.id, account: x.account, externalId: x.external_id, rep };
     const dn = normalizeName(x.account);
@@ -133,10 +160,42 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
       out.push({ ...base, status: "none" });
     }
   }
+
+  if (unmapped.size > 0) {
+    lastUnmappedReps = [...unmapped].sort();
+    console.warn(
+      `[rolldog-reconcile] ${unmapped.size} rep(s) have captured deals but no Rolldog user-id in REP_UID, ` +
+        `so their promoted deals will not link: ${lastUnmappedReps.join(", ")}. ` +
+        `Run scripts/rolldog-owner-ids.ts and add them.`,
+    );
+  } else {
+    lastUnmappedReps = [];
+  }
+
   return out;
 }
 
-export type ApplyResult = { account: string; oppId: string; linked: boolean; writeback?: WriteBackResult; error?: string };
+/**
+ * Reps seen with captured deals but no REP_UID entry on the last findLinkMatches
+ * run. Read by the relink cron so the gap shows up in the response rather than
+ * only in logs.
+ */
+let lastUnmappedReps: string[] = [];
+export function unmappedReps(): string[] {
+  return lastUnmappedReps;
+}
+
+export type ApplyResult = {
+  account: string;
+  oppId: string;
+  linked: boolean;
+  /** How many captured calls were replayed into the merged extraction. */
+  callsReplayed?: number;
+  writeback?: WriteBackResult;
+  /** Result of the single "history backfilled" interaction, when one was due. */
+  backfillNote?: { written: boolean; reason?: string };
+  error?: string;
+};
 
 /**
  * For each confirmed match: stamp the link on the deal, refresh the stored
@@ -166,31 +225,59 @@ export async function applyConfirmedLinks(
         continue;
       }
 
+      // Every captured call on the deal, OLDEST FIRST. A discovery deal can
+      // accumulate several calls while it is still a Salesforce lead; the link
+      // is the first moment any of them can reach Rolldog.
+      const callRows = await db
+        .from("calls")
+        .select("id, external_id, call_date, scheduled_start")
+        .eq("tenant_id", tenantId)
+        .eq("deal_id", m.dealId)
+        .order("call_date", { ascending: true });
+      const calls = callRows.data ?? [];
+
+      // Re-extract the FULL history, oldest first, so the merged extraction
+      // reflects every call rather than only the newest one. Order matters:
+      // extraction-merge lets a later call supersede an earlier answer, so
+      // replaying out of order would let stale answers win.
       if (reextract && m.externalId) {
-        const call = await db
-          .from("calls")
-          .select("id, external_id")
-          .eq("tenant_id", tenantId)
-          .eq("deal_id", m.dealId)
-          .order("call_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (call.data?.external_id) {
-          const tr = await db.from("transcripts").select("body").eq("call_id", call.data.id).maybeSingle();
-          if (tr.data?.body) {
-            try {
-              await extractAndStore({ transcript: tr.data.body, dealExternalId: m.externalId, callExternalId: call.data.external_id });
-            } catch {
-              // Non-fatal: write back the existing extraction rather than skip the link.
-            }
+        for (const call of calls) {
+          if (!call.external_id) continue;
+          const tr = await db.from("transcripts").select("body").eq("call_id", call.id).maybeSingle();
+          if (!tr.data?.body) continue;
+          try {
+            await extractAndStore({ transcript: tr.data.body, dealExternalId: m.externalId, callExternalId: call.external_id });
+          } catch {
+            // Non-fatal: keep replaying the rest, and write back whatever merged.
           }
         }
       }
 
+      // One field write carries the whole history: field_extractions is a merged
+      // store keyed (deal_id, scotsman_field_id), not per call, so replaying the
+      // transcripts above already folded every call into it.
+      //
+      // callId attributes the write to the newest call in crm_access_log, which
+      // is what makes the activity guard below idempotent on a re-run.
+      const newest = calls.length > 0 ? calls[calls.length - 1] : null;
       const writeback = m.externalId
-        ? await writeBackDealToRolldog(tenantSlug, m.externalId, { force: true })
+        ? await writeBackDealToRolldog(tenantSlug, m.externalId, { force: true, callId: newest?.id ?? null })
         : undefined;
-      out.push({ account: m.account, oppId, linked: true, writeback });
+
+      // Name the captured history in the interactions tab, which is otherwise
+      // empty on a freshly linked deal. Guarded and best-effort: a failure here
+      // must never undo a successful link.
+      let backfillNote: { written: boolean; reason?: string } | undefined;
+      if (writeback?.written && newest) {
+        backfillNote = await logHistoryBackfillToRolldog(tenantSlug, {
+          opportunityId: oppId,
+          callId: newest.id,
+          callDates: calls.map((c) => c.scheduled_start ?? c.call_date ?? null),
+          staticallyAuthorized: Boolean(rolldogOppIdForDeal(m.externalId ?? "")),
+        });
+      }
+
+      out.push({ account: m.account, oppId, linked: true, callsReplayed: calls.length, writeback, backfillNote });
     } catch (e) {
       out.push({ account: m.account, oppId, linked: false, error: e instanceof Error ? e.message : String(e) });
     }

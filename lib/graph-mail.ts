@@ -143,6 +143,137 @@ async function getAppOnlyToken(tenantId: string): Promise<string> {
 }
 
 // ====================================================================
+// Reading (deal signal)
+// ====================================================================
+
+/**
+ * A mail message reduced to the fields DealRipe reasons about. Bodies are
+ * deliberately NOT fetched: every signal we derive (latency, direction,
+ * participant change, thread continuity) comes from headers, and headers are a
+ * far smaller privacy surface to defend in a security review.
+ */
+export type MailMessage = {
+  id: string;
+  /** Graph's thread key. Groups a reply chain without parsing References. */
+  conversationId: string | null;
+  subject: string;
+  /** When it arrived (inbound) or was sent (outbound). */
+  at: string | null;
+  from: string | null;
+  to: string[];
+  cc: string[];
+  /** True when the mailbox owner sent it. Drives the direction signal. */
+  outbound: boolean;
+  /** First ~255 chars. Enough to classify intent without storing the body. */
+  preview: string;
+};
+
+type GraphRecipient = { emailAddress?: { address?: string | null } };
+type GraphMessage = {
+  id: string;
+  conversationId?: string | null;
+  subject?: string | null;
+  receivedDateTime?: string | null;
+  sentDateTime?: string | null;
+  bodyPreview?: string | null;
+  from?: GraphRecipient | null;
+  sender?: GraphRecipient | null;
+  toRecipients?: GraphRecipient[];
+  ccRecipients?: GraphRecipient[];
+};
+
+const MESSAGE_SELECT = [
+  "id",
+  "conversationId",
+  "subject",
+  "receivedDateTime",
+  "sentDateTime",
+  "bodyPreview",
+  "from",
+  "toRecipients",
+  "ccRecipients",
+].join(",");
+
+function addr(r: GraphRecipient | null | undefined): string | null {
+  const a = r?.emailAddress?.address;
+  return a ? a.trim().toLowerCase() : null;
+}
+
+function addrs(list: GraphRecipient[] | undefined): string[] {
+  return (list ?? []).map(addr).filter((a): a is string => Boolean(a));
+}
+
+/** Domain part of an address, for deal-scoping. */
+export function domainOf(email: string | null | undefined): string | null {
+  const at = (email ?? "").lastIndexOf("@");
+  return at > 0 ? email!.slice(at + 1).toLowerCase() : null;
+}
+
+/**
+ * Read recent messages from a rep's mailbox, newest first.
+ *
+ * Scoping note: Graph's $search supports `participants:` but requires the
+ * eventual-consistency header and behaves inconsistently across tenants, so we
+ * page a bounded date window and filter by domain in code. That keeps the query
+ * predictable, and the domain filter is applied before anything is stored, so
+ * non-deal mail is read transiently and never persisted.
+ *
+ * Read-only. Allowlist-gated exactly like the draft path.
+ */
+export async function listMailboxMessages(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  /** Only messages at or after this instant. */
+  since: Date;
+  /** Restrict to threads involving these customer domains. Empty = no filter. */
+  domains?: string[];
+  /** Safety bound on pages of 100. */
+  maxPages?: number;
+}): Promise<MailMessage[]> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const user = encodeURIComponent(args.mailbox);
+  const me = args.mailbox.trim().toLowerCase();
+  const wanted = new Set((args.domains ?? []).map((d) => d.trim().toLowerCase()).filter(Boolean));
+
+  const out: MailMessage[] = [];
+  let url =
+    `${GRAPH_BASE}/users/${user}/messages` +
+    `?$select=${MESSAGE_SELECT}` +
+    `&$top=100&$orderby=receivedDateTime desc` +
+    `&$filter=receivedDateTime ge ${args.since.toISOString()}`;
+
+  for (let page = 0; page < (args.maxPages ?? 10) && url; page++) {
+    const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new GraphMailError(res.status, await res.text());
+    const json = (await res.json()) as { value?: GraphMessage[]; "@odata.nextLink"?: string };
+    for (const m of json.value ?? []) {
+      const from = addr(m.from ?? m.sender);
+      const to = addrs(m.toRecipients);
+      const cc = addrs(m.ccRecipients);
+      if (wanted.size > 0) {
+        const involved = [from, ...to, ...cc].filter(Boolean) as string[];
+        if (!involved.some((a) => wanted.has(domainOf(a) ?? ""))) continue;
+      }
+      out.push({
+        id: m.id,
+        conversationId: m.conversationId ?? null,
+        subject: m.subject ?? "",
+        at: m.receivedDateTime ?? m.sentDateTime ?? null,
+        from,
+        to,
+        cc,
+        outbound: from === me,
+        preview: (m.bodyPreview ?? "").trim(),
+      });
+    }
+    url = json["@odata.nextLink"] ?? "";
+  }
+  return out;
+}
+
+// ====================================================================
 // Drafting
 // ====================================================================
 

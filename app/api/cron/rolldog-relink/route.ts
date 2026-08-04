@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { applyConfirmedLinks, findLinkMatches } from "@/lib/rolldog-reconcile";
+import { applyConfirmedLinks, findLinkMatches, unmappedReps } from "@/lib/rolldog-reconcile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +44,18 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       confirmed: confirmed.length,
       linked,
       review: review.length,
-      results: results.map((r) => ({ account: r.account, oppId: r.oppId, linked: r.linked, wrote: r.writeback?.written ?? false, reason: r.writeback?.reason ?? r.error })),
+      // Reps with captured deals but no Rolldog user-id: their deals cannot be
+      // reconciled at all, so surface it here rather than only in the logs.
+      unmappedReps: unmappedReps(),
+      results: results.map((r) => ({
+        account: r.account,
+        oppId: r.oppId,
+        linked: r.linked,
+        callsReplayed: r.callsReplayed ?? 0,
+        wrote: r.writeback?.written ?? false,
+        historyNote: r.backfillNote?.written ?? false,
+        reason: r.writeback?.reason ?? r.error,
+      })),
     });
   } catch (err) {
     console.error("[cron/rolldog-relink] error:", err);

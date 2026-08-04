@@ -149,8 +149,35 @@ export function isAutoJoinRep(repEmail: string | null | undefined): boolean {
   return autoJoinRepEmails().includes(repEmail.toLowerCase());
 }
 
-/** First external (non-internal) attendee domain on a meeting, or null. */
-export function firstExternalDomain(
+/**
+ * Consumer mailbox providers. A domain here identifies a PERSON, not a company.
+ *
+ * This matters because auto-created deals are keyed by domain, which is correct
+ * for corelogistics.net but catastrophic for gmail.com: every Gmail-using
+ * prospect collapses into one deal literally named "Gmail". Small customs
+ * brokers and freight forwarders run their businesses on consumer mail all the
+ * time, so these are real prospects, they just cannot share a deal key.
+ * Non-US providers are included deliberately; Magaya sells across LATAM, Europe
+ * and Asia.
+ */
+export const FREE_MAIL_DOMAINS: ReadonlyArray<string> = Object.freeze([
+  "gmail.com", "googlemail.com", "icloud.com", "me.com", "mac.com",
+  "yahoo.com", "yahoo.co.uk", "yahoo.com.mx", "yahoo.com.br", "ymail.com",
+  "hotmail.com", "hotmail.co.uk", "hotmail.es", "hotmail.com.br",
+  "outlook.com", "outlook.es", "live.com", "msn.com",
+  "aol.com", "gmx.com", "gmx.de", "mail.com", "mail.ru", "yandex.com",
+  "proton.me", "protonmail.com", "zoho.com",
+  "qq.com", "163.com", "126.com", "naver.com", "sina.com",
+  "uol.com.br", "bol.com.br", "terra.com.br", "prodigy.net.mx",
+]);
+
+/** True when a domain identifies a person rather than a company. */
+export function isFreeMailDomain(domain: string | null | undefined): boolean {
+  return FREE_MAIL_DOMAINS.includes((domain ?? "").toLowerCase().trim());
+}
+
+/** First external (non-internal, non-excluded) attendee ADDRESS, or null. */
+export function firstExternalAddress(
   attendeeEmails: ReadonlyArray<string>,
 ): string | null {
   for (const raw of attendeeEmails) {
@@ -161,14 +188,36 @@ export function firstExternalDomain(
     if (!domain) continue;
     if (INTERNAL_DOMAINS.includes(domain)) continue;
     if (excludedDomains().includes(domain)) continue;
-    return domain;
+    return raw.toLowerCase().trim();
   }
   return null;
+}
+
+/** First external (non-internal) attendee domain on a meeting, or null. */
+export function firstExternalDomain(
+  attendeeEmails: ReadonlyArray<string>,
+): string | null {
+  const addr = firstExternalAddress(attendeeEmails);
+  return addr ? (addr.split("@")[1] ?? null) : null;
 }
 
 /** Stable external_id for an auto-created deal, keyed by customer domain. */
 export function autoDealExternalId(domain: string): string {
   return `auto:${domain.toLowerCase()}`;
+}
+
+/**
+ * Stable external_id for an auto-created deal, keyed from a full address.
+ *
+ * Company domains key by domain, so every meeting with anyone at that company
+ * lands on one deal, which is what we want. Consumer domains key by the whole
+ * address, so Luke at icloud.com and Sunbiz at gmail.com stay separate deals
+ * instead of merging into one record called "Gmail".
+ */
+export function autoDealExternalIdForAddress(email: string): string {
+  const addr = email.toLowerCase().trim();
+  const domain = addr.split("@")[1] ?? "";
+  return isFreeMailDomain(domain) ? `auto:${addr}` : `auto:${domain}`;
 }
 
 /** Placeholder account name derived from a domain, editable later. */
@@ -177,9 +226,36 @@ export function accountFromDomain(domain: string): string {
   return sld ? sld.charAt(0).toUpperCase() + sld.slice(1) : domain;
 }
 
+/**
+ * Placeholder account name for an auto-created deal.
+ *
+ * For a company domain the domain is the best guess. For consumer mail it is
+ * useless ("Gmail"), so prefer the attendee's calendar display name, then the
+ * local part. "Luke Rousselle" beats "Icloud" in Mark's pipeline view.
+ */
+export function accountFromAddress(email: string, displayName?: string | null): string {
+  const addr = email.toLowerCase().trim();
+  const domain = addr.split("@")[1] ?? "";
+  if (!isFreeMailDomain(domain)) return accountFromDomain(domain);
+
+  const name = (displayName ?? "").trim();
+  if (name && !name.includes("@")) return name;
+
+  const local = addr.split("@")[0] ?? addr;
+  return local
+    .split(/[._\-+]/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
 export type ResolvedMeetingDeal = {
   dealExternalId: string;
   domain: string | null;
+  /** Full external attendee address the key was derived from (auto deals). */
+  address: string | null;
+  /** True when the key is a person, not a company. */
+  isFreeMail: boolean;
   isAuto: boolean;
 };
 
@@ -197,12 +273,25 @@ export function resolveMeetingDeal(
 ): ResolvedMeetingDeal | null {
   const match = matchPilotDomain(attendeeEmails) ?? matchPilotSubject(subject);
   if (match) {
-    return { dealExternalId: match.dealExternalId, domain: null, isAuto: false };
+    return {
+      dealExternalId: match.dealExternalId,
+      domain: null,
+      address: null,
+      isFreeMail: false,
+      isAuto: false,
+    };
   }
   if (autoJoin) {
-    const domain = firstExternalDomain(attendeeEmails);
-    if (domain) {
-      return { dealExternalId: autoDealExternalId(domain), domain, isAuto: true };
+    const address = firstExternalAddress(attendeeEmails);
+    if (address) {
+      const domain = address.split("@")[1] ?? null;
+      return {
+        dealExternalId: autoDealExternalIdForAddress(address),
+        domain,
+        address,
+        isFreeMail: isFreeMailDomain(domain),
+        isAuto: true,
+      };
     }
   }
   return null;

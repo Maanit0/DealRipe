@@ -29,7 +29,7 @@
 
 import type { Json } from "./database.types";
 import {
-  accountFromDomain,
+  accountFromAddress,
   isAutoJoinRep,
   resolveMeetingDeal,
 } from "./pilot-config";
@@ -320,8 +320,18 @@ async function processEvent(
     return;
   }
   const dealExternalId = resolved.dealExternalId;
-  if (resolved.isAuto && resolved.domain) {
-    const r = await ensureAutoDeal(tenantId, dealExternalId, resolved.domain, opts.repEmail);
+  if (resolved.isAuto && resolved.domain && resolved.address) {
+    // For consumer mail the domain is meaningless as a name ("Gmail"), so pass
+    // the attendee's calendar display name through for a human account label.
+    const displayName =
+      ev.attendees.find((a) => (a.email ?? "").toLowerCase() === resolved.address)?.name ?? null;
+    const r = await ensureAutoDeal(
+      tenantId,
+      dealExternalId,
+      resolved.domain,
+      opts.repEmail,
+      { address: resolved.address, displayName, isFreeMail: resolved.isFreeMail },
+    );
     if (r.created) {
       counts.autoCreated += 1;
       emit({
@@ -649,6 +659,7 @@ async function ensureAutoDeal(
   externalId: string,
   domain: string,
   repEmail: string | null,
+  who: { address: string; displayName: string | null; isFreeMail: boolean },
 ): Promise<{ created: boolean }> {
   const db = supabaseAdmin();
   const existing = await db
@@ -667,11 +678,13 @@ async function ensureAutoDeal(
   const ins = await db.from("deals").insert({
     tenant_id: tenantId,
     external_id: externalId,
-    account: accountFromDomain(domain),
+    account: accountFromAddress(who.address, who.displayName),
     stage_key: "SQL0",
     framework_id: frameworkId,
     rep_email: repEmail,
-    rep_notes: `Auto-created from ${repEmail ?? "rep"}'s calendar (${domain}). Placeholder account name; edit if needed.`,
+    rep_notes: who.isFreeMail
+      ? `Auto-created from ${repEmail ?? "rep"}'s calendar. ${who.address} is consumer mail, so this deal is keyed to the person, not the domain. Set the real company name.`
+      : `Auto-created from ${repEmail ?? "rep"}'s calendar (${domain}). Placeholder account name; edit if needed.`,
   });
   if (ins.error) {
     throw new Error(`auto-deal create failed for ${externalId}: ${ins.error.message}`);
