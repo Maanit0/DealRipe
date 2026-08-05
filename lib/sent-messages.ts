@@ -9,7 +9,7 @@
 
 import { supabaseAdmin } from "./supabase";
 
-export type SentMessageKind = "briefing" | "recap" | "no_show_draft";
+export type SentMessageKind = "briefing" | "recap" | "no_show_draft" | "followup_draft";
 
 export type SentMessage = {
   id: string;

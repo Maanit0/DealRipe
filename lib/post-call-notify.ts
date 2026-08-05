@@ -18,7 +18,7 @@ import { classifyMeetingType, generateGeneralRecap, type MeetingType } from "./m
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { repEmailForDeal } from "./pilot-config";
-import { generatePostCallSummary } from "./post-call-summary";
+import { generatePostCallSummary, type PostCallSummary } from "./post-call-summary";
 import { recordSentMessage } from "./sent-messages";
 import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
@@ -31,6 +31,9 @@ export type NotifyResult = {
   /** The recap's recommended next action, for Rolldog next-step write-back.
    *  Set only for new-opportunity (qualification) recaps. */
   nextAction?: string;
+  /** The generated summary, so callers can reuse it instead of paying for a
+   *  second generation (the follow-up draft needs exactly this). */
+  summary?: PostCallSummary;
 };
 
 export async function sendPostCallSummary(args: {
@@ -110,6 +113,9 @@ export async function sendPostCallSummary(args: {
   // The recommended next action, surfaced for Rolldog next-step write-back. Only
   // set on the qualification recap (new opportunity), never a general recap.
   let nextAction: string | undefined;
+  // Handed back so the follow-up draft can reuse it. Regenerating would be a
+  // second Anthropic call on every ingest for identical output.
+  let qualSummary: PostCallSummary | undefined;
   let genTasks: GeneratedTask[] = [];
 
   if (meetingType !== "new_opportunity") {
@@ -205,6 +211,7 @@ export async function sendPostCallSummary(args: {
 
     email = renderPostCallSummaryEmail(summary, genTasks);
     nextAction = summary.nextStepCommitment ?? summary.suggestedNextStep;
+    qualSummary = summary;
   }
 
   if (args.dryRun) {
@@ -222,7 +229,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: null,
     });
-    return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction };
+    return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction, summary: qualSummary };
   }
 
   try {
@@ -244,7 +251,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: res.id || null,
     });
-    return { sent: true, to, reason: `resend id ${res.id}`, nextAction };
+    return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary };
   } catch (err) {
     if (err instanceof MailerConfigError) {
       return { sent: false, to, reason: `mailer not configured: ${err.message}` };

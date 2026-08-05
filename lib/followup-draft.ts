@@ -114,17 +114,39 @@ export async function findCustomerThread(
   return best?.newest ?? null;
 }
 
-/** The rep's own recent sent messages, for tone. Subjects and previews only. */
+/**
+ * The rep's own recent sent messages, for tone.
+ *
+ * CUSTOMER-FACING ONLY. A rep writes very differently to a colleague than to a
+ * buyer, and Eduardo in particular is a Sales VP with heavy internal traffic.
+ * Sampling the whole sent folder would teach the model his internal register
+ * and produce drafts that read like a note to Mark rather than to a customer.
+ *
+ * Headers and previews only; message bodies are never fetched.
+ */
 export async function voiceSamples(mailbox: string): Promise<string[]> {
   const msgs = await listMailboxMessages({
     tenantIdOrDomain: GRAPH_TENANT,
     mailbox,
     since: new Date(Date.now() - 90 * 86_400_000),
   });
-  return msgs
-    .filter((m) => m.outbound && m.preview.length > 80)
-    .slice(0, VOICE_SAMPLES)
-    .map((m) => `Subject: ${m.subject}\n${m.preview}`);
+  const me = domainOf(mailbox);
+  const external = msgs.filter((m) => {
+    if (!m.outbound || m.preview.length < 80) return false;
+    return [...m.to, ...m.cc].some((r) => {
+      const d = domainOf(r);
+      return Boolean(d) && d !== me && !isFreeMailNoise(d as string);
+    });
+  });
+  // Fall back to any sent mail rather than none: a slightly-off voice beats a
+  // generic one, and a new rep may have no customer mail yet.
+  const pool = external.length > 0 ? external : msgs.filter((m) => m.outbound && m.preview.length >= 80);
+  return pool.slice(0, VOICE_SAMPLES).map((m) => `Subject: ${m.subject}\n${m.preview}`);
+}
+
+/** Calendar and notification senders that are external but not customers. */
+function isFreeMailNoise(domain: string): boolean {
+  return /^(calendar|notifications?|noreply|no-reply)\./i.test(domain);
 }
 
 // ====================================================================
@@ -135,19 +157,36 @@ const SYSTEM = `You draft the follow-up email a B2B sales rep sends right after 
 
 Non-negotiable rules:
 
-1. ONE ask, and it carries a specific date. A recap that requests nothing does not move a deal. Name the date explicitly ("Thursday the 14th"), never "soon" or "next week" alone.
+1. ONE ask, and it carries a specific date. A recap that requests nothing does not move a deal. Name the date explicitly ("Thursday the 14th"), never "soon" or "next week" alone. ONE means one: if you find yourself asking the customer to both confirm something and do something else, fold them into a single request or drop the weaker one. Two questions halve the reply rate.
 2. Write about THEM. Lead with what the customer said they need, in their words. Do not open with "thank you for your time" and do not list what your company will do before acknowledging what they said.
 3. Short. Under 180 words. A rep will not send an essay and a buyer will not read one.
 4. No em-dashes, ever. Use commas or full stops. Em-dashes read as AI-written to this customer.
 5. No marketing language, no adjectives about your own product, no "excited to", no "circling back", no "just following up".
 6. If a gate is genuinely open (no budget confirmed, economic buyer absent, no next meeting), work ONE of them into the ask naturally as a question. Never list gaps at the customer.
 7. Match the sample voice for greeting, sign-off, sentence length and formality. If the samples are terse, be terse.
+8. Any proposed time carries a TIMEZONE. "Thursday, August 13th at 10:00 AM ET", never a bare "10:00 AM". These customers span Canada, Latin America, Europe and Asia, and an unqualified time is how a booked meeting turns into a no-show. When the customer's own timezone is given below, state the time in THEIRS, then the rep's in brackets: "10:00 AM ET (9:00 AM CT my time)". Writing a time only in the seller's zone quietly makes the buyer do the conversion.
+9. NEVER claim a file is attached. You cannot attach anything, and the rep may send without noticing. Write "I am sending over the datasheet" or "the revised proposal is on its way", never "attached is" or "I have attached" or "please find attached". Name the file in attachmentsToAdd instead; the rep attaches it.
 
 Return JSON only:
 {"subject": string, "body": string, "attachmentsToAdd": string[]}
 
 "subject" is used only when there is no thread to reply to.
 "attachmentsToAdd" names files the rep promised on the call (a datasheet, an NDA, a proposal). Name them plainly; you cannot attach anything, the rep will.`;
+
+/**
+ * True while a demo is plausibly still ahead of this deal.
+ *
+ * Magaya's stages run SQL0 (awaiting action) through SQL5 (agreement). A demo
+ * belongs before proposal validation, so from SQL3 onward the deal has already
+ * been demoed and NDA-before-demo is behind it. Unknown stages are treated as
+ * pre-demo, since a spurious NDA mention is a smaller error than omitting a
+ * required one on an early deal.
+ */
+function isPreDemoStage(stageKey: string | null | undefined): boolean {
+  const m = /sql\s*([0-5])/i.exec(stageKey ?? "");
+  if (!m) return true;
+  return Number(m[1]) < 3;
+}
 
 function buildUserMessage(input: FollowUpDraftInput, samples: string[], hasThread: boolean): string {
   const s = input.summary;
@@ -158,6 +197,9 @@ function buildUserMessage(input: FollowUpDraftInput, samples: string[], hasThrea
     `CUSTOMER: ${input.account}`,
     input.attendees ? `ON THE CALL: ${input.attendees}` : "",
     input.callDate ? `CALL DATE: ${input.callDate}` : "",
+    s.customerTimezone
+      ? `CUSTOMER TIMEZONE (they said so on the call): ${s.customerTimezone}. Propose the time in this zone.`
+      : `CUSTOMER TIMEZONE: not stated on the call. Use the rep's zone and label it explicitly.`,
     hasThread
       ? `THIS IS A REPLY on an existing thread. Do not re-introduce yourself and do not restate context they already have.`
       : `THERE IS NO EXISTING THREAD. Write a fresh email and include a subject.`,
@@ -168,11 +210,23 @@ function buildUserMessage(input: FollowUpDraftInput, samples: string[], hasThrea
     s.nextStepCommitment
       ? `THE COMMITMENT ALREADY AGREED (build the dated ask around this, do not invent a different one):\n${s.nextStepCommitment}`
       : `NO COMMITMENT WAS AGREED ON THE CALL. The ask should secure one.`,
-    s.followUpMeetingExpected && s.noFollowupBooked
-      ? `\nA next meeting was implied but NOTHING IS ON THE CALENDAR. Proposing a specific date is the highest-value ask available.`
+    // Ranked deliberately. A date on the calendar outranks a document or a
+    // signature, because the rep's own words are that a booked date is a
+    // commitment while an action item is only an intention. This is the ask
+    // most likely to be missed, so it is stated first and unambiguously.
+    s.shouldBookNextMeeting
+      ? `\nNOTHING IS ON THE CALENDAR and this deal should have a date. Propose ONE specific date and time as the ask, even if the immediate step is asynchronous. "I will send X, and can we hold Thursday the 14th to go through it" is stronger than sending X and waiting. This outranks asking for a document or a signature; fold those in around it rather than leading with them.`
       : "",
-    s.nda?.demoIsNext && !s.nda.ndaInPlace
-      ? `\nA demo is next and no NDA is in place. Magaya requires one before a demo.`
+    s.followUpMeetingExpected && s.noFollowupBooked
+      ? `\nA next meeting was agreed on the call and could be booked right now.`
+      : "",
+    // The recap's NDA signal is deliberately an over-reminder for the REP: it
+    // fires whenever a demo sits anywhere in the path. That is wrong to put in
+    // front of a CUSTOMER on a deal already past demo, where raising it reads
+    // as the rep having lost track of their own deal. Only surface it while a
+    // demo is genuinely still ahead.
+    s.nda?.demoIsNext && !s.nda.ndaInPlace && isPreDemoStage(s.stageKey)
+      ? `\nA demo is still ahead and no NDA is signed. Magaya requires one first, so make the proposed date contingent on it rather than raising the NDA as a separate request.`
       : "",
     open ? `\nQUALIFICATION GAPS STILL OPEN (work at most ONE in as a question, never list them):\n${open}` : "",
     ``,
@@ -193,8 +247,16 @@ function parseJson(text: string): { subject: string; body: string; attachmentsTo
     if (typeof o.body !== "string" || !o.body.trim()) return null;
     return {
       subject: typeof o.subject === "string" ? o.subject : "",
-      // Belt and braces on the em-dash rule: the customer flags them as AI.
-      body: o.body.replace(/\s*[—–]\s*/g, ", "),
+      // Belt and braces on two rules the model can still slip on.
+      // Em-dashes: this customer reads them as AI-written.
+      // "Attached": a draft cannot carry files, so a rep who skims and sends
+      // would reference a proposal that is not there. Rewrite rather than
+      // regenerate, so one slip does not cost a whole generation.
+      body: o.body
+        .replace(/\s*[—–]\s*/g, ", ")
+        .replace(/\b(please find |)attached (is|are)\b/gi, "I am sending over")
+        .replace(/\bI have attached\b/gi, "I am sending over")
+        .replace(/\bplease find attached\b/gi, "I am sending over"),
       attachmentsToAdd: Array.isArray(o.attachmentsToAdd)
         ? o.attachmentsToAdd.filter((a): a is string => typeof a === "string")
         : [],
@@ -267,6 +329,96 @@ export async function createFollowUpDraft(
   } catch (e) {
     return { created: false, draft, reason: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/**
+ * Draft the follow-up automatically after a call, into the rep's Drafts folder.
+ *
+ * Called from transcript-sync alongside the recap. Best-effort in the same way
+ * everything else on that path is: it must never affect ingest, and every skip
+ * is a quiet return rather than a throw.
+ *
+ * Four gates, in cost order:
+ *   - new_opportunity calls only. An internal sync or an existing-customer
+ *     check-in does not want a sales follow-up sitting in the rep's drafts.
+ *   - mailbox on GRAPH_MAIL_ALLOWED_MAILBOXES, so a rep who has not been
+ *     onboarded never gets written to.
+ *   - a customer-side attendee exists to write to.
+ *   - not already drafted for this call, checked against sent_messages, so a
+ *     re-ingest cannot leave the rep two drafts of the same email.
+ */
+export async function autoDraftFollowUpForCall(args: {
+  tenantId: string;
+  callId: string;
+  dealId: string;
+  account: string;
+  repEmail: string | null;
+  meetingType: string | null;
+  summary: PostCallSummary;
+  attendees?: string;
+  callDate?: string | null;
+  participants: unknown;
+}): Promise<{ created: boolean; reason?: string }> {
+  const { supabaseAdmin } = await import("./supabase");
+  const { allowedMailboxes } = await import("./graph-mail");
+  const { recordSentMessage } = await import("./sent-messages");
+
+  if (args.meetingType !== "new_opportunity") {
+    return { created: false, reason: `meeting type '${args.meetingType ?? "unclassified"}' is not an opportunity call` };
+  }
+  const mailbox = (args.repEmail ?? "").trim().toLowerCase();
+  if (!mailbox) return { created: false, reason: "no rep email on the deal" };
+  if (!allowedMailboxes().includes(mailbox)) {
+    return { created: false, reason: `${mailbox} is not on GRAPH_MAIL_ALLOWED_MAILBOXES` };
+  }
+
+  const people = Array.isArray(args.participants)
+    ? (args.participants as Array<{ email?: string | null }>)
+    : [];
+  const customerEmails = people
+    .map((p) => (p?.email ?? "").toLowerCase().trim())
+    .filter((e) => e.includes("@") && domainOf(e) !== "magaya.com");
+  if (customerEmails.length === 0) {
+    return { created: false, reason: "no customer-side attendee on the call" };
+  }
+
+  const db = supabaseAdmin();
+  const prior = await db
+    .from("sent_messages")
+    .select("id")
+    .eq("tenant_id", args.tenantId)
+    .eq("call_id", args.callId)
+    .eq("kind", "followup_draft")
+    .limit(1);
+  if ((prior.data ?? []).length > 0) {
+    return { created: false, reason: "follow-up already drafted for this call" };
+  }
+
+  const res = await createFollowUpDraft({
+    mailbox,
+    customerDomains: customerDomainsFor(customerEmails),
+    customerEmails,
+    account: args.account,
+    summary: args.summary,
+    attendees: args.attendees,
+    callDate: args.callDate ?? null,
+  });
+  if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
+
+  // Archive it. This is both the audit trail and the idempotency marker, so it
+  // is recorded even though nothing was emailed.
+  await recordSentMessage({
+    tenantId: args.tenantId,
+    dealId: args.dealId,
+    callId: args.callId,
+    kind: "followup_draft",
+    toEmail: mailbox,
+    subject: res.draft.subject,
+    html: "",
+    text: res.draft.body,
+    providerId: null,
+  });
+  return { created: true };
 }
 
 /** Deal domains for thread lookup, excluding anything internal. */

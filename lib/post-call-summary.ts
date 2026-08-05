@@ -41,8 +41,21 @@ export type PostCallSummary = {
   suggestedNextStep: string;
   /** The concrete follow-up both sides agreed to, if any. */
   nextStepCommitment: string | null;
-  /** The conversation implies a next meeting should be booked. */
+  /** A next meeting is the immediate action and could be booked right now. */
   followUpMeetingExpected: boolean;
+  /**
+   * The deal would be safer with a date on the calendar, even when the
+   * immediate step is asynchronous. Deliberately broader than
+   * followUpMeetingExpected: "we will come back to you in two weeks" is an
+   * intention, and unbooked intentions are where deals go quiet.
+   */
+  shouldBookNextMeeting: boolean;
+  /**
+   * Customer's timezone as a short label, when they said where they are.
+   * A proposed time without one is how a booked meeting becomes a no-show,
+   * and these customers span Canada, LATAM, Europe and Asia.
+   */
+  customerTimezone: string | null;
   /** Set by the caller after checking the calendar: expected but nothing booked. */
   noFollowupBooked?: boolean;
   /** NDA-before-demo read, or null if not relevant on this call. */
@@ -116,6 +129,11 @@ Rules:
 6. Write for the rep's eyes. Second person is fine ("you").
 7. "nextStepCommitment": the concrete next action from the rep's side, phrased as a short imperative fragment with NO trailing period and NOT starting with the rep's own name (e.g. "send Ely the product videos and datasheet", "reconvene after their board meets"). At most about 14 words, or null if none was set.
 8. "followUpMeetingExpected": true ONLY if a specific next meeting, call, or demo was agreed and could be booked now with both sides ready. Set it FALSE if the immediate next step is asynchronous (sending materials, waiting on the customer's internal review or an RFI), if the next meeting is gated on a prerequisite like a signed NDA, if a meeting was already scheduled on the call, or if the deal is dead. When in doubt, false.
+8b. "shouldBookNextMeeting": whether this deal would be materially safer with a DATE ON THE CALENDAR, which is a different question from rule 8. Rule 8 asks whether a meeting is the immediate next action. This asks whether the deal should have a booked date at all.
+   Set TRUE whenever the conversation implies the two sides will speak again and nothing is currently on the calendar, INCLUDING when the immediate step is asynchronous: sending materials, an internal review, waiting on a board, a pending NDA. Those are exactly the cases where an unbooked deal goes quiet, because the customer's "we will get back to you in two weeks" is an intention, not a commitment.
+   Set FALSE only if a next meeting is already scheduled, the customer disqualified themselves or went dark, or the deal has closed.
+   The rep's own words on this: a date on the calendar is always better than an action item, because the prospect has committed to it.
+8c. "customerTimezone": the customer's timezone as a short label ("ET", "PT", "CT", "GMT", "CET", "IST", "AST"), inferred ONLY from what was actually said: a city or country they gave ("I'm in Toronto" -> ET), an office location, working hours they mentioned. Return null if it was never indicated. Do not guess from a company name or an accent. This decides whether a proposed meeting time is unambiguous, so a wrong answer is worse than null.
 9. "nda": about Magaya's rule of a signed mutual NDA before a demo. Return null ONLY if a demo/presentation is nowhere in the deal's path and NDAs never came up. Otherwise an object:
    { "demoIsNext": boolean (a demo or presentation is an agreed or upcoming step, even if it is gated behind other steps first),
      "ndaInPlace": boolean (a mutual NDA is ACTUALLY SIGNED or confirmed in place; a rep merely offering or promising to send an NDA is NOT in place, so this is false),
@@ -124,7 +142,7 @@ Rules:
 10. "coaching": ONE short, kind, specific coaching note for the rep IF and only if the transcript clearly shows the rep moved off a pain point too quickly or dominated the talking when the customer should have. At most about 20 words, second person. null if the rep ran the call well. Do not invent a critique.
 
 Return a single JSON object, no prose, no markdown fences:
-{ "recap": string, "suggestedNextStep": string, "nextStepCommitment": string|null, "followUpMeetingExpected": boolean, "nda": {"demoIsNext": boolean, "ndaInPlace": boolean, "customerResisted": boolean}|null, "coaching": string|null }`;
+{ "recap": string, "suggestedNextStep": string, "nextStepCommitment": string|null, "followUpMeetingExpected": boolean, "shouldBookNextMeeting": boolean, "customerTimezone": string|null, "nda": {"demoIsNext": boolean, "ndaInPlace": boolean, "customerResisted": boolean}|null, "coaching": string|null }`;
 }
 
 function buildUserMessage(input: PostCallSummaryInput): string {
@@ -163,6 +181,8 @@ type ParsedSummary = {
   suggestedNextStep: string;
   nextStepCommitment: string | null;
   followUpMeetingExpected: boolean;
+  shouldBookNextMeeting: boolean;
+  customerTimezone: string | null;
   nda: NdaSignal | null;
   coaching: string | null;
 };
@@ -190,6 +210,16 @@ function parseJson(raw: string): ParsedSummary | null {
           ? o.nextStepCommitment.trim()
           : null,
       followUpMeetingExpected: o.followUpMeetingExpected === true,
+      // Default TRUE when the model omits it: on a live deal an unbooked next
+      // meeting is the common case, and prompting for a date the rep does not
+      // need is far cheaper than staying silent on a deal about to go quiet.
+      shouldBookNextMeeting: o.shouldBookNextMeeting !== false,
+      // Short labels only. Anything long is the model narrating rather than
+      // answering, and a wrong timezone is worse than none.
+      customerTimezone:
+        typeof o.customerTimezone === "string" && o.customerTimezone.trim() && o.customerTimezone.trim().length <= 8
+          ? o.customerTimezone.trim()
+          : null,
       nda: parseNda(o.nda),
       coaching: typeof o.coaching === "string" && o.coaching.trim() ? o.coaching.trim() : null,
     };
@@ -222,6 +252,8 @@ export async function generatePostCallSummary(
     suggestedNextStep: "Review the open items and book the next step with the customer.",
     nextStepCommitment: null,
     followUpMeetingExpected: false,
+    shouldBookNextMeeting: true,
+    customerTimezone: null,
     nda: null,
     coaching: null,
   };
@@ -235,6 +267,8 @@ export async function generatePostCallSummary(
     suggestedNextStep: parsed.suggestedNextStep,
     nextStepCommitment: parsed.nextStepCommitment,
     followUpMeetingExpected: parsed.followUpMeetingExpected,
+    shouldBookNextMeeting: parsed.shouldBookNextMeeting,
+    customerTimezone: parsed.customerTimezone,
     nda: parsed.nda,
     coaching: parsed.coaching,
   };

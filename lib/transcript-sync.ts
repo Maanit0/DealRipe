@@ -553,6 +553,8 @@ async function processRow(
       // its own try/catch so a mail failure can never affect ingest status or
       // the media-delete step below.
       let recapNextAction: string | undefined;
+      // Reused by the follow-up draft below, so we generate the summary once.
+      let notifySummary: Awaited<ReturnType<typeof sendPostCallSummary>>["summary"];
       try {
         const notify = await sendPostCallSummary({
           tenantId,
@@ -563,6 +565,7 @@ async function processRow(
           callId,
         });
         recapNextAction = notify.nextAction;
+        notifySummary = notify.summary;
         if (!notify.sent) {
           console.warn(
             `[transcript-sync] post-call summary not sent for call ${callId}: ${notify.reason}`,
@@ -572,6 +575,45 @@ async function processRow(
         console.error(
           `[transcript-sync] post-call summary send threw for call ${callId}:`,
           notifyErr instanceof Error ? notifyErr.message : notifyErr,
+        );
+      }
+
+      // Best-effort: draft the customer follow-up into the rep's Outlook
+      // drafts. Never sent: the app holds Mail.ReadWrite and not Mail.Send, so
+      // the rep reviews and sends. Gated to opportunity calls and allowlisted
+      // mailboxes, and fully isolated so a Graph outage cannot affect ingest.
+      try {
+        if (notifySummary) {
+          const { autoDraftFollowUpForCall } = await import("./followup-draft");
+          const callRow = await db
+            .from("calls")
+            .select("deal_id, participants, scheduled_start, call_date, deals!inner(account, rep_email)")
+            .eq("id", callId)
+            .maybeSingle();
+          const d = callRow.data as
+            | { deal_id: string; participants: unknown; scheduled_start: string | null; call_date: string | null; deals: { account: string; rep_email: string | null } }
+            | null;
+          if (d) {
+            const draft = await autoDraftFollowUpForCall({
+              tenantId,
+              callId,
+              dealId: d.deal_id,
+              account: d.deals.account,
+              repEmail: d.deals.rep_email,
+              meetingType,
+              summary: notifySummary,
+              callDate: d.scheduled_start ?? d.call_date,
+              participants: d.participants,
+            });
+            if (!draft.created) {
+              console.warn(`[transcript-sync] follow-up draft skipped for call ${callId}: ${draft.reason}`);
+            }
+          }
+        }
+      } catch (draftErr) {
+        console.error(
+          `[transcript-sync] follow-up draft threw for call ${callId}:`,
+          draftErr instanceof Error ? draftErr.message : draftErr,
         );
       }
 

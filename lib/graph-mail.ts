@@ -286,6 +286,21 @@ export type DraftResult = {
   webLink: string | null;
 };
 
+/**
+ * Plain text to minimal HTML, for prepending above Outlook's quoted thread.
+ * Deliberately spartan: no styling, so it inherits the rep's default font
+ * rather than looking like it came from somewhere else.
+ */
+function textToHtml(text: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const paras = text
+    .split(/\n{2,}/)
+    .map((p) => `<p>${esc(p.trim()).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+  return `<div>${paras}</div>`;
+}
+
 function toRecipientList(list: DraftRecipient[] | undefined) {
   return (list ?? []).map((r) => ({
     emailAddress: { address: r.email, ...(r.name ? { name: r.name } : {}) },
@@ -346,21 +361,46 @@ export async function createReplyDraft(args: {
   const token = await getAppOnlyToken(tenantId);
   const user = encodeURIComponent(args.mailbox);
 
-  // 1. Graph creates the reply skeleton (recipients + quoted thread).
+  // 1. Graph creates the reply skeleton: recipients, plus the quoted thread
+  //    already formatted the way Outlook formats it.
   const createRes = await fetch(`${GRAPH_BASE}/users/${user}/messages/${encodeURIComponent(args.messageId)}/createReply`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({}),
   });
   if (!createRes.ok) throw new GraphMailError(createRes.status, await createRes.text());
-  const draft = (await createRes.json()) as { id?: string; webLink?: string };
+  const draft = (await createRes.json()) as {
+    id?: string;
+    webLink?: string;
+    body?: { content?: string; contentType?: string };
+  };
   if (!draft.id) throw new GraphMailError(createRes.status, "Graph returned no draft id");
 
-  // 2. Set our body on it.
+  // 2. PREPEND our text above the quoted thread rather than replacing the body.
+  //    A plain PATCH overwrites what Graph seeded, so the reply would go out
+  //    with no quoted history, which is not how a reply is supposed to read and
+  //    strips the context the customer needs. Verified against a live mailbox:
+  //    createReply seeds the quoted thread and no signature.
+  const seeded = draft.body?.content ?? "";
+  const seededIsHtml = (draft.body?.contentType ?? "").toLowerCase() === "html" || /<[a-z]/i.test(seeded);
+  const wantsHtml = (args.contentType ?? "Text") === "HTML";
+
+  let content: string;
+  let contentType: "Text" | "HTML";
+  if (seeded && (seededIsHtml || wantsHtml)) {
+    // Match Outlook's own format so the two halves render as one message.
+    const asHtml = wantsHtml ? args.body : textToHtml(args.body);
+    content = `${asHtml}${seeded}`;
+    contentType = "HTML";
+  } else {
+    content = seeded ? `${args.body}\n\n${seeded}` : args.body;
+    contentType = args.contentType ?? "Text";
+  }
+
   const patchRes = await fetch(`${GRAPH_BASE}/users/${user}/messages/${encodeURIComponent(draft.id)}`, {
     method: "PATCH",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ body: { contentType: args.contentType ?? "Text", content: args.body } }),
+    body: JSON.stringify({ body: { contentType, content } }),
   });
   if (!patchRes.ok) throw new GraphMailError(patchRes.status, await patchRes.text());
 
