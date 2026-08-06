@@ -66,6 +66,11 @@ export type MeetingCoverage = {
   isNoShow: boolean;
   briefing: CoverageStep;
   recap: CoverageStep;
+  /**
+   * Customer follow-up written into the rep's Outlook drafts. Opportunity calls
+   * only, and never sent: DealRipe holds Mail.ReadWrite and not Mail.Send.
+   */
+  followupDraft: CoverageStep;
   writeback: WritebackCoverage;
   /** No-show follow-up drafted to the rep. Only meaningful when isNoShow. */
   noShowFollowup: CoverageStep;
@@ -341,7 +346,10 @@ export async function getMeetingCoverage(
   // dry-run archive (format refresh or re-ingest) has a null provider_id and was
   // never sent to the rep, so it must not inflate the send count into a "sent
   // twice" duplicate.
-  const sentByCall = new Map<string, { briefing: string[]; recap: string[]; noShow: string[] }>();
+  const sentByCall = new Map<
+    string,
+    { briefing: string[]; recap: string[]; noShow: string[]; followup: string[] }
+  >();
   for (const m of (sentRes.data ?? []) as Array<{
     deal_id: string | null;
     call_id: string | null;
@@ -349,13 +357,24 @@ export async function getMeetingCoverage(
     sent_at: string;
     provider_id: string | null;
   }>) {
-    if (m.kind !== "briefing" && m.kind !== "recap" && m.kind !== "no_show_draft") continue;
-    if (!m.provider_id) continue; // archived but not emailed
+    if (
+      m.kind !== "briefing" &&
+      m.kind !== "recap" &&
+      m.kind !== "no_show_draft" &&
+      m.kind !== "followup_draft"
+    )
+      continue;
+    // provider_id proves an email actually went out, which is the right test
+    // for anything we send. A follow-up draft is never emailed: it is written
+    // into the rep's Outlook drafts, so it has no provider id by design and
+    // this guard would discard every one of them.
+    if (m.kind !== "followup_draft" && !m.provider_id) continue; // archived but not emailed
     const cid = attribute(m.deal_id, m.call_id, m.sent_at);
     if (!cid) continue;
-    const g = sentByCall.get(cid) ?? { briefing: [], recap: [], noShow: [] };
+    const g = sentByCall.get(cid) ?? { briefing: [], recap: [], noShow: [], followup: [] };
     if (m.kind === "briefing") g.briefing.push(m.sent_at);
     else if (m.kind === "recap") g.recap.push(m.sent_at);
+    else if (m.kind === "followup_draft") g.followup.push(m.sent_at);
     else g.noShow.push(m.sent_at);
     sentByCall.set(cid, g);
   }
@@ -428,7 +447,7 @@ export async function getMeetingCoverage(
     const hasDeal = !!c.deal_id;
     const rolldogLinked = c.deal_id ? rolldogLinkedByDeal.get(c.deal_id) ?? false : false;
 
-    const sent = sentByCall.get(c.id) ?? { briefing: [], recap: [], noShow: [] };
+    const sent = sentByCall.get(c.id) ?? { briefing: [], recap: [], noShow: [], followup: [] };
 
     // Briefing + recap apply to every customer-facing deal meeting DealRipe
     // handles (discovery, demo, follow-up, existing-customer). They do NOT apply
@@ -441,6 +460,12 @@ export async function getMeetingCoverage(
     // to a no-show (no conversation to recap).
     const briefing = dealMeeting || (isNoShow && hasDeal) ? scoreBriefing(sent.briefing, start, now) : notExpected();
     const recap = dealMeeting && !isNoShow ? scoreAfter(sent.recap, end, now) : notExpected();
+    // The customer follow-up draft is narrower than the recap: it only applies
+    // to opportunity calls, since an existing-customer check-in does not want a
+    // sales follow-up sitting in the rep's drafts. Same gate as
+    // autoDraftFollowUpForCall, so the view cannot claim a step is missing that
+    // the pipeline was never going to run.
+    const followupDraft = isOpp && !isNoShow ? scoreAfter(sent.followup, end, now) : notExpected();
 
     // No-show steps: the follow-up draft to the rep, and the Rolldog no-show log
     // (only expected when the deal is Rolldog-linked). Both fire right after the
@@ -517,6 +542,7 @@ export async function getMeetingCoverage(
       flag(noShowLog, "No-show log");
     } else {
       flag(recap, "Recap");
+      flag(followupDraft, "Follow-up draft");
       flag(writeback, "Write-back");
       if (writeback.missed.length > 0) {
         issues.push(`Write-back missed ${writeback.missed.map(subResourceLabel).join(", ")}`);
@@ -538,6 +564,7 @@ export async function getMeetingCoverage(
       isNoShow,
       briefing,
       recap,
+      followupDraft,
       writeback,
       noShowFollowup,
       noShowLog,

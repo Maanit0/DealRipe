@@ -73,6 +73,9 @@ function Dashboard({ tenant, weekParam, repParam }: { tenant: string; weekParam:
   const repCommit = scoped.reduce((s, f) => s + (f.amountUsd * f.repProbPct) / 100, 0);
   const drW = scoped.reduce((s, f) => s + (f.amountUsd * f.drProbPct) / 100, 0);
   const recoverable = scoped.reduce((s, f) => s + f.recoverableUsd, 0);
+  // Doors only render for tenants that sell on units (property management).
+  const hasDoors = scoped.some((f) => typeof f.doors === "number" && f.doors > 0);
+  const totalDoors = scoped.reduce((s, f) => s + (f.doors ?? 0), 0);
 
   // Deal table: ranked by recoverable dollars; healthy/zero-recoverable sink.
   const ranked = [...scoped].sort((a, b) => b.recoverableUsd - a.recoverableUsd || b.amountUsd - a.amountUsd);
@@ -118,7 +121,13 @@ function Dashboard({ tenant, weekParam, repParam }: { tenant: string; weekParam:
       {/* Headline */}
       <div className="bg-white rounded-xl2 shadow-card border border-line px-6 py-5">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-          <Metric label={repFilter ? `${repFilter.split(" ")[0]}'s pipeline` : "Open pipeline"} value={moneyK(pipeline)} sub={`${scoped.length} opportunities`} />
+          {/* Doors ride along in the pipeline tile rather than taking a fifth
+              column: Alisha's sheet totals both, but dollars stay the headline. */}
+          <Metric
+            label={repFilter ? `${repFilter.split(" ")[0]}'s pipeline` : "Open pipeline"}
+            value={moneyK(pipeline)}
+            sub={hasDoors ? `${scoped.length} opportunities · ${totalDoors.toLocaleString()} doors` : `${scoped.length} opportunities`}
+          />
           <Metric label="Rep commit (weighted)" value={moneyK(Math.round(repCommit))} sub={repFilter ? `What ${repFilter.split(" ")[0]} is committing` : "What the team is committing"} />
           <Metric label="DealRipe forecast" value={moneyK(Math.round(drW))} sub="Grounded in the calls" accent />
           <Metric label="Upside if fixed (weighted)" value={`+${moneyK(recoverable)}`} sub={`across ${atRiskCount} deals · drafts ready`} danger />
@@ -244,6 +253,9 @@ function Dashboard({ tenant, weekParam, repParam }: { tenant: string; weekParam:
                 <Th>Rep</Th>
                 <Th>Stage</Th>
                 <Th right>Amount</Th>
+                {/* Property management forecasts on doors as well as dollars.
+                    Rendered only when the tenant's deals carry it. */}
+                {hasDoors ? <Th right>Doors</Th> : null}
                 <Th right>Rep</Th>
                 <Th right>DealRipe</Th>
                 <Th right>Upside if fixed</Th>
@@ -253,7 +265,7 @@ function Dashboard({ tenant, weekParam, repParam }: { tenant: string; weekParam:
             </thead>
             <tbody className="divide-y divide-line">
               {top.map((f) => (
-                <Row key={f.dealId} f={f} tenant={tenant} alertId={alertByDeal.get(f.dealId) ?? null} stageLabels={ds.stageLabels} />
+                <Row key={f.dealId} f={f} tenant={tenant} alertId={alertByDeal.get(f.dealId) ?? null} stageLabels={ds.stageLabels} showDoors={hasDoors} />
               ))}
             </tbody>
           </table>
@@ -289,7 +301,7 @@ function Dashboard({ tenant, weekParam, repParam }: { tenant: string; weekParam:
   );
 }
 
-function Row({ f, tenant, alertId, stageLabels }: { f: DealForecast; tenant: string; alertId: string | null; stageLabels: Record<string, string> }) {
+function Row({ f, tenant, alertId, stageLabels, showDoors }: { f: DealForecast; tenant: string; alertId: string | null; stageLabels: Record<string, string>; showDoors?: boolean }) {
   const b = BUCKET[f.bucket];
   const softer = f.drProbPct < f.repProbPct;
   return (
@@ -298,6 +310,11 @@ function Row({ f, tenant, alertId, stageLabels }: { f: DealForecast; tenant: str
       <td className="px-4 py-3 text-[13px] text-muted whitespace-nowrap">{f.rep}</td>
       <td className="px-4 py-3 text-[13px] text-ink whitespace-nowrap">{stageLabels[f.stageKey] ?? f.stageKey}</td>
       <td className="px-4 py-3 text-[13.5px] text-ink text-right font-medium">{moneyK(f.amountUsd)}</td>
+      {showDoors ? (
+        <td className="px-4 py-3 text-[13.5px] text-ink text-right font-medium">
+          {typeof f.doors === "number" ? f.doors.toLocaleString() : "—"}
+        </td>
+      ) : null}
       <td className="px-4 py-3 text-[13px] text-muted text-right">{f.repProbPct}%</td>
       <td className="px-4 py-3 text-right">
         <details className="inline-block text-left">

@@ -9,7 +9,13 @@
 import { rolldogOppIdForDeal } from "./pilot-config";
 import { supabaseAdmin } from "./supabase";
 
-export type ActivityKind = "briefing" | "recap" | "no_show_draft" | "digest" | "rolldog_write";
+export type ActivityKind =
+  | "briefing"
+  | "recap"
+  | "no_show_draft"
+  | "followup_draft"
+  | "digest"
+  | "rolldog_write";
 
 export type ActivityEntry = {
   id: string;
@@ -33,6 +39,7 @@ const KIND_TITLE: Record<Exclude<ActivityKind, "rolldog_write">, string> = {
   briefing: "Pre-call briefing sent",
   recap: "Post-call recap sent",
   no_show_draft: "No-show follow-up drafted",
+  followup_draft: "Follow-up email drafted",
   digest: "Weekly digest sent",
 };
 
@@ -134,7 +141,10 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     sent_at: string;
     body_html: string | null;
   }>) {
-    const kind = (["briefing", "recap", "no_show_draft", "digest"].includes(m.kind) ? m.kind : "recap") as Exclude<ActivityKind, "rolldog_write">;
+    // Unknown kinds fall back to "recap", so any new kind MUST be listed here
+    // or it silently shows up in the log as a recap, which is worse than not
+    // showing at all: the operator inspects the wrong thing and trusts it.
+    const kind = (["briefing", "recap", "no_show_draft", "followup_draft", "digest"].includes(m.kind) ? m.kind : "recap") as Exclude<ActivityKind, "rolldog_write">;
     // Prefer the call_id stored on the message (hard link, set on every recap /
     // briefing / no-show draft going forward). Fall back to nearest-in-time only
     // for legacy rows written before call_id was stored.

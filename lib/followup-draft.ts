@@ -26,6 +26,8 @@
 
 import { getAnthropicClient, getAnthropicModel } from "./anthropic";
 import { createReplyDraft, createDraft, domainOf, listMailboxMessages, type MailMessage } from "./graph-mail";
+import { repName } from "./display-names";
+import { listMeetingsBetween } from "./microsoft-graph";
 import type { PostCallSummary } from "./post-call-summary";
 
 const GRAPH_TENANT = "magaya.com";
@@ -51,6 +53,8 @@ export type FollowUpDraftInput = {
   attendees?: string;
   /** ISO date of the call. */
   callDate?: string | null;
+  /** microsoft_connections id for the rep, so times come from their calendar. */
+  calendarConnectionId?: string | null;
 };
 
 export type FollowUpDraft = {
@@ -114,6 +118,134 @@ export async function findCustomerThread(
   return best?.newest ?? null;
 }
 
+// ====================================================================
+// Meeting slots (real availability, not invented)
+// ====================================================================
+
+const SLOT_START_HOUR_ET = 9;
+const SLOT_END_HOUR_ET = 16; // last start, so a 45-min call ends inside the day
+const SLOT_LEAD_DAYS = 3; // never propose tomorrow; give the customer room
+const SLOT_HORIZON_DAYS = 12;
+const MEETING_MINUTES = 45;
+
+export type ProposedSlot = { startsAt: Date; label: string };
+
+/**
+ * An already-booked meeting with this customer, if there is one.
+ *
+ * Asking a customer to book a call they have already booked is the single most
+ * embarrassing thing this feature can do. It was Juan's first reaction to his
+ * first draft: "I thought I already agreed to a time with him." We have the
+ * calendar, so there is no excuse for guessing.
+ */
+export async function existingMeetingWith(
+  connectionId: string,
+  customerDomains: string[],
+  timeZone = "America/New_York",
+): Promise<{ label: string; subject: string | null } | null> {
+  if (customerDomains.length === 0) return null;
+  const wanted = new Set(customerDomains.map((d) => d.toLowerCase()));
+  try {
+    const events = await listMeetingsBetween(
+      connectionId,
+      new Date(),
+      new Date(Date.now() + SLOT_HORIZON_DAYS * 86_400_000),
+    );
+    for (const e of events) {
+      if (e.isCancelled || !e.start) continue;
+      const involved = e.attendees.some((a) => wanted.has(domainOf(a.email) ?? ""));
+      if (!involved) continue;
+      const iso = e.start.dateTime.endsWith("Z") ? e.start.dateTime : `${e.start.dateTime}Z`;
+      const at = new Date(Date.parse(iso));
+      if (!Number.isFinite(at.getTime())) continue;
+      return {
+        subject: e.subject,
+        label: at.toLocaleString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone,
+        }),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Slots the rep is genuinely free, read from their calendar.
+ *
+ * The model used to invent a time, which is how Juan got a draft proposing
+ * 10:00 and asked "why 10 a.m." A proposed time the rep cannot honour is worse
+ * than proposing none: the customer accepts and the rep has to walk it back.
+ *
+ * Deliberately conservative. Business hours only, never within the next few
+ * days, one option per day so the choices span the week rather than clustering,
+ * and any overlap at all disqualifies a slot. A boring Tuesday morning that is
+ * actually free beats a clever one that collides.
+ */
+export async function freeSlots(
+  connectionId: string,
+  opts: { timeZone?: string; count?: number } = {},
+): Promise<ProposedSlot[]> {
+  const want = opts.count ?? 3;
+  const now = Date.now();
+  const from = new Date(now + SLOT_LEAD_DAYS * 86_400_000);
+  const to = new Date(now + SLOT_HORIZON_DAYS * 86_400_000);
+
+  let busy: Array<{ start: number; end: number }>;
+  try {
+    const events = await listMeetingsBetween(connectionId, from, to);
+    busy = events
+      .filter((e) => !e.isCancelled && e.start && e.end)
+      .map((e) => ({
+        start: Date.parse(e.start!.dateTime.endsWith("Z") ? e.start!.dateTime : `${e.start!.dateTime}Z`),
+        end: Date.parse(e.end!.dateTime.endsWith("Z") ? e.end!.dateTime : `${e.end!.dateTime}Z`),
+      }))
+      .filter((b) => Number.isFinite(b.start) && Number.isFinite(b.end));
+  } catch {
+    // No calendar is a reason to propose nothing, never a reason to guess.
+    return [];
+  }
+
+  const tz = opts.timeZone ?? "America/New_York";
+  const out: ProposedSlot[] = [];
+  const day = new Date(from);
+  day.setUTCHours(0, 0, 0, 0);
+
+  while (day.getTime() < to.getTime() && out.length < want) {
+    const dow = day.getUTCDay();
+    if (dow !== 0 && dow !== 6) {
+      for (let h = SLOT_START_HOUR_ET; h <= SLOT_END_HOUR_ET; h++) {
+        const candidate = new Date(day);
+        candidate.setUTCHours(h + 4, 0, 0, 0); // ET is UTC-4 through October
+        const s = candidate.getTime();
+        const e = s + MEETING_MINUTES * 60_000;
+        if (s < from.getTime()) continue;
+        if (busy.some((b) => s < b.end && e > b.start)) continue;
+        out.push({
+          startsAt: candidate,
+          label: candidate.toLocaleString("en-US", {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+            timeZone: tz,
+          }),
+        });
+        break; // one per day, so options span the week
+      }
+    }
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  return out;
+}
+
 /**
  * The rep's own recent sent messages, for tone.
  *
@@ -144,6 +276,15 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
   return pool.slice(0, VOICE_SAMPLES).map((m) => `Subject: ${m.subject}\n${m.preview}`);
 }
 
+/**
+ * The rep's first name for the sign-off. Deliberately just the name: no title
+ * or phone number, because inventing either is worse than omitting both and
+ * the rep's full block is already configured in Outlook.
+ */
+function repFirstName(mailbox: string): string {
+  return repName(mailbox);
+}
+
 /** Calendar and notification senders that are external but not customers. */
 function isFreeMailNoise(domain: string): boolean {
   return /^(calendar|notifications?|noreply|no-reply)\./i.test(domain);
@@ -162,10 +303,17 @@ Non-negotiable rules:
 3. Short. Under 180 words. A rep will not send an essay and a buyer will not read one.
 4. No em-dashes, ever. Use commas or full stops. Em-dashes read as AI-written to this customer.
 5. No marketing language, no adjectives about your own product, no "excited to", no "circling back", no "just following up".
-6. If a gate is genuinely open (no budget confirmed, economic buyer absent, no next meeting), work ONE of them into the ask naturally as a question. Never list gaps at the customer.
+6. If a gate is genuinely open (economic buyer absent, no decision process mapped, no next meeting), work ONE of them in as a soft closing question. Never list gaps at the customer.
+6a. ASK ABOUT PROCESS, NEVER ABOUT MONEY, in writing. "Is there a formal approval process we should plan around?" is right. "Is there a budget range set?" is wrong: in an email a money question reads as qualifying them rather than helping them, it invites a defensive or evasive answer, and it is the line most likely to get forwarded to procurement. Budget belongs on a call where the rep can read the reaction. Process questions surface the same authority and timing information without the edge, and they give the customer something easy and flattering to answer.
 7. Match the sample voice for greeting, sign-off, sentence length and formality. If the samples are terse, be terse.
 8. Any proposed time carries a TIMEZONE. "Thursday, August 13th at 10:00 AM ET", never a bare "10:00 AM". These customers span Canada, Latin America, Europe and Asia, and an unqualified time is how a booked meeting turns into a no-show. When the customer's own timezone is given below, state the time in THEIRS, then the rep's in brackets: "10:00 AM ET (9:00 AM CT my time)". Writing a time only in the seller's zone quietly makes the buyer do the conversion.
-9. NEVER claim a file is attached. You cannot attach anything, and the rep may send without noticing. Write "I am sending over the datasheet" or "the revised proposal is on its way", never "attached is" or "I have attached" or "please find attached". Name the file in attachmentsToAdd instead; the rep attaches it.
+9. Distinguish what is IN THIS EMAIL from what will be REVIEWED at the meeting. A recording, a datasheet or a video is in this email: write "here's the recording", present tense. A proposal, pricing or an implementation estimate is walked through live, because emailing it ahead removes the reason for the meeting and lets the buyer evaluate it alone. Unless the transcript shows the rep explicitly promising to email a proposal ahead, do NOT say it is coming. Do not lump them together: "the proposal, recording and estimate are on their way" is wrong when only the recording is going now.
+10. FORMAT AS SHORT STANDALONE LINES, one thought each, with a blank line between. Never a dense paragraph. A rep reads this on a phone between calls and a wall of text gets rewritten. Roughly: greeting, one line on what is in the email, one line with the dated ask, one optional line with the softer question.
+10a. STOP AFTER THE LAST CONTENT LINE. Do NOT write a closing line, a sign-off, a name, a title or a phone number. The rep's signature is appended automatically and is not yours to write. End the body on the final sentence of substance.
+11. For anything going out WITH this email, use present tense and stay neutral about the mechanism: "Here's the recording from Friday's session." That stays true once the rep attaches it.
+   Do NOT write "please find attached" or "I have attached": nothing is attached when the rep opens the draft, and it reads as a mistake.
+   Do NOT write "is on its way", "are on their way" or "I'll send it over" for something included in THIS email either. Those describe a separate, later email and leave the customer waiting for one that never arrives.
+   Always name the file in attachmentsToAdd so the rep knows what to attach before sending.
 
 Return JSON only:
 {"subject": string, "body": string, "attachmentsToAdd": string[]}
@@ -188,7 +336,13 @@ function isPreDemoStage(stageKey: string | null | undefined): boolean {
   return Number(m[1]) < 3;
 }
 
-function buildUserMessage(input: FollowUpDraftInput, samples: string[], hasThread: boolean): string {
+function buildUserMessage(
+  input: FollowUpDraftInput,
+  samples: string[],
+  hasThread: boolean,
+  slots: ProposedSlot[],
+  booked: { label: string; subject: string | null } | null,
+): string {
   const s = input.summary;
   const open = s.stillOpen.slice(0, 4).map((f) => `- ${f.label ?? f.fieldKey}`).join("\n");
   const today = new Date().toISOString().slice(0, 10);
@@ -208,15 +362,24 @@ function buildUserMessage(input: FollowUpDraftInput, samples: string[], hasThrea
     s.recap,
     ``,
     s.nextStepCommitment
-      ? `THE COMMITMENT ALREADY AGREED (build the dated ask around this, do not invent a different one):\n${s.nextStepCommitment}`
+      ? `THE COMMITMENT ALREADY AGREED (build the dated ask around this, do not invent a different one):\n${s.nextStepCommitment}\nCAUTION: this line is a summary of the rep's intent, not a list of what goes in this email. If it names a proposal, pricing or an estimate, those are what the MEETING is for. Rule 9 overrides this wording.`
       : `NO COMMITMENT WAS AGREED ON THE CALL. The ask should secure one.`,
     // Ranked deliberately. A date on the calendar outranks a document or a
     // signature, because the rep's own words are that a booked date is a
     // commitment while an action item is only an intention. This is the ask
     // most likely to be missed, so it is stated first and unambiguously.
     s.shouldBookNextMeeting
-      ? `\nNOTHING IS ON THE CALENDAR and this deal should have a date. Propose ONE specific date and time as the ask, even if the immediate step is asynchronous. "I will send X, and can we hold Thursday the 14th to go through it" is stronger than sending X and waiting. This outranks asking for a document or a signature; fold those in around it rather than leading with them.`
+      ? `\nNOTHING IS ON THE CALENDAR and this deal should have a date. Propose ONE specific date and time as the ask, even if the immediate step is asynchronous. This outranks asking for a document or a signature; fold those in around it rather than leading with them.`
       : "",
+    // Times come from the rep's real calendar. Inventing one produced a draft
+    // proposing a slot the rep was not free for, which he immediately spotted.
+    // A meeting already on the calendar outranks everything: never ask a
+    // customer to book something they have already booked.
+    booked
+      ? `\nA MEETING WITH THIS CUSTOMER IS ALREADY ON THE CALENDAR: ${booked.label}${booked.subject ? ` ("${booked.subject}")` : ""}.\nDo NOT propose a time and do NOT ask them to book anything. Reference the existing meeting as settled ("ahead of ${booked.label}") and make the ask something else: confirming who will join, or the softer process question.`
+      : slots.length > 0
+        ? `\nPROPOSE ONE OF THESE EXACT TIMES, copied verbatim. They are confirmed free on the rep's calendar:\n${slots.map((s) => `- ${s.label}`).join("\n")}\nUse the FIRST one unless the transcript gives a reason to prefer another. Never invent a different date or time.`
+        : `\nNO CONFIRMED FREE SLOTS ARE AVAILABLE. Do NOT invent a specific time. Ask them to propose one, or offer a named week ("early next week").`,
     s.followUpMeetingExpected && s.noFollowupBooked
       ? `\nA next meeting was agreed on the call and could be booked right now.`
       : "",
@@ -254,9 +417,13 @@ function parseJson(text: string): { subject: string; body: string; attachmentsTo
       // regenerate, so one slip does not cost a whole generation.
       body: o.body
         .replace(/\s*[—–]\s*/g, ", ")
-        .replace(/\b(please find |)attached (is|are)\b/gi, "I am sending over")
-        .replace(/\bI have attached\b/gi, "I am sending over")
-        .replace(/\bplease find attached\b/gi, "I am sending over"),
+        // "Attached is X" -> "Here is X". The earlier rewrite sent these to
+        // "I am sending over", which implied a separate later email for
+        // something that goes in this one. Present tense is the honest form.
+        .replace(/\bplease find attached\b/gi, "here is")
+        .replace(/\bI have attached\b/gi, "Here is")
+        .replace(/\battached (is|are)\b/gi, (_m, v: string) => (v.toLowerCase() === "are" ? "Here are" : "Here is"))
+        .replace(/\b(is|are) on (its|their) way to\b/gi, (_m, v: string) => (v.toLowerCase() === "are" ? "are here for" : "is here for")),
       attachmentsToAdd: Array.isArray(o.attachmentsToAdd)
         ? o.attachmentsToAdd.filter((a): a is string => typeof a === "string")
         : [],
@@ -270,21 +437,52 @@ function parseJson(text: string): { subject: string; body: string; attachmentsTo
 export async function generateFollowUpDraft(
   input: FollowUpDraftInput,
 ): Promise<FollowUpDraft | null> {
-  const [thread, samples] = await Promise.all([
+  const [thread, samples, slots, booked] = await Promise.all([
     findCustomerThread(input.mailbox, input.customerDomains),
     voiceSamples(input.mailbox).catch(() => [] as string[]),
+    input.calendarConnectionId
+      ? freeSlots(input.calendarConnectionId, { count: 3 }).catch(() => [] as ProposedSlot[])
+      : Promise.resolve([] as ProposedSlot[]),
+    input.calendarConnectionId
+      ? existingMeetingWith(input.calendarConnectionId, input.customerDomains).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   const resp = await getAnthropicClient().messages.create({
     model: getAnthropicModel(),
-    max_tokens: 1200,
+    // Generous headroom. A truncated draft is the one failure mode a rep cannot
+    // work around: they see an email cut off mid-sentence and stop trusting it.
+    max_tokens: 3000,
     temperature: 0.3, // a shade of variation so it reads human, not templated
     system: SYSTEM,
-    messages: [{ role: "user", content: buildUserMessage(input, samples, Boolean(thread)) }],
+    messages: [{ role: "user", content: buildUserMessage(input, samples, Boolean(thread), slots, booked) }],
   });
   const block = resp.content.find((b) => b.type === "text");
-  const parsed = parseJson(block && "text" in block ? block.text : "");
+  const raw = block && "text" in block ? block.text : "";
+  if (process.env.DRAFT_DEBUG === "1") {
+    console.log(`\n----- RAW MODEL OUTPUT (${raw.length} chars) -----\n${raw}\n----- END RAW -----\n`);
+  }
+  const parsed = parseJson(raw);
   if (!parsed) return null;
+
+  // Reject a body that stops mid-thought. Anthropic's stop_reason tells us when
+  // the model ran out of room, and a body not ending in terminal punctuation or
+  // a sign-off is the same failure arriving quietly. Returning nothing is right:
+  // no draft is recoverable, half a draft in a rep's outbox is not.
+  // Append the sign-off ourselves. The model kept abandoning it mid-word
+  // ("Ha" for "Happy to..."), and a rep's sign-off is fixed text anyway: not
+  // worth a generation, and worth getting exactly right.
+  parsed.body = `${parsed.body.trimEnd()}\n\nBest regards,\n${repFirstName(input.mailbox)}`;
+
+  const tail = parsed.body.trimEnd().slice(-1);
+  const looksComplete = /[.!?"')\dA-Za-z]/.test(tail);
+  if (resp.stop_reason === "max_tokens" || !looksComplete) {
+    console.warn(
+      `[followup-draft] discarding truncated draft for ${input.account} ` +
+        `(stop_reason=${resp.stop_reason}, ends "${parsed.body.trimEnd().slice(-24)}")`,
+    );
+    return null;
+  }
 
   // On a reply, Graph fills recipients from the thread. Only a fresh draft
   // needs them, and then only customer-side addresses.
@@ -394,6 +592,13 @@ export async function autoDraftFollowUpForCall(args: {
     return { created: false, reason: "follow-up already drafted for this call" };
   }
 
+  // Same calendar the briefing sync reads, so proposed times are real openings.
+  const conn = await db
+    .from("microsoft_connections")
+    .select("id")
+    .eq("user_principal_name", mailbox)
+    .maybeSingle();
+
   const res = await createFollowUpDraft({
     mailbox,
     customerDomains: customerDomainsFor(customerEmails),
@@ -402,6 +607,7 @@ export async function autoDraftFollowUpForCall(args: {
     summary: args.summary,
     attendees: args.attendees,
     callDate: args.callDate ?? null,
+    calendarConnectionId: conn.data?.id ?? null,
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
 
@@ -414,11 +620,37 @@ export async function autoDraftFollowUpForCall(args: {
     kind: "followup_draft",
     toEmail: mailbox,
     subject: res.draft.subject,
-    html: "",
+    // Real HTML, not an empty string: the Activity log renders body_html in the
+    // expandable detail, so an empty body means the row cannot be inspected.
+    // Inspecting exactly what was put in a rep's mailbox is the whole point.
+    html: draftArchiveHtml(res.draft),
     text: res.draft.body,
     providerId: null,
   });
   return { created: true };
+}
+
+/**
+ * The archived copy shown in the Activity log. Records what the rep will see,
+ * including whether it went onto a thread and which files they still need to
+ * attach, since those are the two things most likely to be wrong.
+ */
+function draftArchiveHtml(draft: FollowUpDraft): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const meta = draft.replyToMessageId
+    ? "Reply on the existing customer thread"
+    : `New email to ${draft.to.join(", ") || "(no recipients resolved)"}`;
+  const attach = draft.attachmentsToAdd.length
+    ? `<p style="margin:12px 0 0;color:#b45309;font-size:12px;">Rep must attach: ${esc(draft.attachmentsToAdd.join(", "))}</p>`
+    : "";
+  return [
+    `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:13px;color:#0F172A;">`,
+    `<p style="margin:0 0 4px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Draft, not sent</p>`,
+    `<p style="margin:0 0 12px;color:#334155;font-size:12px;">${esc(meta)}</p>`,
+    `<div style="white-space:pre-wrap;">${esc(draft.body)}</div>`,
+    attach,
+    `</div>`,
+  ].join("");
 }
 
 /** Deal domains for thread lookup, excluding anything internal. */

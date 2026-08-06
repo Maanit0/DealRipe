@@ -40,6 +40,12 @@ export function generateVolumeForecasts(args: {
   stages: ReadonlyArray<{ key: string; sharePct: number; baselinePct: number; label: string }>;
   amountRange: [number, number];
   idPrefix: string;
+  /**
+   * Average revenue per unit. Set it and every generated deal carries a doors
+   * count derived from its amount, so the Doors column totals coherently
+   * against CARR instead of being decorative. Property management tenants only.
+   */
+  carrPerDoor?: number;
 }): DealForecast[] {
   const r = rng(args.seed);
   const out: DealForecast[] = [];
@@ -93,6 +99,11 @@ export function generateVolumeForecasts(args: {
       rep,
       stageKey: stage.key,
       amountUsd: amount,
+      // Doors derived from amount so the two columns reconcile. Jitter keeps
+      // it from looking like a formula: real portfolios vary in rate per door.
+      ...(args.carrPerDoor
+        ? { doors: Math.max(12, Math.round((amount / args.carrPerDoor) * (0.82 + r() * 0.36))) }
+        : {}),
       repProbPct,
       repCloseDate: closeIso,
       baselinePct: stage.baselinePct,

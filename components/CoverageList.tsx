@@ -131,7 +131,13 @@ export function CoverageList({
               </span>
             </div>
 
-            <div className="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* No-show rows keep three columns; a completed call now has four,
+                since the customer follow-up draft is its own step. */}
+            <div
+              className={`px-5 py-3.5 grid grid-cols-1 gap-3 ${
+                m.isNoShow ? "sm:grid-cols-3" : "sm:grid-cols-2 lg:grid-cols-4"
+              }`}
+            >
               <StepChip label="Briefing" step={m.briefing} />
               {m.isNoShow ? (
                 <>
@@ -141,6 +147,7 @@ export function CoverageList({
               ) : (
                 <>
                   <StepChip label="Recap" step={m.recap} />
+                  <StepChip label="Follow-up draft" step={m.followupDraft} />
                   <StepChip label={`${crmName} write-back`} step={m.writeback} />
                 </>
               )}

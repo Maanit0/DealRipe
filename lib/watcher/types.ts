@@ -133,6 +133,13 @@ export type DealForecast = {
   rep: string;
   stageKey: string;
   amountUsd: number;
+  /**
+   * Units under management on this deal. Property management sells on doors,
+   * not just dollars: Alisha's own forecast sheet carries a Doors column next
+   * to CARR and totals it per rep, so a forecast without it is not the sheet
+   * she actually runs. Omit for tenants where it does not apply.
+   */
+  doors?: number;
   repProbPct: number;
   repCloseDate: string;
   /** The ledger: baseline first, then each adjustment, sum = drProbPct. */

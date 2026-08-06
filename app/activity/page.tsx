@@ -16,6 +16,7 @@ const KIND_META: Record<ActivityKind, { label: string; cls: string }> = {
   briefing: { label: "Briefing", cls: "bg-accent/10 text-accent" },
   recap: { label: "Recap", cls: "bg-ink/[0.06] text-ink" },
   no_show_draft: { label: "No-show draft", cls: "bg-warn/10 text-warn" },
+  followup_draft: { label: "Follow-up draft", cls: "bg-warn/10 text-warn" },
   digest: { label: "Digest", cls: "bg-ink/[0.06] text-muted" },
   rolldog_write: { label: "Rolldog", cls: "bg-accent/10 text-accent" },
 };
@@ -195,6 +196,7 @@ function RawLog({
     ["briefing", "Briefings"],
     ["recap", "Recaps"],
     ["rolldog_write", "Rolldog"],
+    ["followup_draft", "Follow-up drafts"],
     ["no_show_draft", "No-show"],
     ["digest", "Digests"],
   ];

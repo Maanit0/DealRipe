@@ -103,6 +103,15 @@ async function main(): Promise<void> {
   console.log(`  should book a date:   ${summary.shouldBookNextMeeting}`);
   console.log(`  gaps still open:      ${summary.stillOpen.length}\n`);
 
+  // The rep's calendar connection, so proposed times are real openings rather
+  // than invented ones.
+  const conn = await db
+    .from("microsoft_connections")
+    .select("id")
+    .eq("user_principal_name", mailbox)
+    .maybeSingle();
+  if (!conn.data) console.log(`  no calendar connection for ${mailbox}: times will not be proposed\n`);
+
   const input = {
     mailbox,
     customerDomains,
@@ -111,6 +120,7 @@ async function main(): Promise<void> {
     summary,
     attendees: ctx.attendees,
     callDate: call.data.scheduled_start ?? call.data.call_date,
+    calendarConnectionId: conn.data?.id ?? null,
   };
 
   if (!apply) {
