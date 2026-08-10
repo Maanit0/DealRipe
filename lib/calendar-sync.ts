@@ -375,7 +375,7 @@ async function processEvent(
       dealExternalId,
       resolved.domain,
       opts.repEmail,
-      { address: resolved.address, displayName, isFreeMail: resolved.isFreeMail },
+      { address: resolved.address, displayName, isFreeMail: resolved.isFreeMail, subject: ev.subject },
     );
     if (r.created) {
       counts.autoCreated += 1;
@@ -721,7 +721,7 @@ async function ensureAutoDeal(
   externalId: string,
   domain: string,
   repEmail: string | null,
-  who: { address: string; displayName: string | null; isFreeMail: boolean },
+  who: { address: string; displayName: string | null; isFreeMail: boolean; subject?: string | null },
 ): Promise<{ created: boolean }> {
   const db = supabaseAdmin();
   const existing = await db
@@ -740,7 +740,7 @@ async function ensureAutoDeal(
   const ins = await db.from("deals").insert({
     tenant_id: tenantId,
     external_id: externalId,
-    account: accountFromAddress(who.address, who.displayName),
+    account: accountFromAddress(who.address, who.displayName, who.subject),
     stage_key: "SQL0",
     framework_id: frameworkId,
     rep_email: repEmail,

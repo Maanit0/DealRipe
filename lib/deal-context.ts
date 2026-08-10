@@ -18,7 +18,8 @@ import { attendeesFrom } from "./generate-briefing";
 import { deriveDealState, inferStageKey, type DealStateGap } from "./deal-state";
 import type { ExtractionMap } from "./briefing-magaya";
 import { getFrameworkForDeal, type Framework } from "./framework";
-import { rolldogOppIdForDeal } from "./pilot-config";
+import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
+import { accountContextLines, getAccountContextByDomain } from "./salesforce-context";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import type { ExtractionResult } from "./scotsman";
 import type { Contact } from "./seed-data";
@@ -51,6 +52,16 @@ export type DealContext = {
   contacts: Contact[];
   /** Most recent captured call date (real DealRipe activity). */
   lastCallDate: string | null;
+  /**
+   * Salesforce Sales Development context, rendered for the briefing prompt.
+   *
+   * Only fetched for deals with NO Rolldog opportunity, which is exactly the
+   * case where DealRipe has little or nothing of its own: a first discovery
+   * call booked by a BDR. Alexandra has 19 counterparties in that state this
+   * week. Null once a deal is in Rolldog, because by then the calls are the
+   * better source and the BDR's pre-call notes are stale.
+   */
+  crmContext: string | null;
 };
 
 export async function getDealContext(
@@ -112,6 +123,26 @@ export async function getDealContext(
     /* best-effort */
   }
 
+  // Salesforce BDR context, for deals that have no Rolldog opportunity yet.
+  // Best-effort in the strongest sense: Salesforce being slow or unreachable
+  // must never stop a briefing being generated, it just makes it thinner.
+  let crmContext: string | null = null;
+  if (!opp && externalId?.startsWith("auto:")) {
+    const tail = externalId.slice("auto:".length);
+    const domain = tail.includes("@") ? (tail.split("@")[1] ?? "") : tail;
+    const addresses = tail.includes("@") ? [tail] : [];
+    if (domain && !isFreeMailDomain(domain)) {
+      try {
+        const sf = await getAccountContextByDomain(domain, addresses);
+        if (sf) crmContext = accountContextLines(sf);
+      } catch (err) {
+        console.warn(
+          `[deal-context] salesforce context unavailable for ${domain}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   return {
     dealId,
     externalId,
@@ -130,6 +161,7 @@ export async function getDealContext(
     attendees: attendeesFrom(deal),
     contacts: deal.contacts,
     lastCallDate,
+    crmContext,
   };
 }
 
@@ -142,6 +174,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   attendees: string;
   framework: Framework;
   extraction: ExtractionMap;
+  crmContext?: string;
 } {
   return {
     account: ctx.account,
@@ -150,5 +183,6 @@ export function briefingStateFromContext(ctx: DealContext): {
     attendees: ctx.attendees,
     framework: ctx.framework,
     extraction: ctx.extraction as unknown as ExtractionMap,
+    crmContext: ctx.crmContext ?? undefined,
   };
 }

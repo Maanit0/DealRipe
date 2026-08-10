@@ -140,9 +140,17 @@ async function main(): Promise<void> {
         // unknown is how a real customer ends up in a delete list.
         tier = "review";
         why = `Salesforce lookup FAILED, classification unreliable: ${sfError.slice(0, 60)}`;
+      } else if (all.length === 0) {
+        // Nothing at all: no CRM record, and not a single call ever. There is
+        // no customer here to lose. This case only appeared after cancelling
+        // the bots on an internal meeting deleted its calls, which left the
+        // deal looking ambiguous purely because we had cleaned up the
+        // evidence against it.
+        tier = "debris";
+        why = "no CRM record and no calls at all";
       } else if (subjects.length === 0) {
         tier = "review";
-        why = "no CRM record, no call titles to judge by";
+        why = `no CRM record, ${all.length} call(s) but no titles to judge by`;
       } else {
         const verdicts = await Promise.all(
           subjects.map((s) =>

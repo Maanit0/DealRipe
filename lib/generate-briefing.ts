@@ -67,6 +67,8 @@ export type BriefingState = {
   attendees: string;
   framework: Framework;
   extraction: ExtractionMap;
+  /** Salesforce BDR context, present only on deals with no Rolldog opp. */
+  crmContext?: string;
 };
 
 /**
@@ -110,6 +112,7 @@ export async function generateBriefingFromState(
           extraction,
           currentGaps,
           nextGaps,
+          crmContext: state.crmContext,
           today: new Date().toISOString().slice(0, 10),
         }),
       },

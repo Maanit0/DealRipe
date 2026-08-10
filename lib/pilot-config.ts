@@ -233,10 +233,73 @@ export function accountFromDomain(domain: string): string {
  * useless ("Gmail"), so prefer the attendee's calendar display name, then the
  * local part. "Luke Rousselle" beats "Icloud" in Mark's pipeline view.
  */
-export function accountFromAddress(email: string, displayName?: string | null): string {
+/**
+ * Words that appear in a Magaya meeting subject but are never the customer's
+ * name. Stripped before the company name is read out of the subject.
+ */
+const SUBJECT_NOISE = new Set([
+  "magaya", "call", "meeting", "mtg", "intro", "introduction", "demo", "discovery",
+  "follow", "up", "next", "steps", "review", "checkin", "check", "in", "with",
+  "and", "the", "for", "placeholder", "software", "presentation", "sync", "session",
+  "proposal", "renewal", "contract", "kickoff", "confirmed", "am", "pm", "cst", "est",
+  "pst", "mst", "onboarding", "training", "walk", "through", "platform",
+]);
+
+/**
+ * The company name a meeting subject is about, or null if it reads as noise.
+ *
+ * Consumer-mail prospects are real: small brokers and forwarders run their
+ * businesses on Gmail. What they are not is a company name. Keying the deal by
+ * address is correct, but NAMING it from the sender leaves the CRO reading a
+ * weekly digest full of rows called "Manele Khoury" and "Lucianosolis99", which
+ * tell him nothing about who Gezairi or Cummins are.
+ *
+ * The subject almost always carries the real name, because reps title meetings
+ * after the company: "Magaya Software intro call - Gezairi". Strip our own name
+ * and the scheduling vocabulary, and what remains is the customer.
+ */
+export function accountFromSubject(subject: string | null | undefined): string | null {
+  const raw = (subject ?? "").trim();
+  if (!raw) return null;
+
+  // Prefer the tail after a separator: reps write "<what> - <who>" far more
+  // often than the reverse, and the tail is less polluted by scheduling words.
+  const segments = raw.split(/[-–|:]/).map((s) => s.trim()).filter(Boolean);
+  const candidates = segments.length > 1 ? [segments[segments.length - 1], raw] : [raw];
+
+  for (const candidate of candidates) {
+    const words = candidate
+      .replace(/\(.*?\)/g, " ")
+      .replace(/\d{1,2}[/:]\d{2}(\d{2})?/g, " ")
+      .replace(/[^\p{L}\p{N}&.\s]/gu, " ")
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length > 1 && !SUBJECT_NOISE.has(w.toLowerCase()) && !/^\d+$/.test(w));
+    if (words.length === 0 || words.length > 5) continue;
+    const name = words.join(" ");
+    if (name.length >= 3 && name.length <= 60) return name;
+  }
+  return null;
+}
+
+/**
+ * A human-readable account name for an auto-created deal.
+ *
+ * Company domains name themselves. Consumer addresses do not, so we take the
+ * meeting subject first, then the calendar display name, then the mailbox
+ * local part as a last resort.
+ */
+export function accountFromAddress(
+  email: string,
+  displayName?: string | null,
+  subject?: string | null,
+): string {
   const addr = email.toLowerCase().trim();
   const domain = addr.split("@")[1] ?? "";
   if (!isFreeMailDomain(domain)) return accountFromDomain(domain);
+
+  const fromSubject = accountFromSubject(subject);
+  if (fromSubject) return fromSubject;
 
   const name = (displayName ?? "").trim();
   if (name && !name.includes("@")) return name;
