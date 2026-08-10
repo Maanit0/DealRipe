@@ -28,23 +28,18 @@ import { getStageRequirements, type RolldogStageRequirements } from "./rolldog";
 export type GateState = "confirmed" | "claimed" | "open";
 
 /**
- * What a false actually means on this item.
+ * Four items are phrased as questions rather than tasks ("Is Magaya Selected
+ * Vendor?", "Is Legal Internal?", "Executive Involvement Needed?", "Agreement
+ * on Signature"), marked by no_score false.
  *
- * Most items are tasks: true is done, false is not done yet. Four are questions
- * ("Is Magaya Selected Vendor?", "Is Legal Internal?", "Executive Involvement
- * Needed?", "Agreement on Signature"), and on those false is an ANSWER OF NO,
- * not an unfinished step. The distinction is load-bearing in both directions.
- * GHY carries "Is Magaya Selected Vendor?" false, which does not mean nobody has
- * got round to it: it means the rep has recorded that we are not the chosen
- * vendor, which at SQL3 is the most important fact about the deal. Mark's own
- * screen showed exactly that, rendered as "Magaya is not the Selected Vendor"
- * under Solution, next to an area-of-concern flag.
+ * The distinction is recorded for future use and currently changes nothing,
+ * because it turns out not to help. I briefly read a false on a question as an
+ * answer of NO, which produced a briefing telling a paying customer in
+ * onboarding that Magaya was not their selected vendor. Rolldog stores one
+ * boolean with no third state, so unanswered and answered-no are the same value,
+ * and unanswered is overwhelmingly the common case.
  *
- * Rolldog signals this with no_score, which strictly means the item does not
- * feed the opportunity score. The correlation with question-shaped items is
- * exact across the four, but it is a correlation, so it is used only where a
- * wrong reading is harmless: to withhold a stage inference and to raise a flag
- * a human will check, never to mark a gate satisfied.
+ * Only a positive tick carries information here. Absence carries none.
  */
 export type GateKind = "task" | "question";
 
@@ -70,8 +65,6 @@ export type StageGateSummary = {
   total: number;
   /** Ticked by the rep with no call evidence behind it. The signal Mark wants. */
   claimedNotConfirmed: StageGate[];
-  /** Question-type items answered NO. Not pending work: a recorded negative. */
-  negativeAnswers: StageGate[];
 };
 
 /**
@@ -147,13 +140,15 @@ export function summarizeStageGates(
   // Vendor?" ticked, which is about as wrong as a briefing can be. The ticks
   // themselves establish a floor: a deal cannot be earlier than the latest stage
   // it has ticked work in.
-  // Only completed TASKS establish a floor. A question answered yes is not
-  // evidence the deal reached that stage: "Is Legal Internal?" can be answered
-  // on any call, and letting it push a deal to SQL4 would brief a discovery
-  // conversation as a signature conversation.
-  const tickedTasks = gates.filter((g) => g.ticked && g.kind === "task");
-  const inferredFloor = tickedTasks.length
-    ? tickedTasks
+  //
+  // Any positive tick establishes that floor, questions included. Restricting this
+  // to tasks was an overcorrection: TW Customs has "Is Magaya Selected Vendor?"
+  // and "Agreement on Signature" both set true and nothing else late, so
+  // excluding questions dropped a deal at signature back to no stage at all.
+  // A tick is a deliberate act either way.
+  const ticked = gates.filter((g) => g.ticked);
+  const inferredFloor = ticked.length
+    ? ticked
         .map((g) => Number(g.stageKey.replace("SQL", "")))
         .reduce((a, b) => Math.max(a, b), 0)
     : null;
@@ -174,7 +169,6 @@ export function summarizeStageGates(
     // because no transcript mentions it would be noise, and noise in this
     // column is what makes a CRO stop reading the column.
     claimedNotConfirmed: gates.filter((g) => g.state === "claimed" && g.fieldKey !== null),
-    negativeAnswers: gates.filter((g) => g.kind === "question" && !g.ticked),
   };
 }
 
@@ -214,29 +208,29 @@ const DECISIVE_GATES: Readonly<Record<number, string>> = Object.freeze({
 
 /** The checklist block for the briefing prompt. Null when there is nothing useful. */
 /**
- * A recorded "no" on a question item, and what it means for the call.
+ * A false on a question item means UNSET, not "answered no".
  *
- * These matter more than the ticks. A rep who has recorded that Magaya is not
- * the selected vendor on a deal sitting at Proposal Validation has written down
- * the single most important fact about it, and a briefing that walks past that
- * to ask about implementation timelines is worse than useless.
+ * I read it the other way and it was badly wrong. EWI is a brand new
+ * opportunity with nothing filled in, all four question items false, and the
+ * briefing announced that Magaya was not the selected vendor and turned an
+ * onboarding call for a paying customer into competitive recovery. Every deal
+ * in that run got the same treatment, because every deal has unset questions.
+ *
+ * Rolldog gives us one boolean per item with no third state, so "nobody has
+ * answered this" and "the answer is no" are indistinguishable in the payload,
+ * and the overwhelmingly common case is the first. Only a POSITIVE tick carries
+ * information: someone deliberately set it. Absence carries none.
+ *
+ * Recovering the real negatives would need a signal this endpoint does not
+ * provide, most likely the Solution tab, which is where Mark's screen rendered
+ * "Magaya is not the Selected Vendor" as a concern. That is a separate read
+ * against opportunity-solution, not an inference from this one.
  */
-const NEGATIVE_ANSWERS: Readonly<Record<number, string>> = Object.freeze({
-  409: "The rep has recorded that MAGAYA IS NOT THE SELECTED VENDOR. Someone else is ahead, or the choice is open. Do not brief this as a won deal, and do not talk about implementation. The job is to find out who is ahead and why.",
-  396: "Legal review is NOT internal, so outside counsel is involved. Expect a longer signature path and ask about their timeline.",
-});
-
 export function stageGateLines(summary: StageGateSummary): string | null {
   const ticked = summary.gates.filter((g) => g.ticked);
   const openAtOrBelow = summary.gates.filter((g) => !g.ticked && g.kind === "task");
 
-  // A negative answer is worth briefing on even when nothing is ticked, so this
-  // check comes before the early return.
-  const negatives = summary.negativeAnswers
-    .map((g) => NEGATIVE_ANSWERS[g.rolldogId])
-    .filter((v): v is string => Boolean(v));
-
-  if (ticked.length === 0 && negatives.length === 0) return null;
+  if (ticked.length === 0) return null;
 
   const byStage = (list: StageGate[]): string =>
     list.map((g) => `- [${g.stageKey}] ${g.name}`).join("\n");
@@ -248,13 +242,8 @@ export function stageGateLines(summary: StageGateSummary): string | null {
   const decisive = ticked
     .map((g) => DECISIVE_GATES[g.rolldogId])
     .filter((v): v is string => Boolean(v));
-  if (decisive.length > 0 || negatives.length > 0) {
-    parts.push(
-      `THIS CHANGES THE CALL:`,
-      ...negatives.map((d) => `- ${d}`),
-      ...decisive.map((d) => `- ${d}`),
-      ``,
-    );
+  if (decisive.length > 0) {
+    parts.push(`THIS CHANGES THE CALL:`, ...decisive.map((d) => `- ${d}`), ``);
   }
 
   if (ticked.length > 0) {
