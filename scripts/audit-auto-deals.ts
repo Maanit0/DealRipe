@@ -129,7 +129,12 @@ async function main(): Promise<void> {
         .limit(3);
       const subjects = (titles.data ?? []).map((t) => t.title).filter((t): t is string => !!t);
 
-      if (subjects.length === 0) {
+      if (sfError) {
+        // The Salesforce answer is unknown, not negative. Classifying on an
+        // unknown is how a real customer ends up in a delete list.
+        tier = "review";
+        why = `Salesforce lookup FAILED, classification unreliable: ${sfError.slice(0, 60)}`;
+      } else if (subjects.length === 0) {
         tier = "review";
         why = "no CRM record, no call titles to judge by";
       } else {
