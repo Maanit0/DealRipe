@@ -191,7 +191,15 @@ async function main(): Promise<void> {
           console.log("   briefing    deal context unavailable");
           continue;
         }
-        console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${ctx.crmContext ? "Salesforce BDR context PRESENT" : "no Salesforce context"}`);
+        const sfState =
+          ctx.crmContextStatus === "present"
+            ? "Salesforce BDR context PRESENT"
+            : ctx.crmContextStatus === "unavailable"
+              ? "SALESFORCE LOOKUP FAILED (briefing is thinner than it should be)"
+              : ctx.crmContextStatus === "absent"
+                ? "no Salesforce context (account has none)"
+                : "Salesforce context not applicable (we have our own calls)";
+        console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${sfState}`);
         try {
           const b = await generateBriefingFromState({
             ...briefingStateFromContext(ctx),

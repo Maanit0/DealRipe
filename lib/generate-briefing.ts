@@ -13,6 +13,12 @@
 
 import { getAnthropicClient, getAnthropicModel } from "./anthropic";
 import {
+  briefingErrors,
+  describeFindings,
+  lintBriefing,
+  type BriefingFinding,
+} from "./briefing-lint";
+import {
   buildMagayaBriefingSystemPrompt,
   buildMagayaBriefingUserMessage,
   nextStageOf,
@@ -96,35 +102,76 @@ export async function generateBriefingFromState(
   const currentGaps = openGapsUpToStage(framework, extraction, stageKey);
   const nextGaps = next ? openGapsForStage(framework, extraction, next) : [];
 
-  const resp = await getAnthropicClient().messages.create({
-    model: getAnthropicModel(),
-    max_tokens: 2000,
-    temperature: 0.1,
-    system: buildMagayaBriefingSystemPrompt(framework),
-    messages: [
-      {
-        role: "user",
-        content: buildMagayaBriefingUserMessage({
-          account: state.account,
-          stage: stageKey,
-          nextStage: next,
-          closeDate: state.closeDate,
-          attendees: state.attendees,
-          framework,
-          extraction,
-          currentGaps,
-          nextGaps,
-          crmContext: state.crmContext,
-          meetingSubject: state.meetingSubject,
-          today: new Date().toISOString().slice(0, 10),
-        }),
-      },
-    ],
+  const userMessage = buildMagayaBriefingUserMessage({
+    account: state.account,
+    stage: stageKey,
+    nextStage: next,
+    closeDate: state.closeDate,
+    attendees: state.attendees,
+    framework,
+    extraction,
+    currentGaps,
+    nextGaps,
+    crmContext: state.crmContext,
+    meetingSubject: state.meetingSubject,
+    today: new Date().toISOString().slice(0, 10),
   });
 
-  const block = resp.content.find((b) => b.type === "text");
-  const text = block && "text" in block ? block.text : "";
-  return parseJson(text);
+  // Generate, check, and on a hard failure regenerate once with the specific
+  // findings fed back. The linter enforces the handful of rules that must never
+  // break (insider language spoken to a customer, dashes, asking whether budget
+  // exists after we have quoted a price). A prompt makes those unlikely; only
+  // code makes them impossible. If the second attempt still fails we return
+  // nothing, because a rep is better served by no briefing than by one that
+  // makes them sound like they are reading from a file.
+  let last: MagayaBriefing | null = null;
+  let lastFindings: BriefingFinding[] = [];
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const messages: Array<{ role: "user" | "assistant"; content: string }> = [
+      { role: "user", content: userMessage },
+    ];
+    if (attempt > 0 && last) {
+      messages.push({ role: "assistant", content: JSON.stringify(last) });
+      messages.push({
+        role: "user",
+        content: `That draft breaks rules that cannot be broken:\n${briefingErrors(lastFindings)
+          .map((f) => `- ${f.field}: ${f.rule}${f.detail ? ` -> "${f.detail}"` : ""}`)
+          .join("\n")}\n\nRewrite the whole briefing fixing exactly those problems. Keep everything else. Return JSON only.`,
+      });
+    }
+
+    const resp = await getAnthropicClient().messages.create({
+      model: getAnthropicModel(),
+      max_tokens: 2000,
+      temperature: 0.1,
+      system: buildMagayaBriefingSystemPrompt(framework),
+      messages,
+    });
+
+    const block = resp.content.find((b) => b.type === "text");
+    const text = block && "text" in block ? block.text : "";
+    const parsed = parseJson(text);
+    if (!parsed) continue;
+
+    last = parsed;
+    lastFindings = lintBriefing(parsed, { stageKey, meetingSubject: state.meetingSubject });
+    const errors = briefingErrors(lastFindings);
+    if (errors.length === 0) return parsed;
+
+    console.warn(
+      `[briefing] ${state.account}: regenerating, ${describeFindings(errors)}`,
+    );
+  }
+
+  const remaining = briefingErrors(lastFindings);
+  if (remaining.length > 0) {
+    console.error(
+      `[briefing] ${state.account}: SUPPRESSED after two attempts, ${describeFindings(remaining)}`,
+    );
+    return null;
+  }
+  return last;
 }
 
 export async function generateMagayaBriefing(

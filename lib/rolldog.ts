@@ -897,6 +897,96 @@ export type DealRoom = {
  * consume. Asserts the full set of snake_case read fields it pulls
  * (single assert, single audit row).
  */
+/**
+ * Candidate endpoints for the stage-requirement checklist.
+ *
+ * Rolldog's UI shows a per-stage checklist ("Initial Prospect Meeting",
+ * "Is Magaya Selected Vendor?", "Validate Who Negotiates and Signs") with a
+ * tick or a cross against each item, maintained by the rep. It is the single
+ * richest thing in their CRM and we do not read it, which is why every deal
+ * briefs as 0/27 even when the rep has three stages ticked.
+ *
+ * The endpoint is not documented to us and `include=` 500s on this API, so the
+ * shape has to be discovered against a live opportunity rather than guessed at
+ * in a prompt. Ordered most to least likely, following the naming convention
+ * the sub-resources already use (`opportunity-budget`, `opportunity-timeline`).
+ */
+const STAGE_GATE_PATH_CANDIDATES: readonly string[] = Object.freeze([
+  "opportunity-stage-requirements",
+  "opportunity-stage-gates",
+  "opportunity-checklist-items",
+  "opportunity-checklists",
+  "opportunity-stage-requirement-items",
+  "opportunity-requirements",
+  "stage-requirements",
+  "stage-gates",
+  "opportunity-close-plan",
+  "opportunity-milestones",
+]);
+
+export type StageGateProbe = {
+  /** Attribute keys on the opportunity itself, in case the gates live inline. */
+  coreAttributeKeys: string[];
+  /** Relationship names the opportunity advertises, the best lead we have. */
+  relationshipNames: string[];
+  /** Per candidate path: the HTTP status and a small sample of the body. */
+  attempts: Array<{ path: string; status: number; sample: string }>;
+};
+
+/**
+ * Discovery only. Reports which candidate endpoints exist and what they return,
+ * so the real reader can be written against the actual shape.
+ *
+ * Asserts on "stage_gates", which is already in ROLLDOG_READ_FIELDS, so this
+ * respects the scope model exactly as every other read does. It is read-only
+ * and never throws on a 404: a missing endpoint is the answer, not an error.
+ */
+export async function probeStageGates(opportunityId: string): Promise<StageGateProbe> {
+  assertScopedRead(PILOT_TENANT_SLUG, opportunityId, ["stage_gates"]);
+  const config = readRolldogConfig();
+  ensureCredentials(config, opportunityId, "read");
+
+  const corePath = `/opportunities/${encodeURIComponent(opportunityId)}`;
+  const coreRes = await rolldogFetch(config, corePath, { method: "GET" });
+  const coreJson = coreRes.ok
+    ? ((await coreRes.json()) as JsonApiSingleResponse)
+    : { data: null };
+  const coreAttributeKeys = Object.keys(coreJson.data?.attributes ?? {}).sort();
+  const relationshipNames = Object.keys(coreJson.data?.relationships ?? {}).sort();
+
+  const attempts: StageGateProbe["attempts"] = [];
+  for (const candidate of STAGE_GATE_PATH_CANDIDATES) {
+    const path = `/opportunities/${encodeURIComponent(opportunityId)}/${candidate}`;
+    try {
+      const res = await rolldogFetch(config, path, { method: "GET" });
+      const body = await res.text().catch(() => "");
+      attempts.push({ path: candidate, status: res.status, sample: body.slice(0, 1400) });
+    } catch (e) {
+      attempts.push({
+        path: candidate,
+        status: 0,
+        sample: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return { coreAttributeKeys, relationshipNames, attempts };
+}
+
+/** GET an arbitrary related path on an opportunity, for following a discovered
+ *  relationship link. Discovery only, same scope assert as probeStageGates. */
+export async function probeRelatedPath(
+  opportunityId: string,
+  relatedPath: string,
+): Promise<{ status: number; body: string }> {
+  assertScopedRead(PILOT_TENANT_SLUG, opportunityId, ["stage_gates"]);
+  const config = readRolldogConfig();
+  ensureCredentials(config, opportunityId, "read");
+  const path = `/opportunities/${encodeURIComponent(opportunityId)}/${relatedPath}`;
+  const res = await rolldogFetch(config, path, { method: "GET" });
+  return { status: res.status, body: await res.text().catch(() => "") };
+}
+
 export async function getDealRoom(opportunityId: string): Promise<DealRoom> {
   assertScopedRead(PILOT_TENANT_SLUG, opportunityId, [
     "stage",

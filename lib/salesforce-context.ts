@@ -217,17 +217,21 @@ async function resolveAccountId(domain: string, addresses: ReadonlyArray<string>
     .filter((a) => a.includes("@"))
     .slice(0, 10);
   if (exact.length > 0) {
-    try {
-      const eq = await sfGet<{ records?: Array<{ AccountId?: string | null }> }>(
-        `/query?q=${encodeURIComponent(
-          `SELECT AccountId FROM Contact WHERE Email IN (${exact.map((e) => `'${e}'`).join(",")}) AND AccountId != null LIMIT 10`,
-        )}`,
-      );
-      const ids = new Set((eq.records ?? []).map((r) => r.AccountId).filter(Boolean) as string[]);
-      if (ids.size === 1) return [...ids][0];
-    } catch {
-      // fall through
-    }
+    // No catch here, deliberately. This used to swallow the error and fall
+    // through to the Website match, which is blank on most Magaya accounts, so
+    // a transient failure returned null and the caller read that as "this
+    // company is not in Salesforce". Four of Alexandra's briefings lost their
+    // BDR context that way on one run and had it on the next, with no code
+    // change between them and nothing in the logs. sfGet already retries twice;
+    // if it is still failing, the honest answer is that we do not know, and
+    // SalesforceUnavailableError says so. Absence is null; failure throws.
+    const eq = await sfGet<{ records?: Array<{ AccountId?: string | null }> }>(
+      `/query?q=${encodeURIComponent(
+        `SELECT AccountId FROM Contact WHERE Email IN (${exact.map((e) => `'${e}'`).join(",")}) AND AccountId != null LIMIT 10`,
+      )}`,
+    );
+    const ids = new Set((eq.records ?? []).map((r) => r.AccountId).filter(Boolean) as string[]);
+    if (ids.size === 1) return [...ids][0];
   }
 
   // 2. Contacts sharing the domain. Never for consumer mail: matching
@@ -235,27 +239,26 @@ async function resolveAccountId(domain: string, addresses: ReadonlyArray<string>
   //    Gmail contact, and briefing one customer's qualification data on
   //    another customer's call is unrecoverable.
   if (!isFreeMailDomain(clean)) {
-    try {
-      const cq = await sfGet<{ records?: Array<{ AccountId?: string | null }> }>(
-        `/query?q=${encodeURIComponent(
-          `SELECT AccountId FROM Contact WHERE Email LIKE '%@${clean}' AND AccountId != null LIMIT 50`,
-        )}`,
-      );
-      const counts = new Map<string, number>();
-      for (const r of cq.records ?? []) {
-        const id = r.AccountId;
-        if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-      }
-      if (counts.size === 1) return [...counts.keys()][0];
-      if (counts.size > 1) {
-        const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-        // A clear plurality is a duplicate-record problem, not a real
-        // ambiguity. On a tie, keep going rather than giving up: the website
-        // match below may still be decisive.
-        if (ranked[0][1] > ranked[1][1]) return ranked[0][0];
-      }
-    } catch {
-      // fall through
+    // Also uncaught, for the reason given above. Falling through on failure is
+    // only safe when the next strategy is as strong as this one, and Website is
+    // not: it is set on a small minority of these accounts.
+    const cq = await sfGet<{ records?: Array<{ AccountId?: string | null }> }>(
+      `/query?q=${encodeURIComponent(
+        `SELECT AccountId FROM Contact WHERE Email LIKE '%@${clean}' AND AccountId != null LIMIT 50`,
+      )}`,
+    );
+    const counts = new Map<string, number>();
+    for (const r of cq.records ?? []) {
+      const id = r.AccountId;
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    if (counts.size === 1) return [...counts.keys()][0];
+    if (counts.size > 1) {
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+      // A clear plurality is a duplicate-record problem, not a real
+      // ambiguity. On a tie, keep going rather than giving up: the website
+      // match below may still be decisive.
+      if (ranked[0][1] > ranked[1][1]) return ranked[0][0];
     }
   }
 

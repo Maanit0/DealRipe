@@ -69,6 +69,16 @@ export type DealContext = {
    * withheld: thin context is worse than dated context when we hold nothing.
    */
   crmContext: string | null;
+  /**
+   * Why crmContext is what it is.
+   *
+   * "absent" and "unavailable" both produce a null crmContext and a thinner
+   * briefing, but they mean opposite things: one is a company genuinely not in
+   * Salesforce, the other is a lookup that failed. Collapsing them is what let
+   * four briefings quietly lose their BDR context between two runs with no code
+   * change and nothing in the logs. Callers that can retry or warn should.
+   */
+  crmContextStatus: "present" | "absent" | "unavailable" | "not_applicable";
 };
 
 export async function getDealContext(
@@ -173,6 +183,7 @@ export async function getDealContext(
       : "";
 
   let crmContext: string | null = null;
+  let crmContextStatus: DealContext["crmContextStatus"] = "not_applicable";
   if (!haveOurOwnCalls && externalId?.startsWith("auto:")) {
     const tail = externalId.slice("auto:".length);
     const domain = tail.includes("@") ? (tail.split("@")[1] ?? "") : tail;
@@ -180,10 +191,20 @@ export async function getDealContext(
     if (domain && !isFreeMailDomain(domain)) {
       try {
         const sf = await getAccountContextByDomain(domain, addresses);
-        if (sf) crmContext = accountContextLines(sf) + bdrNotesAgeNote;
+        const rendered = sf ? accountContextLines(sf) : "";
+        if (rendered) {
+          crmContext = rendered + bdrNotesAgeNote;
+          crmContextStatus = "present";
+        } else {
+          // Either no account matched, or the account matched but every Sales
+          // Development field on it is empty. Both are genuine absence, and
+          // both are common and fine.
+          crmContextStatus = "absent";
+        }
       } catch (err) {
+        crmContextStatus = "unavailable";
         console.warn(
-          `[deal-context] salesforce context unavailable for ${domain}: ${err instanceof Error ? err.message : String(err)}`,
+          `[deal-context] SALESFORCE LOOKUP FAILED for ${domain}, briefing will be thinner than it should be: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -208,6 +229,7 @@ export async function getDealContext(
     contacts: deal.contacts,
     lastCallDate,
     crmContext,
+    crmContextStatus,
   };
 }
 
