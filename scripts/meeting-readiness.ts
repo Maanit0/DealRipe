@@ -197,8 +197,10 @@ async function main(): Promise<void> {
             : ctx.crmContextStatus === "unavailable"
               ? "SALESFORCE LOOKUP FAILED (briefing is thinner than it should be)"
               : ctx.crmContextStatus === "absent"
-                ? "no Salesforce context (account has none)"
-                : "Salesforce context not applicable (we have our own calls)";
+                ? "no Salesforce context (account matched, its BDR fields are empty)"
+                : ctx.crmContextStatus === "have_own_calls"
+                  ? "Salesforce skipped (we have our own calls, which beat a colleague's notes)"
+                  : "Salesforce skipped (consumer mail address, no company domain to resolve)";
         const gateState = ctx.stageGates
           ? `${ctx.stageGates.tickedCount}/${ctx.stageGates.total} ticked by rep (${ctx.stageGates.crmStageKey ?? "?"}), ${ctx.stageGates.confirmedCount} confirmed on a call` +
             (ctx.stageGates.claimedNotConfirmed.length

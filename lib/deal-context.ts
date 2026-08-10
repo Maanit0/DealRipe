@@ -79,7 +79,14 @@ export type DealContext = {
    * four briefings quietly lose their BDR context between two runs with no code
    * change and nothing in the logs. Callers that can retry or warn should.
    */
-  crmContextStatus: "present" | "absent" | "unavailable" | "not_applicable";
+  crmContextStatus:
+    | "present"
+    | "absent"
+    | "unavailable"
+    /** Skipped because the customer's own words already beat a colleague's notes. */
+    | "have_own_calls"
+    /** Skipped because there is no company domain to resolve (consumer mail). */
+    | "no_company_domain";
   /**
    * The rep's own stage checklist from Rolldog, and how it compares to what the
    * calls confirm. Null when the deal has no opportunity or the read failed;
@@ -210,7 +217,13 @@ export async function getDealContext(
       : "";
 
   let crmContext: string | null = null;
-  let crmContextStatus: DealContext["crmContextStatus"] = "not_applicable";
+  // Why we skipped, not just that we did. One bucket for every skip reason made
+  // a consumer-mail deal report "we have our own calls", which sent me looking
+  // for an extraction bug that did not exist. A status that can be misread is
+  // worse than no status.
+  let crmContextStatus: DealContext["crmContextStatus"] = haveOurOwnCalls
+    ? "have_own_calls"
+    : "no_company_domain";
   if (!haveOurOwnCalls && externalId?.startsWith("auto:")) {
     const tail = externalId.slice("auto:".length);
     const domain = tail.includes("@") ? (tail.split("@")[1] ?? "") : tail;
