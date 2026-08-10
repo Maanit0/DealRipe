@@ -205,6 +205,9 @@ async function main(): Promise<void> {
           ? `${ctx.stageGates.tickedCount}/${ctx.stageGates.total} ticked by rep (${ctx.stageGates.crmStageKey ?? "?"}), ${ctx.stageGates.confirmedCount} confirmed on a call` +
             (ctx.stageGates.claimedNotConfirmed.length
               ? `, unverified: ${ctx.stageGates.claimedNotConfirmed.map((g) => g.name).join(", ")}`
+              : "") +
+            (ctx.stageGates.negativeAnswers.length
+              ? `\n               answered NO: ${ctx.stageGates.negativeAnswers.map((g) => g.name).join(", ")}`
               : "")
           : "no checklist read";
         console.log(`   checklist   ${gateState}`);

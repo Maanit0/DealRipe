@@ -935,7 +935,22 @@ export async function getStageRequirements(
   ensureCredentials(config, opportunityId, "read");
 
   const path = `/opportunities/${encodeURIComponent(opportunityId)}/opportunity-stages-requirement`;
-  const res = await rolldogFetch(config, path, { method: "GET" });
+
+  // Retry transport failures. A bare "fetch failed" dropped EWI's checklist on
+  // one call and not the next in the same run, and the nightly cron gets one
+  // attempt: a briefing that silently loses the rep's checklist looks exactly
+  // like a deal with no work done on it.
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await rolldogFetch(config, path, { method: "GET" });
+      break;
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+    }
+  }
+  if (!res) throw new RolldogApiError(0, path, "no response after retries");
   if (res.status === 404) return null;
   if (!res.ok) throw new RolldogApiError(res.status, path, await safeBody(res));
 

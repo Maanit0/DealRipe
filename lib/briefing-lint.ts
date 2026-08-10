@@ -67,6 +67,7 @@ const OUR_RECORD_PATTERNS: ReadonlyArray<{ re: RegExp; rule: string }> = Object.
   // database in a sentence that is supposed to report the state of the deal.
   { re: /\bon file( yet)?\b/i, rule: "describes our record instead of the deal" },
   { re: /\bno (prior )?qualification (is )?(confirmed|captured)\b/i, rule: "describes our record instead of the deal" },
+  { re: /\b(no|zero)\s+(prior\s+|previous\s+)?qualification\s+(data|information|record)/i, rule: "describes our record instead of the deal" },
   { re: /\bnothing (confirmed|captured|recorded)( yet)?\b/i, rule: "describes our record instead of the deal" },
   { re: /\b(un)?confirmed (from|on) (prior|previous|any) calls?\b/i, rule: "describes our record instead of the deal" },
   { re: /\b(we|dealripe) (have|has) (no|not) (captured|heard|recorded)\b/i, rule: "describes our record instead of the deal" },
