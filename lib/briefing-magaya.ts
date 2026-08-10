@@ -106,17 +106,19 @@ Rules:
 1. No em-dashes (—) or en-dashes (–) anywhere. Use commas, periods, or rephrase. Hard rule, no exceptions.
 2. No marketing language. Use the direct, concrete language a CRO uses with their rep.
 3. Anchor every line to the deal's actual state below. Reference verbatim customer evidence where it exists.
-4. Each question is an object with four parts. "ask": REP-FACING, one tight sentence the rep says to the CUSTOMER on the call, phrased the way a rep actually talks, verbatim-usable, aim for about 15 words, never an internal assessment question. "why": one short clause for the rep's eyes only on the gap it closes and who it is for. "targetFields": the list of field IDs from the qualification state below that this question is designed to unblock or gather information on, using the exact field IDs shown. "targetLabel": the human-readable category of the primary target field, for example Authority, Budget, Timeline, People, Competition, Situation.
-5. Generate at most 3 questions, targeting the highest-leverage OPEN gaps for the current and next stage, the ones that most move the deal toward the next gate or commitment. Fewer than 3 is fine if only one or two gaps truly matter for this call. Do not pad.
-6. Target the phrasing to who is on the upcoming call. A question for the economic buyer or CFO is framed differently than one for a champion or a technical contact. Use the attendee list.
-7. Prefer questions that uncover unknowns the agent cannot know (the customer's procurement steps, signing path, legal sequence, internal timeline). Serve the question, do not assume the answer.
-8. "callObjective" is what you want the CUSTOMER to DO by the end of the call (a concrete action or commitment), not what to confirm. Name the person or action.
-9. "whatsAtRisk" is what slips if the call goes badly, stated in the customer's own compelling-event or timeline words where available.
-10. "signalFlag" is one short flag ONLY if there is a live risk worth surfacing (economic buyer not engaged, deal stalled, competitor ahead, close date unvalidated). Otherwise null.
-11. Do not invent facts that are not in the provided state.
-12. Be brief and scannable, the rep reads this live on a call. Every text field (callObjective, whereItStands, nextStepCommitment, whatsAtRisk, signalFlag) is ONE tight sentence, at most about 22 words, no run-ons and no lists. Each question "ask" is at most about 18 words. Each "why" is one short line, at most about 14 words. Favor fewer words over completeness.
-13. "nextStepCommitment" must be a specific, dated commitment: name the action and a concrete near-term date or timeframe the rep proposes on this call, anchored to TODAY in the user message (for example "early next week" or "the week of <a date after TODAY>"). Never use a past date. ${CLOSING_DISCIPLINE}
-14. The user message includes a reference block of how Magaya's best reps phrase questions for these gaps. Match that voice and style in your "ask" wording, and adapt each to this customer and the attendees. Do not copy the reference verbatim when it does not fit.
+4. An "ask" is spoken out loud to the CUSTOMER, so it must never reveal what our systems hold about them. Never write phrasing like "budget was noted as confirmed on our end", "our records show", "the notes say", "we have you down as". The customer did not tell us those things and hearing them read back is both awkward and a disclosure of internal data. Use what we hold to choose a sharper question, never as the preamble to one: ask "how are you planning to fund this?", not "we have budget marked confirmed, is that right?".
+5. Each question is an object with four parts. "ask": REP-FACING, one tight sentence the rep says to the CUSTOMER on the call, phrased the way a rep actually talks, verbatim-usable, aim for about 15 words, never an internal assessment question. "why": one short clause for the rep's eyes only on the gap it closes and who it is for. "targetFields": the list of field IDs from the qualification state below that this question is designed to unblock or gather information on, using the exact field IDs shown. "targetLabel": the human-readable category of the primary target field, for example Authority, Budget, Timeline, People, Competition, Situation.
+6. Generate at most 3 questions, targeting the highest-leverage OPEN gaps for the current and next stage, the ones that most move the deal toward the next gate or commitment. Fewer than 3 is fine if only one or two gaps truly matter for this call. Do not pad.
+7. Target the phrasing to who is on the upcoming call. A question for the economic buyer or CFO is framed differently than one for a champion or a technical contact. Use the attendee list.
+8. Prefer questions that uncover unknowns the agent cannot know (the customer's procurement steps, signing path, legal sequence, internal timeline). Serve the question, do not assume the answer.
+9. "callObjective" is what you want the CUSTOMER to DO by the end of the call (a concrete action or commitment), not what to confirm. Name the person or action.
+10. "whatsAtRisk" is what slips if the call goes badly, stated in the customer's own compelling-event or timeline words where available.
+11. "signalFlag" is one short flag ONLY if there is a live risk worth surfacing (economic buyer not engaged, deal stalled, competitor ahead, close date unvalidated). Otherwise null.
+12. Do not invent facts that are not in the provided state.
+12a. "Unknown" on a field means DEALRIPE HAS NOT HEARD IT, not that the customer has not decided it. Never say or imply otherwise. "whereItStands" describes the DEAL, never our own record: no "zero prior qualification data", no "all qualification fields are blank", no "nothing is on record", no "qualification record is empty". A rep does not care what our database holds, and telling them it is empty reads as an apology. If we truly know nothing about the deal, say what the call itself is and what you need out of it, for example "First working session on their inbond filings, so the job is to learn how they run today and leave with a dated next step."
+13. Be brief and scannable, the rep reads this live on a call. Every text field (callObjective, whereItStands, nextStepCommitment, whatsAtRisk, signalFlag) is ONE tight sentence, at most about 22 words, no run-ons and no lists. Each question "ask" is at most about 18 words. Each "why" is one short line, at most about 14 words. Favor fewer words over completeness.
+14. "nextStepCommitment" must be a specific, dated commitment: name the action and a concrete near-term date or timeframe the rep proposes on this call, anchored to TODAY in the user message (for example "early next week" or "the week of <a date after TODAY>"). Never use a past date. ${CLOSING_DISCIPLINE}
+15. The user message includes a reference block of how Magaya's best reps phrase questions for these gaps. Match that voice and style in your "ask" wording, and adapt each to this customer and the attendees. Do not copy the reference verbatim when it does not fit.
 
 Return a single JSON object, no prose, no markdown fences:
 {
@@ -179,6 +181,23 @@ export function buildMagayaBriefingUserMessage(args: {
 
   const gapLine = (g: Gap) => `- ${g.fieldKey} (${g.label}) [${g.status}]`;
 
+  // Gaps beneath the current stage are a different animal from gaps at it.
+  //
+  // The deal has already cleared those gates in the CRM: a rep at Proposal
+  // Validation has budget and an approver, they just never said it on a call we
+  // heard. Presented in one undifferentiated list, the model reads a wall of
+  // Unknown and reaches for the earliest, which is why GHY at SQL3 was being
+  // told to ask whether they have budget set aside. Asking a proposal-stage
+  // customer an opening qualification question is the single fastest way to
+  // lose a rep, because they know it is wrong the moment they read it.
+  const rankOf = (k: string | null): number => {
+    const m = (k ?? "").match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+  };
+  const here = rankOf(args.stage);
+  const atStage = args.currentGaps.filter((g) => rankOf(g.stageKey) >= here);
+  const behind = args.currentGaps.filter((g) => rankOf(g.stageKey) < here);
+
   const lines = [
     args.today ? `TODAY: ${args.today}` : "",
     `ACCOUNT: ${args.account}`,
@@ -192,11 +211,20 @@ export function buildMagayaBriefingUserMessage(args: {
     stateLines,
     ``,
     `OPEN GAPS, CURRENT STAGE (${args.stage}):`,
-    args.currentGaps.length ? args.currentGaps.map(gapLine).join("\n") : "- none",
+    atStage.length ? atStage.map(gapLine).join("\n") : "- none",
     ``,
     `OPEN GAPS, NEXT STAGE (${args.nextStage ?? "n/a"}):`,
     args.nextGaps.length ? args.nextGaps.map(gapLine).join("\n") : "- none",
   ];
+
+  if (behind.length) {
+    lines.push(
+      ``,
+      `CLEARED IN THE CRM BUT NEVER CONFIRMED TO US (stages below ${args.stage}):`,
+      behind.map(gapLine).join("\n"),
+      `The deal has already passed these gates, so the customer has answered them for someone. We simply have no recording of it. Do NOT open with these and do NOT ask them as discovery. Raise one only if it is genuinely load-bearing for this specific call, and then as a confirmation of something assumed, for example "just so I have it right, is the budget still coming out of your operations line?" rather than "do you have budget for this?".`,
+    );
+  }
 
   if (args.history) {
     lines.push(``, `SINCE LAST CALL:`, args.history);

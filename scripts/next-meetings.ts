@@ -16,16 +16,13 @@ import { listUpcomingMeetings } from "../lib/microsoft-graph";
 import { matchPilotDomain, matchPilotSubject } from "../lib/pilot-config";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
+import { formatMeetingTime } from "../lib/graph-time";
 
 const SLUG = "magaya";
 
-function fmt(dt: string | undefined, tz: string | undefined): string {
-  if (!dt) return "(no start)";
-  const raw = tz === "UTC" && !dt.endsWith("Z") ? dt + "Z" : dt;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return dt;
-  return d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
+/** Rendered in the rep's timezone, not the reader's. See lib/graph-time.ts. */
+const fmt = (dt: string | undefined, _tz?: string | undefined): string =>
+  formatMeetingTime(dt);
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);

@@ -21,6 +21,7 @@ config({ path: ".env.local" });
 
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
+import { formatMeetingTime } from "../lib/graph-time";
 
 const TENANT_SLUG = "magaya";
 
@@ -29,20 +30,8 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function when(iso: string | null): string {
-  if (!iso) return "(no time)";
-  try {
-    return new Date(iso).toLocaleString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
+/** Rendered in the rep's timezone, not the reader's. See lib/graph-time.ts. */
+const when = formatMeetingTime;
 
 /** An Outlook event id is long and base64-ish; an iCalUId is hex-ish and shorter. */
 function keyKind(externalId: string | null): string {

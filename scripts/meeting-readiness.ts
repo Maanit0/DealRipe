@@ -28,6 +28,7 @@ config({ path: ".env.local" });
 import { crosswalkRolldogOpportunityId } from "../lib/crm-crosswalk";
 import { getDealContext, briefingStateFromContext } from "../lib/deal-context";
 import { generateBriefingFromState } from "../lib/generate-briefing";
+import { formatMeetingTime, graphIso } from "../lib/graph-time";
 import { shouldJoinAutoMeeting } from "../lib/join-gate";
 import { listUpcomingMeetings } from "../lib/microsoft-graph";
 import {
@@ -51,20 +52,8 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function when(iso: string | null | undefined): string {
-  if (!iso) return "(no time)";
-  try {
-    return new Date(iso).toLocaleString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return String(iso);
-  }
-}
+/** Graph times, in the rep's timezone. See lib/graph-time.ts for why not inline. */
+const when = formatMeetingTime;
 
 async function main(): Promise<void> {
   const days = Number(arg("--days") ?? 7);
@@ -181,7 +170,7 @@ async function main(): Promise<void> {
           .select("recall_bot_id")
           .eq("tenant_id", tenantId)
           .eq("deal_id", deal.data.id)
-          .eq("scheduled_start", m.start?.dateTime ? new Date(m.start.dateTime.endsWith("Z") ? m.start.dateTime : `${m.start.dateTime}Z`).toISOString() : "")
+          .eq("scheduled_start", graphIso(m.start?.dateTime) ?? "")
           .maybeSingle();
         bot = call.data?.recall_bot_id ?? null;
       }
