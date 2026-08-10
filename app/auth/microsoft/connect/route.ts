@@ -42,6 +42,23 @@ export async function GET(): Promise<Response> {
   // on app.dealripe.com, Microsoft sends the user to localhost, and whatever is
   // running there reports "state mismatch", which looks like a cookie bug
   // rather than a config one. Fail here instead, where the cause is obvious.
+  // The redirect URI must point at the CALLBACK. Pointing it at this route
+  // instead is an easy paste error, and Entra rejects it with AADSTS50011,
+  // which reads like a portal misconfiguration rather than an env var typo.
+  // Registering /connect in Entra "fixes" the error and creates a redirect
+  // loop, so say plainly that this is the wrong value, not a missing one.
+  if (!redirectUri.endsWith("/auth/microsoft/callback")) {
+    return new Response(
+      renderError(
+        "Microsoft OAuth redirect URI is wrong",
+        `MICROSOFT_REDIRECT_URI is "${redirectUri}". It must end in /auth/microsoft/callback, which is where Microsoft ` +
+          "returns the user. Pointing it at /auth/microsoft/connect restarts this flow and loops. " +
+          "Fix the environment variable rather than registering the wrong URI in Entra.",
+      ),
+      { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    );
+  }
+
   if (process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(redirectUri)) {
     return new Response(
       renderError(

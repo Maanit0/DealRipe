@@ -46,11 +46,17 @@ export const REP_UID: Record<string, string> = {
   "ebencomo@magaya.com": "79", // Eduardo, measured from Alba Wheels Up
   // Net-new AE team, live August 10 2026.
   "asuntrup@magaya.com": "349", // Alexandra, measured from Cargo Cleared + Karla Regina Baeza
-  // TODO: ariel (arodriguez@), daniel (dblitstein@), steven (sjohnson@).
-  // Until their ids are here their promoted deals never link and never
-  // backfill to Rolldog, silently. unmappedReps() surfaces them and
-  // findLinkMatches logs a warning. Discover the ids with
-  // scripts/rolldog-owner-ids.ts, or ask Mitch on the onboarding call.
+  // Confirmed Aug 10 from an opportunity each rep named as their own in the
+  // onboarding call chat, resolved with scripts/rolldog-owner-from-opp.ts.
+  // Alexandra's 349 was previously inferred from Cargo Cleared; TOC Logistics
+  // resolving to the same id confirms it independently.
+  "arodriguez@magaya.com": "85", // Ariel, from SSL Intl Corp (opp 83618)
+  "dblitstein@magaya.com": "758", // Daniel, from Custom Goods (opp 82005)
+  // TODO: steven (sjohnson@). He did not post an opportunity in the call chat.
+  // Until his id is here his promoted deals never link and never backfill to
+  // Rolldog, silently. unmappedReps() surfaces him and findLinkMatches logs a
+  // warning. Ask him for one Rolldog link, then run
+  // scripts/rolldog-owner-from-opp.ts <id> --name "<account>".
 };
 
 const RECENT_DAYS = 90;

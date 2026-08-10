@@ -92,9 +92,15 @@ async function main(): Promise<void> {
     const rolldog =
       d.rolldog_opportunity_id ?? rolldogOppIdForDeal(externalId) ?? crosswalkRolldogOpportunityId(domain) ?? null;
 
+    // Only ask Salesforce when the answer can change the verdict. A deal with a
+    // Rolldog opportunity or a captured call is already KEEP, so looking it up
+    // is ~19 wasted round trips out of 34, which is most of the load that made
+    // the whole run fail with connection errors.
+    const alreadyKeep = Boolean(rolldog) || captured > 0;
+
     let salesforce: string | null = crosswalkSalesforceAccountId(domain);
     let sfError: string | null = null;
-    if (!salesforce && !isFreeMail) {
+    if (!salesforce && !isFreeMail && !alreadyKeep) {
       try {
         salesforce = (await getAccountContextByDomain(domain))?.accountName ?? null;
       } catch (e) {

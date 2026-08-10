@@ -73,15 +73,47 @@ function soqlSafe(s: string): string {
   return s.replace(/[^a-zA-Z0-9._\- ]/g, "");
 }
 
-async function sfGet<T>(path: string): Promise<T> {
-  const { token, instanceUrl } = await getSalesforceClient();
-  const res = await fetch(`${instanceUrl}/services/data/${API_VERSION}${path}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    throw new SalesforceError(res.status, path, await res.text().catch(() => ""));
+/**
+ * GET with a short retry on transport failures and rate limits.
+ *
+ * A batch of these in a loop reliably produced bare "fetch failed" errors,
+ * which is undici failing to connect rather than Salesforce answering. Those
+ * are transient and a single retry clears them. Retrying matters more than it
+ * looks: a failed lookup is indistinguishable from "this company has no
+ * Salesforce account", and that difference decides whether a deal gets
+ * classified as debris.
+ *
+ * 4xx other than 429 are not retried; they are real answers.
+ */
+async function sfGet<T>(path: string, attempt = 0): Promise<T> {
+  try {
+    // Inside the try on purpose. Token minting is itself a network call, so a
+    // mint failure surfaces as the same bare "fetch failed" as a query failure.
+    // Leaving it outside meant the retry never covered the more likely cause.
+    const { token, instanceUrl } = await getSalesforceClient();
+    const res = await fetch(`${instanceUrl}/services/data/${API_VERSION}${path}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+        return sfGet<T>(path, attempt + 1);
+      }
+    }
+    if (!res.ok) {
+      throw new SalesforceError(res.status, path, await res.text().catch(() => ""));
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    // Transport-level failure, not an HTTP response. Retry; a SalesforceError
+    // is a real answer and must propagate.
+    if (e instanceof SalesforceError) throw e;
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+      return sfGet<T>(path, attempt + 1);
+    }
+    throw e;
   }
-  return (await res.json()) as T;
 }
 
 /**
