@@ -1,69 +1,92 @@
 /**
- * Run the real calendar sync once (the same runCalendarSync the deployed cron
- * calls), printing the meaningful decisions. Uses the live pilot config + the
- * local AUTO_JOIN_REP_EMAILS env.
+ * Run one calendar sync now, printing every decision.
  *
- * NOT a dry run: it creates deals and dispatches real Recall bots for in-window
- * meetings. Idempotent, so re-running is safe (existing deals/bots aren't
- * duplicated; autoCreated only counts NEW deals).
+ * The cron does this on a schedule in production. This exists for the case
+ * where a rep has just connected and their first meeting is sooner than the
+ * next cron run: Alexandra and Daniel connected an hour after the onboarding
+ * call, with meetings the following morning and no deals, no bots and no
+ * briefings until a sync happened.
  *
- *   npx tsx scripts/run-calendar-sync.ts
+ * NOT read-only. It creates deals, calls rows and real Recall bots, and can
+ * cancel bots for meetings that moved. That is the whole point, but it is why
+ * --apply is required and why the decision log prints in full.
+ *
+ *   npx tsx scripts/run-calendar-sync.ts            # refuses, explains
+ *   npx tsx scripts/run-calendar-sync.ts --apply
+ *
+ * Check scripts/dry-run-join-gate.ts first if you want to know what it will
+ * decide before it decides it.
  */
 
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { runCalendarSync, type CalendarSyncDecision } from "../lib/calendar-sync";
-import { isAutoJoinRep } from "../lib/pilot-config";
-import { supabaseAdmin } from "../lib/supabase";
-import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
-function print(d: CalendarSyncDecision): void {
+function describe(d: CalendarSyncDecision): string | null {
+  const subject = "subject" in d ? (d.subject ?? "(untitled)") : "";
   switch (d.kind) {
-    case "auto-deal":
-      console.log(`  [auto-deal]   ${d.dealExternalId} (${d.domain})  "${d.subject ?? ""}"`);
-      return;
     case "created":
-      console.log(`  [bot-created] ${d.subject ?? ""}  botId=${d.recallBotId}`);
-      return;
+      return `  BOT CREATED     ${subject}   (${d.recallBotId.slice(0, 8)})`;
     case "rescheduled":
-      console.log(`  [rescheduled] ${d.subject ?? ""}  ${d.oldBotId ?? "(none)"} -> ${d.newBotId}`);
-      return;
+      return `  RESCHEDULED     ${subject}   -> ${d.newBotId.slice(0, 8)}`;
     case "cancelled":
-      console.log(`  [cancelled]   ${d.subject ?? ""}  oldBot=${d.oldBotId}`);
-      return;
+      return `  BOT CANCELLED   ${subject}`;
+    case "auto-deal":
+      return `  DEAL CREATED    ${subject}   ${d.dealExternalId}`;
+    case "not-commercial":
+      return `  declined        ${subject}   ${d.detail}`;
     case "vanished":
-      console.log(`  [vanished]    pruned call ${d.callId} oldBot=${d.oldBotId ?? "(none)"}`);
-      return;
-    case "no-deal":
-      console.log(`  [no-deal]     '${d.dealExternalId}' has no deal row  "${d.subject ?? ""}"`);
-      return;
+      return `  pruned          call ${d.callId} (meeting gone from the calendar)`;
     case "error":
-      console.log(`  [error]       ${d.subject ?? ""}  ${d.phase}: ${d.message}`);
-      return;
+      return `  ERROR           ${subject}   [${d.phase}] ${d.message}`;
+    case "no-deal":
+      return `  no deal         ${subject}   ${d.dealExternalId}`;
+    // Quiet outcomes: no join link, internal-only, already correct.
     default:
-      // no-join-url / no-attendees / no-pilot-match / no-change: routine noise.
-      return;
+      return null;
   }
 }
 
 async function main(): Promise<void> {
-  const tenantId = await resolveTenantId("magaya");
-  const conns = await supabaseAdmin()
-    .from("microsoft_connections")
-    .select("user_principal_name")
-    .eq("tenant_id", tenantId);
-  console.log("Auto-join per connection:");
-  for (const c of conns.data ?? []) {
-    console.log(`  ${c.user_principal_name}: autoJoin=${isAutoJoinRep(c.user_principal_name)}`);
+  if (!process.argv.includes("--apply")) {
+    console.log("");
+    console.log("This creates deals, calls rows and real Recall bots on live customer meetings.");
+    console.log("Run scripts/dry-run-join-gate.ts first to see what it would decide, then");
+    console.log("re-run this with --apply.");
+    console.log("");
+    return;
   }
 
-  console.log("\nRunning runCalendarSync() (live: creates deals + dispatches bots)...\n");
-  const counts = await runCalendarSync({ onDecision: print });
-  console.log("\ncounts:", JSON.stringify(counts, null, 2));
+  console.log("");
+  console.log("Running calendar sync...");
+  console.log("");
+
+  const counts = await runCalendarSync({
+    onDecision: (d) => {
+      const line = describe(d);
+      if (line) console.log(line);
+    },
+  });
+
+  console.log("");
+  console.log("SUMMARY");
+  console.log(`   events seen           ${counts.eventsSeen}`);
+  console.log(`   matched to a deal     ${counts.matched}`);
+  console.log(`   deals auto-created    ${counts.autoCreated}`);
+  console.log(`   bots created          ${counts.botsCreated}`);
+  console.log(`   rescheduled           ${counts.rescheduled}`);
+  console.log(`   cancelled             ${counts.cancelled}`);
+  console.log(`   declined, not commercial  ${counts.skippedNotCommercial}`);
+  console.log(`   calendars skipped     ${counts.connectionsSkipped}`);
+  console.log(`   vanished, pruned      ${counts.reconciledVanished}`);
+  console.log("");
+  console.log("Now run scripts/check-call-dupes.ts to confirm one row per meeting,");
+  console.log("and scripts/meeting-readiness.ts --briefing to see what the reps will get.");
+  console.log("");
 }
 
 main().catch((e) => {
-  console.error("Unexpected error:", e instanceof Error ? e.message : String(e));
+  console.error(`\n${e instanceof Error ? e.message : String(e)}\n`);
   process.exit(1);
 });
