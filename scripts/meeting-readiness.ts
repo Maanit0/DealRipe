@@ -28,6 +28,7 @@ config({ path: ".env.local" });
 import { crosswalkRolldogOpportunityId } from "../lib/crm-crosswalk";
 import { getDealContext, briefingStateFromContext } from "../lib/deal-context";
 import { generateBriefingFromState } from "../lib/generate-briefing";
+import { attendeeLineFromMeeting } from "../lib/attendees";
 import { formatMeetingTime, graphIso } from "../lib/graph-time";
 import { shouldJoinAutoMeeting } from "../lib/join-gate";
 import { listUpcomingMeetings } from "../lib/microsoft-graph";
@@ -217,6 +218,11 @@ async function main(): Promise<void> {
           const b = await generateBriefingFromState({
             ...briefingStateFromContext(ctx),
             meetingSubject: m.subject ?? null,
+            // Who is actually on the invite, which is the point of the rule
+            // telling the prompt to target each question to its audience.
+            attendees:
+              attendeeLineFromMeeting(m.attendees ?? [], ctx.crmContacts) ??
+              briefingStateFromContext(ctx).attendees,
           });
           if (!b) {
             console.log("   briefing    generation returned nothing");

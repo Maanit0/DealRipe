@@ -93,6 +93,11 @@ export type DealContext = {
    * an unreadable checklist must never render as an empty one.
    */
   stageGates: StageGateSummary | null;
+  /**
+   * Contacts on the matched Salesforce account, for putting a real name and
+   * title against a calendar attendee. Empty when no account matched.
+   */
+  crmContacts: Array<{ name: string; title: string | null; email: string | null }>;
 };
 
 export async function getDealContext(
@@ -217,6 +222,7 @@ export async function getDealContext(
       : "";
 
   let crmContext: string | null = null;
+  let crmContacts: DealContext["crmContacts"] = [];
   // Why we skipped, not just that we did. One bucket for every skip reason made
   // a consumer-mail deal report "we have our own calls", which sent me looking
   // for an extraction bug that did not exist. A status that can be misread is
@@ -231,6 +237,7 @@ export async function getDealContext(
     if (domain && !isFreeMailDomain(domain)) {
       try {
         const sf = await getAccountContextByDomain(domain, addresses);
+        if (sf) crmContacts = sf.contacts;
         const rendered = sf ? accountContextLines(sf) : "";
         if (rendered) {
           crmContext = rendered + bdrNotesAgeNote;
@@ -271,6 +278,7 @@ export async function getDealContext(
     crmContext,
     crmContextStatus,
     stageGates,
+    crmContacts,
   };
 }
 

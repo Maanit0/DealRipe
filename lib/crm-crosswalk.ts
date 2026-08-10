@@ -44,6 +44,15 @@ export const CRM_CROSSWALK: Readonly<Record<string, CrosswalkEntry>> = Object.fr
     rolldogOpportunityId: "80731",
     note: "Rolldog account 'TOC Logistics', SF account 'ProTrans', domain protrans.com. Owner asuntrup, SQL2, created 2026-06-08. MS 2026-08-10",
   },
+  // Rolldog calls this account "EWI", the domain is ewiinc.com, and our deal is
+  // named "Ewiinc" off the domain stem, so a name search for "Ewiinc" returns
+  // nothing while "EWI" returns two. 81491 is the live one, "EWI - ABI &
+  // Accounting - 6/30/2026", opened 2026-07-01 and owned by Alexandra. 75084 is
+  // the earlier round from April under the same account.
+  "ewiinc.com": {
+    rolldogOpportunityId: "81491",
+    note: "Rolldog account 'EWI', opportunity 'EWI - ABI & Accounting - 6/30/2026', owner asuntrup, created 2026-07-01. Sibling 75084 from April on the same account. MS 2026-08-09",
+  },
   "iffusa.com": {
     salesforceAccountId: "001RN00000iG0abYAC",
     rolldogOpportunityId: "80018",

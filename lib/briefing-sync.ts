@@ -18,6 +18,7 @@ import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
+import { attendeeLineFromMeeting } from "./attendees";
 import { briefingStateFromContext, getDealContext } from "./deal-context";
 import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-config";
 import { prewarmRolldogToken } from "./rolldog";
@@ -269,16 +270,18 @@ async function processEvent(
   const ctx = await getDealContext(tenantId, dealId);
   if (!ctx) throw new Error(`getDealContext returned null for ${dealId}`);
 
-  // Attendees with roles when we have contacts; otherwise fall back to the
-  // meeting's raw attendee names.
+  // Who is on the call. The invite is the authority: it is who actually
+  // accepted, where our contacts table is empty on every auto-created deal and
+  // Salesforce holds whoever the BDR happened to record months ago.
+  //
+  // The previous version pasted raw attendee strings, which mixed Magaya's own
+  // people into the customer list and produced "gustavo@joearevalo.com" as a
+  // name. attendeeLineFromMeeting separates colleagues from customers and
+  // prefers the Salesforce spelling and title where the email matches, so the
+  // prompt can actually do what its targeting rule asks of it.
   const attendees =
-    ctx.contacts.length > 0
-      ? ctx.attendees
-      : ev.attendees
-          .map((a) => a.name || a.email)
-          .filter((n): n is string => typeof n === "string" && n.length > 0)
-          .slice(0, 4)
-          .join("; ") || undefined;
+    attendeeLineFromMeeting(ev.attendees, ctx.crmContacts) ??
+    (ctx.contacts.length > 0 ? ctx.attendees : undefined);
 
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
