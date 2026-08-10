@@ -184,7 +184,12 @@ export async function runCalendarSync(
     const autoJoin = isAutoJoinRep(repEmail);
     for (const ev of events) {
       counts.eventsSeen += 1;
+      // Record BOTH keys. Rows are keyed on iCalUId now, but rows written
+      // before that change still carry the per-mailbox id, and the vanished
+      // reconciler prunes any future row whose key it did not see. Recording
+      // only one would delete every upcoming call on the next run.
       seenEventIds.add(ev.eventId);
+      if (ev.iCalUId) seenEventIds.add(ev.iCalUId);
       try {
         await processEvent(ev, tenantId, counts, emit, { repEmail, autoJoin });
       } catch (err) {
@@ -428,14 +433,31 @@ async function processEvent(
   const eventIso = eventStartToIso(ev.start);
   const eventDate = eventIso.slice(0, 10);
 
+  // Key the call on iCalUId, which is the same value in every attendee's
+  // mailbox. `id` is per-mailbox, so when two reps are on the same customer
+  // meeting each copy looked like a separate call: two rows, two bots joining
+  // the customer's session, two transcripts, two recaps and a doubled
+  // write-back. Alexandra and Daniel are both on Thursday's ILS demo.
+  const callKey = ev.iCalUId ?? ev.eventId;
+
+  // Match either key so rows created before this change are found and updated
+  // rather than duplicated by the switch itself.
   const existing = await db
     .from("calls")
-    .select("id, recall_bot_id, call_date")
+    .select("id, recall_bot_id, call_date, external_id")
     .eq("deal_id", dealId)
-    .eq("external_id", ev.eventId)
+    .in("external_id", callKey === ev.eventId ? [ev.eventId] : [callKey, ev.eventId])
     .maybeSingle();
   if (existing.error) {
     throw new Error(`calls lookup failed: ${existing.error.message}`);
+  }
+
+  // Migrate a legacy row onto the stable key so the other rep's copy finds it.
+  if (existing.data && existing.data.external_id !== callKey) {
+    const mig = await db.from("calls").update({ external_id: callKey }).eq("id", existing.data.id);
+    if (mig.error) {
+      console.warn(`[calendar-sync] could not migrate call ${existing.data.id} to iCalUId: ${mig.error.message}`);
+    }
   }
 
   // ----- Cancelled event branch. -----
@@ -494,7 +516,7 @@ async function processEvent(
       .insert({
         tenant_id: tenantId,
         deal_id: dealId,
-        external_id: ev.eventId,
+        external_id: callKey,
         call_date: eventDate,
         scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,

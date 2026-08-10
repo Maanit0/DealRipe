@@ -122,17 +122,63 @@ async function sfGet<T>(path: string, attempt = 0): Promise<T> {
  * field-level security; both cases mean "do not query it".
  */
 export async function accountFieldMap(): Promise<Map<string, string>> {
-  if (_fieldMap && Date.now() - _fieldMapAt < FIELD_MAP_TTL_MS) return _fieldMap;
+  const meta = await accountFieldMeta();
+  return new Map([...meta].map(([label, f]) => [label, f.name]));
+}
 
-  const desc = await sfGet<{ fields?: Array<{ name: string; label: string }> }>("/sobjects/Account/describe");
+/**
+ * Full describe metadata for the wanted fields.
+ *
+ * Writing needs more than the API name. "Compelling Events" and "Budget
+ * Confirmed" are checkboxes, "Desired Go-Live Date" is a date, "Annual Company
+ * Revenue" is a picklist with fixed values, and "Software Purposes" is a long
+ * text area with a length limit. Sending a sentence to a checkbox is a 400,
+ * and sending 40,000 characters to a text area silently truncates or fails.
+ * `updateable` also matters: a formula or read-only field looks perfectly
+ * writable until the request is rejected.
+ */
+export type AccountFieldMeta = {
+  name: string;
+  type: string;
+  updateable: boolean;
+  length: number | null;
+  picklistValues: string[];
+};
+
+let _fieldMeta: Map<string, AccountFieldMeta> | null = null;
+let _fieldMetaAt = 0;
+
+export async function accountFieldMeta(): Promise<Map<string, AccountFieldMeta>> {
+  if (_fieldMeta && Date.now() - _fieldMetaAt < FIELD_MAP_TTL_MS) return _fieldMeta;
+
+  const desc = await sfGet<{
+    fields?: Array<{
+      name: string;
+      label: string;
+      type?: string;
+      updateable?: boolean;
+      length?: number;
+      picklistValues?: Array<{ value: string; active?: boolean }>;
+    }>;
+  }>("/sobjects/Account/describe");
   const visible = desc.fields ?? [];
-  const map = new Map<string, string>();
+  const map = new Map<string, AccountFieldMeta>();
   for (const want of WANTED_LABELS) {
     const hit = visible.find((f) => f.label.trim().toLowerCase() === want.trim().toLowerCase());
-    if (hit) map.set(want, hit.name);
+    if (!hit) continue;
+    map.set(want, {
+      name: hit.name,
+      type: hit.type ?? "string",
+      updateable: hit.updateable !== false,
+      length: typeof hit.length === "number" && hit.length > 0 ? hit.length : null,
+      picklistValues: (hit.picklistValues ?? []).filter((p) => p.active !== false).map((p) => p.value),
+    });
   }
-  _fieldMap = map;
-  _fieldMapAt = Date.now();
+  _fieldMeta = map;
+  _fieldMetaAt = Date.now();
+  // Keep the older cache coherent so both accessors agree within a run.
+  _fieldMap = new Map([...map].map(([label, f]) => [label, f.name]));
+  _fieldMapAt = _fieldMetaAt;
   return map;
 }
 

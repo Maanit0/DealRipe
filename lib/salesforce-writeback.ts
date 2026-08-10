@@ -1,0 +1,335 @@
+/**
+ * Type-aware writes to the Salesforce Account Sales Development section.
+ *
+ * Mark told the team DealRipe populates Salesforce for them. It did not, and
+ * this is that. The constraint that shapes everything below is that a BDR
+ * already wrote in these fields before the rep took the call, so this must add
+ * to their work rather than replace it. Eduardo asked whether to overwrite or
+ * enrich and nobody decided; "fill blanks, append where it fits, never
+ * replace" is the version that does not need his answer to be safe.
+ *
+ * Three rules earn their keep:
+ *
+ * 1. BOOLEANS ARE ONLY EVER SET TRUE. Seven of these fields are checkboxes,
+ *    and Salesforce cannot represent "unknown" in one. Writing false would
+ *    assert a negative we have not established, into fields the CRO reads as
+ *    qualification. An unchecked box already means "not established", so
+ *    leaving it alone is both honest and correct.
+ *
+ * 2. PICKLISTS MATCH EXACTLY OR ARE SKIPPED. "Accounting System Used" has a
+ *    fixed vocabulary. A call where someone says "we use Quickbooks online"
+ *    maps to "QuickBooks Online" only if that string is in the picklist; near
+ *    misses are dropped, never coerced, because a wrong value here is
+ *    indistinguishable from a human's answer.
+ *
+ * 3. EXISTING TEXT IS NEVER TRUNCATED. The text areas cap at 500 and 255
+ *    characters, so an append often will not fit alongside what the BDR wrote.
+ *    When it does not fit, the write is skipped and reported. Nobody's
+ *    sentence gets cut in half to make room for ours.
+ */
+
+import { accountFieldMeta, type AccountFieldMeta } from "./salesforce-context";
+import { getSalesforceClient } from "./salesforce";
+
+const API_VERSION = "v61.0";
+
+/** What DealRipe proposes to do to one field. */
+export type FieldWrite = {
+  label: string;
+  apiName: string;
+  type: string;
+  currentValue: string | null;
+  /** The value we would send to Salesforce, already coerced to the field type. */
+  newValue: string | number | boolean;
+  /** Rendered for a human reading the preview. */
+  display: string;
+  mode: "fill_blank" | "append";
+  evidence: string | null;
+};
+
+export type FieldSkip = {
+  label: string;
+  apiName: string | null;
+  reason: string;
+};
+
+export type WriteBackPlan = {
+  accountId: string;
+  accountName: string;
+  writes: FieldWrite[];
+  skips: FieldSkip[];
+};
+
+/**
+ * A value DealRipe extracted for one Sales Development field, before it has
+ * been checked against the field's real type.
+ */
+export type ProposedValue = {
+  /** Field label as it appears in Salesforce. */
+  label: string;
+  /** Free-text answer from the call, or a boolean/number/date where we have one. */
+  value: string | number | boolean | null;
+  /** The customer's own words, carried into appended text so it is auditable. */
+  evidence?: string | null;
+  /**
+   * How sure we are, 0 to 1. Booleans require high confidence because a
+   * checkbox cannot later be walked back to "unknown".
+   */
+  confidence?: number;
+};
+
+const BOOLEAN_MIN_CONFIDENCE = 0.8;
+
+/** Prefix matching the Rolldog write-back convention, so provenance is obvious. */
+export function dealRipeStamp(callDate: string | Date): string {
+  const d = typeof callDate === "string" ? new Date(callDate) : callDate;
+  const label = Number.isNaN(d.getTime())
+    ? "call"
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" }) + " call";
+  return `[DealRipe · ${label}]`;
+}
+
+function truthy(v: string | number | boolean | null): boolean | null {
+  if (typeof v === "boolean") return v;
+  if (v === null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (["yes", "true", "confirmed", "y"].includes(s)) return true;
+  if (["no", "false", "not confirmed", "n"].includes(s)) return false;
+  return null;
+}
+
+/** Case-insensitive exact match against the picklist vocabulary. */
+function matchPicklist(raw: string, allowed: ReadonlyArray<string>): string | null {
+  const s = raw.trim().toLowerCase();
+  return allowed.find((a) => a.trim().toLowerCase() === s) ?? null;
+}
+
+function toIsoDate(raw: string | number | boolean): string | null {
+  const d = new Date(String(raw));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/**
+ * Turn extracted answers into a concrete, type-checked plan. Reads the account
+ * first so "fill blank" and "append" are decided against what is actually
+ * there, not against what we last saw.
+ */
+export async function planAccountWriteBack(args: {
+  accountId: string;
+  accountName: string;
+  proposed: ReadonlyArray<ProposedValue>;
+  callDate: string | Date;
+}): Promise<WriteBackPlan> {
+  const meta = await accountFieldMeta();
+  const stamp = dealRipeStamp(args.callDate);
+
+  // Current values, so an append never has to guess what it is appending to.
+  const names = [...meta.values()].map((f) => f.name);
+  const { token, instanceUrl } = await getSalesforceClient();
+  const soql = `SELECT Id, ${names.join(", ")} FROM Account WHERE Id = '${args.accountId.replace(/[^a-zA-Z0-9]/g, "")}' LIMIT 1`;
+  const res = await fetch(`${instanceUrl}/services/data/${API_VERSION}/query?q=${encodeURIComponent(soql)}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`current-value read failed (${res.status}) for ${args.accountId}`);
+  const current = ((await res.json()) as { records?: Array<Record<string, unknown>> }).records?.[0] ?? {};
+
+  const writes: FieldWrite[] = [];
+  const skips: FieldSkip[] = [];
+
+  for (const p of args.proposed) {
+    const f: AccountFieldMeta | undefined = meta.get(p.label);
+    if (!f) {
+      skips.push({ label: p.label, apiName: null, reason: "field not visible to the integration user" });
+      continue;
+    }
+    if (!f.updateable) {
+      skips.push({ label: p.label, apiName: f.name, reason: "field is not updateable by this user" });
+      continue;
+    }
+    if (p.value === null || String(p.value).trim() === "") {
+      continue; // nothing extracted; not a skip worth reporting
+    }
+
+    const existingRaw = current[f.name];
+    const existing =
+      existingRaw === null || existingRaw === undefined || existingRaw === ""
+        ? null
+        : typeof existingRaw === "boolean"
+          ? existingRaw
+            ? "Yes"
+            : "No"
+          : String(existingRaw);
+
+    switch (f.type) {
+      case "boolean": {
+        const b = truthy(p.value);
+        if (b !== true) {
+          skips.push({
+            label: p.label,
+            apiName: f.name,
+            reason: b === false ? "would set false; DealRipe only ever checks a box, never unchecks it" : "not a clear yes",
+          });
+          break;
+        }
+        if ((p.confidence ?? 1) < BOOLEAN_MIN_CONFIDENCE) {
+          skips.push({ label: p.label, apiName: f.name, reason: `confidence ${(p.confidence ?? 0).toFixed(2)} below ${BOOLEAN_MIN_CONFIDENCE} for a checkbox` });
+          break;
+        }
+        if (existingRaw === true) break; // already true, nothing to do
+        writes.push({
+          label: p.label,
+          apiName: f.name,
+          type: f.type,
+          currentValue: existing,
+          newValue: true,
+          display: "checked",
+          mode: "fill_blank",
+          evidence: p.evidence ?? null,
+        });
+        break;
+      }
+
+      case "picklist": {
+        const v = matchPicklist(String(p.value), f.picklistValues);
+        if (!v) {
+          skips.push({
+            label: p.label,
+            apiName: f.name,
+            reason: `"${String(p.value).slice(0, 40)}" is not one of the allowed values`,
+          });
+          break;
+        }
+        if (existing) {
+          skips.push({ label: p.label, apiName: f.name, reason: `already set to "${existing}"; picklists are never overwritten` });
+          break;
+        }
+        writes.push({ label: p.label, apiName: f.name, type: f.type, currentValue: existing, newValue: v, display: v, mode: "fill_blank", evidence: p.evidence ?? null });
+        break;
+      }
+
+      case "multipicklist": {
+        const parts = String(p.value)
+          .split(/[;,]/)
+          .map((s) => matchPicklist(s, f.picklistValues))
+          .filter((s): s is string => !!s);
+        if (parts.length === 0) {
+          skips.push({ label: p.label, apiName: f.name, reason: `no part of "${String(p.value).slice(0, 40)}" matches the allowed values` });
+          break;
+        }
+        // Union with whatever is already selected, so a BDR's choice survives.
+        const had = existing ? existing.split(";").map((s) => s.trim()).filter(Boolean) : [];
+        const merged = [...new Set([...had, ...parts])];
+        if (merged.length === had.length) break; // nothing new
+        writes.push({
+          label: p.label,
+          apiName: f.name,
+          type: f.type,
+          currentValue: existing,
+          newValue: merged.join(";"),
+          display: merged.join("; "),
+          mode: had.length ? "append" : "fill_blank",
+          evidence: p.evidence ?? null,
+        });
+        break;
+      }
+
+      case "date": {
+        const iso = toIsoDate(p.value);
+        if (!iso) {
+          skips.push({ label: p.label, apiName: f.name, reason: `"${String(p.value).slice(0, 40)}" is not a date` });
+          break;
+        }
+        if (existing) {
+          skips.push({ label: p.label, apiName: f.name, reason: `already set to ${existing}; a date the customer gave a human is not ours to move` });
+          break;
+        }
+        writes.push({ label: p.label, apiName: f.name, type: f.type, currentValue: existing, newValue: iso, display: iso, mode: "fill_blank", evidence: p.evidence ?? null });
+        break;
+      }
+
+      case "double":
+      case "int":
+      case "currency": {
+        const n = Number(String(p.value).replace(/[^0-9.]/g, ""));
+        if (!Number.isFinite(n) || n <= 0) {
+          skips.push({ label: p.label, apiName: f.name, reason: `"${String(p.value).slice(0, 40)}" is not a number` });
+          break;
+        }
+        if (existing) {
+          skips.push({ label: p.label, apiName: f.name, reason: `already set to ${existing}` });
+          break;
+        }
+        writes.push({ label: p.label, apiName: f.name, type: f.type, currentValue: existing, newValue: n, display: String(n), mode: "fill_blank", evidence: p.evidence ?? null });
+        break;
+      }
+
+      // textarea, string, phone, url, everything else text-shaped
+      default: {
+        const limit = f.length ?? 255;
+        const body = String(p.value).trim();
+        const line = `${stamp} ${body}${p.evidence ? ` "${p.evidence}"` : ""}`;
+
+        if (!existing) {
+          writes.push({
+            label: p.label,
+            apiName: f.name,
+            type: f.type,
+            currentValue: null,
+            newValue: line.slice(0, limit),
+            display: line.slice(0, limit),
+            mode: "fill_blank",
+            evidence: p.evidence ?? null,
+          });
+          break;
+        }
+
+        // Do not repeat ourselves on a second call.
+        if (existing.includes(body.slice(0, 60))) break;
+
+        const combined = `${existing}\n\n${line}`;
+        if (combined.length > limit) {
+          skips.push({
+            label: p.label,
+            apiName: f.name,
+            reason: `no room: ${existing.length} chars already used of ${limit}, adding ${line.length} more would overflow. Existing text is never truncated.`,
+          });
+          break;
+        }
+        writes.push({
+          label: p.label,
+          apiName: f.name,
+          type: f.type,
+          currentValue: existing,
+          newValue: combined,
+          display: line,
+          mode: "append",
+          evidence: p.evidence ?? null,
+        });
+      }
+    }
+  }
+
+  return { accountId: args.accountId, accountName: args.accountName, writes, skips };
+}
+
+/**
+ * Execute a plan. Separate from planning on purpose: the plan is reviewable and
+ * this is not. Returns the fields written.
+ */
+export async function applyAccountWriteBack(plan: WriteBackPlan): Promise<{ written: string[]; error: string | null }> {
+  if (plan.writes.length === 0) return { written: [], error: null };
+
+  const body: Record<string, unknown> = {};
+  for (const w of plan.writes) body[w.apiName] = w.newValue;
+
+  const { token, instanceUrl } = await getSalesforceClient();
+  const res = await fetch(`${instanceUrl}/services/data/${API_VERSION}/sobjects/Account/${plan.accountId}`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    return { written: [], error: `PATCH ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}` };
+  }
+  return { written: plan.writes.map((w) => w.apiName), error: null };
+}

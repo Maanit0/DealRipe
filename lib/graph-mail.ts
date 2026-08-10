@@ -313,6 +313,39 @@ function toRecipientList(list: DraftRecipient[] | undefined) {
  * contentType defaults to "Text" because DealRipe drafts are written in the
  * rep's own voice; HTML markup makes them read like templates.
  */
+/**
+ * Full plain-text body of one message.
+ *
+ * listMailboxMessages returns bodyPreview, which is roughly the first 255
+ * characters. That is fine for spotting a thread, and useless for learning how
+ * someone writes: a sign-off lives at the END of an email, so "Cheers, Steven"
+ * never appears in a preview. Voice samples need the tail, so they fetch the
+ * body for the handful of messages they actually use rather than pulling
+ * bodies for every message in the mailbox.
+ *
+ * Requested as text so no HTML stripping is needed. The body is used in a
+ * prompt and never stored.
+ */
+export async function getMessageBody(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  messageId: string;
+}): Promise<string | null> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const url =
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(args.mailbox)}` +
+    `/messages/${encodeURIComponent(args.messageId)}?$select=body`;
+  const res = await fetch(url, {
+    headers: { authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="text"' },
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { body?: { content?: string } };
+  const content = (json.body?.content ?? "").trim();
+  return content.length > 0 ? content : null;
+}
+
 export async function createDraft(args: {
   tenantIdOrDomain: string;
   /** The rep's mailbox (userPrincipalName), e.g. jlopez@magaya.com. */

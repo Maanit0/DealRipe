@@ -25,6 +25,7 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+import { crosswalkRolldogOpportunityId } from "../lib/crm-crosswalk";
 import { listUpcomingMeetings } from "../lib/microsoft-graph";
 import {
   autoDealExternalIdForAddress,
@@ -100,13 +101,17 @@ async function main(): Promise<void> {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      // --- Salesforce
+      // --- Salesforce. Never swallow the error: an unreachable Salesforce and
+      // a company with no account both render as "-", and the whole point of
+      // this table is telling those two apart.
       let sf: string | null = null;
+      let sfError = false;
       try {
         const ctx = await getAccountContextByDomain(domain, [address]);
         sf = ctx?.accountName ?? null;
-      } catch {
-        sf = null;
+      } catch (e) {
+        sfError = true;
+        console.error(`   salesforce lookup failed for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
       }
 
       // --- DealRipe
@@ -129,7 +134,11 @@ async function main(): Promise<void> {
 
       // --- Rolldog: the mapped id, then a name search so an unmapped but
       //     existing opportunity is reported rather than counted as absent.
-      let rd = dealRow.data?.rolldog_opportunity_id ?? rolldogOppIdForDeal(externalId) ?? null;
+      let rd =
+        dealRow.data?.rolldog_opportunity_id ??
+        rolldogOppIdForDeal(externalId) ??
+        crosswalkRolldogOpportunityId(domain) ??
+        null;
       let rdSearched = false;
       if (!rd && !isFreeMailDomain(domain)) {
         const stem = domain.split(".")[0];

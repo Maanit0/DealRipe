@@ -31,6 +31,10 @@ const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
  */
 const CALENDAR_VIEW_SELECT = [
   "id",
+  // Stable across mailboxes. `id` is per-mailbox: when two reps are on the same
+  // meeting, each copy has a different id, so keying on it creates two of
+  // everything, including two bots in the customer's call.
+  "iCalUId",
   "subject",
   "start",
   "end",
@@ -170,6 +174,8 @@ export type NormalizedAttendee = {
 
 export type NormalizedMeeting = {
   eventId: string;
+  /** Same value in every attendee's mailbox. Use for cross-rep dedupe. */
+  iCalUId: string | null;
   subject: string | null;
   start: { dateTime: string; timeZone: string } | null;
   end: { dateTime: string; timeZone: string } | null;
@@ -268,6 +274,7 @@ function normalizeEvent(raw: unknown): NormalizedMeeting | null {
   if (!isRecord(raw)) return null;
   const eventId = typeof raw.id === "string" ? raw.id : null;
   if (!eventId) return null;
+  const iCalUId = typeof raw.iCalUId === "string" && raw.iCalUId.length > 0 ? raw.iCalUId : null;
 
   const attendees: NormalizedAttendee[] = [];
   if (Array.isArray(raw.attendees)) {
@@ -298,6 +305,7 @@ function normalizeEvent(raw: unknown): NormalizedMeeting | null {
 
   return {
     eventId,
+    iCalUId,
     subject: typeof raw.subject === "string" ? raw.subject : null,
     start: extractDateTimeBlock(raw.start),
     end: extractDateTimeBlock(raw.end),

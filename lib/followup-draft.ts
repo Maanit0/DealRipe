@@ -25,7 +25,7 @@
  */
 
 import { getAnthropicClient, getAnthropicModel } from "./anthropic";
-import { createReplyDraft, createDraft, domainOf, listMailboxMessages, type MailMessage } from "./graph-mail";
+import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
 import { repName } from "./display-names";
 import { listMeetingsBetween } from "./microsoft-graph";
 import type { PostCallSummary } from "./post-call-summary";
@@ -35,6 +35,10 @@ const GRAPH_TENANT = "magaya.com";
 const THREAD_LOOKBACK_DAYS = 120;
 /** How many of the rep's own sent messages to learn voice from. */
 const VOICE_SAMPLES = 6;
+// Head carries greeting and register; tail carries the sign-off. Both matter,
+// the middle is deal content we do not want the model copying.
+const VOICE_HEAD = 700;
+const VOICE_TAIL = 300;
 
 export type FollowUpDraftInput = {
   /** The rep's mailbox. Must be on GRAPH_MAIL_ALLOWED_MAILBOXES. */
@@ -273,7 +277,29 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
   // Fall back to any sent mail rather than none: a slightly-off voice beats a
   // generic one, and a new rep may have no customer mail yet.
   const pool = external.length > 0 ? external : msgs.filter((m) => m.outbound && m.preview.length >= 80);
-  return pool.slice(0, VOICE_SAMPLES).map((m) => `Subject: ${m.subject}\n${m.preview}`);
+  const chosen = pool.slice(0, VOICE_SAMPLES);
+
+  // Fetch the real body for these few. bodyPreview is the first ~255 characters,
+  // so it shows how a rep OPENS an email and never how they close one. The
+  // prompt asks the model to match greeting and sign-off, and a sign-off is at
+  // the end, so preview-only samples cannot teach the half that reps notice.
+  // Steven asked about exactly this: he signs off "Cheers", which lives in the
+  // last line and would never have appeared in a sample.
+  const withBodies = await Promise.all(
+    chosen.map(async (m) => {
+      const body = await getMessageBody({ tenantIdOrDomain: GRAPH_TENANT, mailbox, messageId: m.id }).catch(() => null);
+      return { m, body };
+    }),
+  );
+
+  return withBodies.map(({ m, body }) => {
+    if (!body) return `Subject: ${m.subject}\n${m.preview}`;
+    // Trim the quoted thread below a reply, which is someone else's writing.
+    const own = body.split(/\n\s*(?:From:|On .{0,60}wrote:|-----Original Message-----)/)[0].trim();
+    if (own.length <= VOICE_HEAD + VOICE_TAIL) return `Subject: ${m.subject}\n${own}`;
+    // Head carries the greeting and register, tail carries the sign-off.
+    return `Subject: ${m.subject}\n${own.slice(0, VOICE_HEAD)}\n[...]\n${own.slice(-VOICE_TAIL)}`;
+  });
 }
 
 /**
