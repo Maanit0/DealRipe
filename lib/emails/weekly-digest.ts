@@ -251,8 +251,31 @@ export function renderPipelineDigestEmail(args: {
     .filter((d) => d.needsAttention)
     .sort((a, b) => (b.dealSizeAnnual ?? 0) - (a.dealSizeAnnual ?? 0))
     .slice(0, 6);
-  const noShows = pc.deals.filter((d) => d.isNoShow);
+  // Only no-shows inside this digest's own window. Using the current-state flag
+  // relisted missed meetings from weeks earlier under a "week of" heading, which
+  // grew the section to nine items and trained the reader to skip it.
+  const noShows = pc.deals
+    .filter((d) => d.noShowInWindow)
+    .sort((a, b) => Date.parse(b.lastConversationAt ?? "") - Date.parse(a.lastConversationAt ?? ""))
+    .slice(0, 6);
   const h = pc.headline;
+
+  // Blocker texts already printed in full on an earlier card this send.
+  const seenBlockers = new Set<string>();
+
+  // When the same gap blocks several of the top deals, that is a coaching
+  // signal about how the team sells, not six separate deal facts. Say it once,
+  // with the names, above the list.
+  // Rolldog deals only. A pre-opportunity row with no stage and no value has
+  // the same gap trivially, and padding the list with those makes a real
+  // coaching signal about the forecast look like a generic complaint.
+  const buyerGapDeals = attention.filter((d) => d.inRolldog && d.economicBuyer && !d.economicBuyer.engaged);
+  const patternHtml =
+    buyerGapDeals.length >= 3
+      ? `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};margin:0 0 16px 0;"><strong style="color:${NAVY};">${buyerGapDeals.length} of the deals below share one blocker:</strong> the person who signs has never been on a call. ${esc(
+          buyerGapDeals.map((d) => d.account).join(", "),
+        )}.</div>`
+      : "";
 
   // Forecast reality: how much of the reps' Commit + Expect DealRipe rates softer
   // than the forecast, so Mark sees the risk to his number up front.
@@ -299,8 +322,20 @@ export function renderPipelineDigestEmail(args: {
       // The hero when it exists: DealRipe rates the deal below the rep's forecast.
       // This is the "you're committing this but it's soft" moment Mark cares most about.
       const diverges = d.inRolldog && fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory);
+      // The same buyer sentence was landing verbatim on every diverging card,
+      // which reads as boilerplate even though each instance is true. Say it in
+      // full once, then name the person and move on. The shared pattern across
+      // deals is called out above the list instead, where it is actually useful.
+      const rawBlocker = d.blockers[0] ?? "";
+      let blockerText = rawBlocker;
+      if (rawBlocker && seenBlockers.has(rawBlocker)) {
+        const who = d.economicBuyer?.name ?? null;
+        blockerText = who ? `${who} still has not been on a call.` : "Same gap: the economic buyer still has not been on a call.";
+      } else if (rawBlocker) {
+        seenBlockers.add(rawBlocker);
+      }
       const divergeHtml = diverges
-        ? `<div style="background:${RED_TINT};border-radius:10px;padding:12px 15px;margin-top:14px;"><div style="font-family:${SANS};font-size:15px;line-height:22px;color:${INK};"><strong style="color:${RED};">${esc(d.repName)} has this at ${esc(d.forecastCategory ?? "")}, DealRipe rates it ${esc(d.dealRipeCategory ?? "")}.</strong> ${esc(d.blockers[0] ?? "")}</div></div>`
+        ? `<div style="background:${RED_TINT};border-radius:10px;padding:12px 15px;margin-top:14px;"><div style="font-family:${SANS};font-size:15px;line-height:22px;color:${INK};"><strong style="color:${RED};">${esc(d.repName)} has this at ${esc(d.forecastCategory ?? "")}, DealRipe rates it ${esc(d.dealRipeCategory ?? "")}.</strong> ${esc(blockerText)}</div></div>`
         : "";
       // The rep-move line: the rep changed the forecast category in the window
       // (e.g. "Eduardo moved this from Expect to Commit this week"). Green when the
@@ -418,7 +453,8 @@ export function renderPipelineDigestEmail(args: {
   ${spacer}
 
   <tr><td style="padding:4px 6px 0 6px;">
-    <div style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${NAVY};">Deals to look at${h.dealsNeedingAttention > attention.length ? ` &middot; top ${attention.length} of ${h.dealsNeedingAttention}` : ""}</div>
+    <div style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${NAVY};margin-bottom:${patternHtml ? "14px" : "0"};">Deals to look at${h.dealsNeedingAttention > attention.length ? ` &middot; top ${attention.length} of ${h.dealsNeedingAttention}` : ""}</div>
+    ${patternHtml}
   </td></tr>
   ${attention.length ? attentionCards : `<tr><td style="padding-top:12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${CARD};border:1px solid ${BORDER};border-radius:14px;"><tr><td style="padding:20px 22px;font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">Nothing needs your attention this week.</td></tr></table></td></tr>`}
 

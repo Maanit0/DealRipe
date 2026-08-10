@@ -143,6 +143,15 @@ export function buildMagayaBriefingUserMessage(args: {
   history?: string;
   /** Today's date (YYYY-MM-DD), so the next-step commitment anchors a real near-term date. */
   today?: string;
+  /**
+   * Salesforce Sales Development context, recorded by the BDR before the rep
+   * ever spoke to this company. Only present on deals with no Rolldog
+   * opportunity yet, which is exactly where a briefing would otherwise have
+   * almost nothing to work from. Explicitly second-class to the qualification
+   * state above: it is a colleague's notes, not something the customer
+   * confirmed to us, so the prompt is told to treat it as a lead to test.
+   */
+  crmContext?: string;
 }): string {
   const { framework, extraction } = args;
 
@@ -179,6 +188,16 @@ export function buildMagayaBriefingUserMessage(args: {
 
   if (args.history) {
     lines.push(``, `SINCE LAST CALL:`, args.history);
+  }
+
+  if (args.crmContext) {
+    lines.push(
+      ``,
+      `WHAT THE BDR RECORDED BEFORE THIS CALL (from Salesforce):`,
+      args.crmContext,
+      ``,
+      `Treat the block above as unverified. A colleague wrote it down; the customer has not confirmed any of it to us. Use it to make the questions specific and to avoid asking what is already known, but never state it back as established fact, and never let it fill a qualification gap. If something in it is important and unconfirmed, that is a good thing to ask about.`,
+    );
   }
 
   // Reference: how Magaya's best reps phrase questions for the open gaps on this

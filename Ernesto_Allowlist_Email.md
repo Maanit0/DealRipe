@@ -1,7 +1,9 @@
 # Email to Ernesto — spam allowlist before Monday noon
 
-Fill in the two bracketed values from your Resend dashboard before sending.
-`MAIL_FROM` in `.env.local` has the exact sending address.
+Fill in the SPF/DKIM line from your Resend dashboard before sending. The domain
+and from-address below are taken from `MAIL_FROM` in `.env.local` and are the
+exact values that matter: the sending subdomain is `send.dealripe.com`, not
+`dealripe.com`, so an allowlist on the bare domain would not help.
 
 **To:** Ernesto (Magaya IT)
 **Cc:** Mark Buman
@@ -22,8 +24,8 @@ day looking for emails that are sitting in a folder they never check.
 
 Could you add an org-level allowlist for our sending domain?
 
-- Sending domain: **dealripe.com**
-- From address: **[paste MAIL_FROM, e.g. notify@dealripe.com]**
+- Sending domain: **send.dealripe.com**
+- From address: **DealRipe &lt;notify@send.dealripe.com&gt;**
 - Sending service: Resend
 - SPF and DKIM: **[paste the records from Resend, or say "already configured and
   verified" if you'd rather he checked himself]**

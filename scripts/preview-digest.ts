@@ -1,23 +1,27 @@
 /**
- * Preview the pipeline digest exactly as tomorrow's cron will render it, WITHOUT
- * sending it. Builds the same email (getPipelineChanges + renderPipelineDigestEmail)
- * and writes it to digest-preview.html so you can open it in a browser first.
+ * Render exactly what the Tuesday 6am digest cron will send, and write it to a
+ * file for review.
  *
- *   npx tsx scripts/preview-digest.ts            # read-only: current data
- *   npx tsx scripts/preview-digest.ts --snapshot # refresh snapshots first, like the real send
+ * Why this exists alongside scripts/generate-digest.ts: that script calls
+ * renderWeeklyDigestEmail, an older and much thinner template, while the cron
+ * calls renderPipelineDigestEmail. Previewing one and shipping the other means
+ * the preview is worse than useless, because it looks like a regression that
+ * has not actually happened. This script mirrors app/api/cron/digest/route.ts
+ * step for step: same snapshot refresh, same 7-day window, same doThis
+ * synthesis, same renderer, same arguments.
  *
- * Read-only by default (no writes). Pass --snapshot to run the same
- * snapshot-before-digest step the cron does, so the preview reflects the live
- * Rolldog state and any rep category move shows the "moved from X to Y" line.
+ *   npx tsx scripts/preview-digest.ts
+ *   npx tsx scripts/preview-digest.ts --days 14 --out ../digest-preview.html
+ *   npx tsx scripts/preview-digest.ts --no-snapshot   # skip the snapshot write
  *
- * Runs on your Mac with .env.local (needs Rolldog + Supabase access).
+ * Sends nothing, ever. The only write it performs is the snapshot refresh the
+ * cron also does, and --no-snapshot turns that off if you want it fully inert.
  */
 
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 import { attachDoThis } from "../lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "../lib/emails/weekly-digest";
@@ -25,18 +29,31 @@ import { getPipelineChanges } from "../lib/pipeline-changes";
 import { recordAllDealSnapshots } from "../lib/snapshot";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
-async function main(): Promise<void> {
-  const withSnapshot = process.argv.includes("--snapshot");
-  const tenantId = await resolveTenantId("magaya");
+const TENANT_SLUG = "magaya";
 
-  if (withSnapshot) {
-    const n = await recordAllDealSnapshots(tenantId);
-    console.log(`Refreshed ${n} snapshots (matches the real send).`);
+function arg(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+async function main(): Promise<void> {
+  const days = Number(arg("--days") ?? 7);
+  const outPath = arg("--out") ?? "digest-preview.html";
+  const skipSnapshot = process.argv.includes("--no-snapshot");
+
+  const tenantId = await resolveTenantId(TENANT_SLUG);
+
+  if (!skipSnapshot) {
+    try {
+      const snapped = await recordAllDealSnapshots(tenantId);
+      console.log(`refreshed ${snapped} snapshots (the cron does this too)`);
+    } catch (e) {
+      console.error(`snapshot refresh failed, continuing: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
-  // Same window the cron uses: trailing 7 days.
   const untilIso = new Date().toISOString();
-  const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const sinceIso = new Date(Date.now() - days * 86_400_000).toISOString();
   const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
   await attachDoThis(pc.deals);
 
@@ -45,6 +62,7 @@ async function main(): Promise<void> {
     day: "numeric",
     timeZone: "America/Chicago",
   });
+
   const email = renderPipelineDigestEmail({
     pc,
     weekLabel,
@@ -52,31 +70,26 @@ async function main(): Promise<void> {
     baseUrl: process.env.DEALRIPE_APP_URL,
   });
 
-  const out = resolve(process.cwd(), "digest-preview.html");
-  writeFileSync(out, email.html);
+  writeFileSync(outPath, email.html, "utf8");
 
-  const moves = pc.deals.filter((d) =>
-    d.changes.some((c) => c.kind === "forecast" && c.from && c.to && c.from !== c.to),
-  );
-  const toList = (process.env.DIGEST_TO ?? "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-  const bccList = (process.env.DIGEST_BCC ?? "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-  console.log(`\nSubject: ${email.subject}`);
-  console.log(`To (env DIGEST_TO): ${toList.length ? toList.join(", ") : "(unset — real send would skip)"}`);
-  console.log(`Bcc (env DIGEST_BCC): ${bccList.length ? bccList.join(", ") : "(none)"}`);
-  console.log(`Deals to look at: ${pc.headline.dealsNeedingAttention}  |  changed: ${pc.headline.dealsChanged}`);
-  if (moves.length) {
-    console.log("Rep category moves this week:");
-    for (const d of moves) {
-      const m = d.changes.find((c) => c.kind === "forecast" && c.from && c.to && c.from !== c.to)!;
-      console.log(`  - ${d.account}: ${d.repName} moved ${m.from} -> ${m.to}`);
-    }
-  } else {
-    console.log("Rep category moves this week: none in the window.");
-  }
-  console.log(`\nWrote ${out}\nOpen it in a browser to preview the exact email.`);
+  const to = (process.env.DIGEST_TO ?? "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+  const bcc = (process.env.DIGEST_BCC ?? "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+
+  console.log("");
+  console.log(`Subject:   ${email.subject}`);
+  console.log(`Window:    last ${days} days`);
+  console.log(`To:        ${to.join(", ") || "(DIGEST_TO not set, the cron would send nothing)"}`);
+  console.log(`Bcc:       ${bcc.join(", ") || "(none)"}`);
+  console.log("");
+  console.log(`Deals:            ${pc.deals.length}`);
+  console.log(`Needing attention:${String(pc.headline.dealsNeedingAttention).padStart(4)}`);
+  console.log(`Changed:          ${String(pc.headline.dealsChanged).padStart(4)}`);
+  console.log("");
+  console.log(`Written to ${outPath}. This is byte-for-byte what the cron renders.`);
+  console.log("");
 }
 
 main().catch((e) => {
-  console.error(e instanceof Error ? e.message : String(e));
+  console.error(`\n${e instanceof Error ? e.message : String(e)}\n`);
   process.exit(1);
 });

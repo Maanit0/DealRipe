@@ -37,6 +37,23 @@ export async function GET(): Promise<Response> {
     );
   }
 
+  // A localhost redirect URI in production means .env.local was pasted into
+  // Vercel wholesale. The failure it causes is nasty to read: the cookie is set
+  // on app.dealripe.com, Microsoft sends the user to localhost, and whatever is
+  // running there reports "state mismatch", which looks like a cookie bug
+  // rather than a config one. Fail here instead, where the cause is obvious.
+  if (process.env.NODE_ENV === "production" && /localhost|127\.0\.0\.1/.test(redirectUri)) {
+    return new Response(
+      renderError(
+        "Microsoft OAuth is misconfigured for production",
+        `MICROSOFT_REDIRECT_URI is "${redirectUri}", which points at a developer machine. ` +
+          "Set it in Vercel to https://app.dealripe.com/auth/microsoft/callback and redeploy. " +
+          "This variable differs between local and production and must not be copied between them.",
+      ),
+      { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    );
+  }
+
   const state = randomBytes(32).toString("base64url");
 
   const params = new URLSearchParams({

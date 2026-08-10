@@ -93,11 +93,19 @@ async function main(): Promise<void> {
       d.rolldog_opportunity_id ?? rolldogOppIdForDeal(externalId) ?? crosswalkRolldogOpportunityId(domain) ?? null;
 
     let salesforce: string | null = crosswalkSalesforceAccountId(domain);
+    let sfError: string | null = null;
     if (!salesforce && !isFreeMail) {
       try {
         salesforce = (await getAccountContextByDomain(domain))?.accountName ?? null;
-      } catch {
+      } catch (e) {
+        // Never swallow this. A lookup that fails looks identical to a company
+        // that genuinely has no Salesforce account, and the difference decides
+        // whether a deal is classified as debris. An earlier run of this script
+        // reported nine accounts as having no CRM record when the real cause
+        // was the ~100 queries this loop fires hitting a rate limit.
+        sfError = e instanceof Error ? e.message : String(e);
         salesforce = null;
+        console.error(`   salesforce lookup failed for ${domain}: ${sfError}`);
       }
     }
 

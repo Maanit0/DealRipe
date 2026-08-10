@@ -175,7 +175,18 @@ export type DealChangeRecord = {
   flags: DealFlag[];
   attention: number;
   needsAttention: boolean;
+  /**
+   * The deal's LATEST meeting was a no-show, whenever it happened. Correct for
+   * the app's master read, which is a current picture of the deal.
+   */
   isNoShow: boolean;
+  /**
+   * A no-show happened inside the requested window. This is the one a weekly
+   * digest wants: a section headed "no-shows" under a "week of" header must not
+   * relist a missed meeting from three weeks ago, or the reader learns to skip
+   * the section entirely.
+   */
+  noShowInWindow: boolean;
 };
 
 export type ForecastBucket = { category: string; deals: number; annual: number };
@@ -1090,6 +1101,7 @@ export async function getPipelineChanges(
       attention,
       needsAttention,
       isNoShow: anyNoShow,
+      noShowInWindow: isNoShow,
     });
   }
 

@@ -175,6 +175,17 @@ function privateKey(): string | null {
   if (inline && inline.trim()) return inline.includes("\\n") ? inline.replace(/\\n/g, "\n") : inline;
   const path = process.env.SF_PRIVATE_KEY_PATH;
   if (!path) return null;
+  // A filesystem path in production is the same copy-paste mistake as a
+  // localhost redirect URI: the file lives on a laptop and does not exist on
+  // Vercel, so Salesforce auth fails with a config error that reads like an
+  // outage. Say so once, loudly, rather than letting every briefing lose its
+  // BDR context in silence.
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      `[salesforce] SF_PRIVATE_KEY_PATH is set in production ("${path}"). That file does not exist here. ` +
+        "Set SF_PRIVATE_KEY to the PEM contents instead and remove SF_PRIVATE_KEY_PATH from Vercel.",
+    );
+  }
   try {
     // Required lazily so bundling for the edge does not pull in node:fs when
     // the inline key is being used.

@@ -39,9 +39,7 @@ const TEAM: ReadonlyArray<{ name: string; email: string }> = [
   { name: "Juan Lopez", email: "jlopez@magaya.com" },
   { name: "Eduardo Bencomo", email: "ebencomo@magaya.com" },
   { name: "Alexandra Suntrup", email: "asuntrup@magaya.com" },
-  // Surnames below are inferred from the email local part plus the first names
-  // on Mark's invite. Confirm them on the onboarding call before they appear
-  // anywhere a customer or Mark will read.
+  // Confirmed against the Microsoft 365 directory, Aug 10.
   { name: "Ariel Rodriguez", email: "arodriguez@magaya.com" },
   { name: "Daniel Blitstein", email: "dblitstein@magaya.com" },
   { name: "Steven Johnson", email: "sjohnson@magaya.com" },
