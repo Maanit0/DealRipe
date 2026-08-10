@@ -897,6 +897,83 @@ export type DealRoom = {
  * consume. Asserts the full set of snake_case read fields it pulls
  * (single assert, single audit row).
  */
+/** One checklist item as Rolldog serializes it. */
+export type RolldogRequirementItem = {
+  /** Stable definition id, shared across opportunities. The join key. */
+  id: number;
+  /** Per-opportunity value row id. Needed to write; not useful to read. */
+  value_id?: number;
+  name: string;
+  value: boolean;
+  no_score?: boolean;
+  section?: number;
+};
+
+export type RolldogStageRequirements = {
+  stages: Array<{ name: string; position: number; attributes: RolldogRequirementItem[] }>;
+  /** 1-based position of the stage the opportunity currently sits in. */
+  currentStagePosition: number | null;
+};
+
+/**
+ * The rep-maintained stage checklist: the ticks and crosses Mark inspects.
+ *
+ * Reached at /opportunities/{id}/opportunity-stages-requirement. Note the
+ * pluralization, "stages" then singular "requirement", which is why guessing at
+ * the name failed and reading the opportunity's advertised relationships found
+ * it at once.
+ *
+ * Returns null on 404 rather than throwing: an opportunity with no checklist is
+ * a real state, not an error. Every other failure throws, because a checklist
+ * we could not read must never be mistaken for a checklist that is empty.
+ */
+export async function getStageRequirements(
+  opportunityId: string,
+): Promise<RolldogStageRequirements | null> {
+  assertScopedRead(PILOT_TENANT_SLUG, opportunityId, ["stage_gates"]);
+  const config = readRolldogConfig();
+  ensureCredentials(config, opportunityId, "read");
+
+  const path = `/opportunities/${encodeURIComponent(opportunityId)}/opportunity-stages-requirement`;
+  const res = await rolldogFetch(config, path, { method: "GET" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new RolldogApiError(res.status, path, await safeBody(res));
+
+  const json = (await res.json()) as JsonApiSingleResponse;
+  const attrs = (json.data?.attributes ?? {}) as Record<string, unknown>;
+  const raw = Array.isArray(attrs.requirements) ? attrs.requirements : [];
+
+  const stages = raw
+    .map((s) => {
+      const stage = s as Record<string, unknown>;
+      const items = Array.isArray(stage.attributes) ? stage.attributes : [];
+      return {
+        name: typeof stage.name === "string" ? stage.name : "",
+        position: typeof stage.position === "number" ? stage.position : 0,
+        attributes: items
+          .map((i) => i as Record<string, unknown>)
+          .filter((i) => typeof i.id === "number" && typeof i.name === "string")
+          .map((i) => ({
+            id: i.id as number,
+            value_id: typeof i.value_id === "number" ? i.value_id : undefined,
+            // Several names carry a leading space or a typo ("Validate Who
+            // Negotiate and Signs"). Trim for display; never join on the name.
+            name: (i.name as string).trim(),
+            value: i.value === true,
+            no_score: i.no_score === true,
+            section: typeof i.section === "number" ? i.section : undefined,
+          })),
+      };
+    })
+    .sort((a, b) => a.position - b.position);
+
+  const pos = attrs["current-stage-position"];
+  return {
+    stages,
+    currentStagePosition: typeof pos === "number" ? pos : null,
+  };
+}
+
 /**
  * Candidate endpoints for the stage-requirement checklist.
  *
@@ -912,16 +989,15 @@ export type DealRoom = {
  * the sub-resources already use (`opportunity-budget`, `opportunity-timeline`).
  */
 const STAGE_GATE_PATH_CANDIDATES: readonly string[] = Object.freeze([
-  "opportunity-stage-requirements",
-  "opportunity-stage-gates",
-  "opportunity-checklist-items",
-  "opportunity-checklists",
-  "opportunity-stage-requirement-items",
-  "opportunity-requirements",
-  "stage-requirements",
-  "stage-gates",
-  "opportunity-close-plan",
-  "opportunity-milestones",
+  // Confirmed against opportunity 65462: the resource is pluralized on "stages"
+  // and singular on "requirement", which no amount of guessing was going to
+  // land. Guessing found nothing; the relationship list found it immediately,
+  // which is why the probe now follows relationships first and treats this
+  // hand-written list as a fallback.
+  "opportunity-stages-requirement",
+  "opportunity-criteria-row",
+  "opportunity-driver",
+  "opportunity-solution",
 ]);
 
 export type StageGateProbe = {
@@ -954,8 +1030,18 @@ export async function probeStageGates(opportunityId: string): Promise<StageGateP
   const coreAttributeKeys = Object.keys(coreJson.data?.attributes ?? {}).sort();
   const relationshipNames = Object.keys(coreJson.data?.relationships ?? {}).sort();
 
+  // Try what the opportunity actually advertises before anything hand-written.
+  // The first pass of this probe guessed ten plausible names and missed
+  // "opportunity-stages-requirement" on pluralization alone, while the answer
+  // was sitting in the relationships list the whole time. Ask the resource what
+  // it has rather than asking ourselves what it is probably called.
+  const candidates = [
+    ...relationshipNames.filter((r) => /stage|requirement|criteria|checklist|gate|driver|solution/i.test(r)),
+    ...STAGE_GATE_PATH_CANDIDATES,
+  ].filter((v, i, a) => a.indexOf(v) === i);
+
   const attempts: StageGateProbe["attempts"] = [];
-  for (const candidate of STAGE_GATE_PATH_CANDIDATES) {
+  for (const candidate of candidates) {
     const path = `/opportunities/${encodeURIComponent(opportunityId)}/${candidate}`;
     try {
       const res = await rolldogFetch(config, path, { method: "GET" });

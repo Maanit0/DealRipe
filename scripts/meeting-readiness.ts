@@ -199,6 +199,13 @@ async function main(): Promise<void> {
               : ctx.crmContextStatus === "absent"
                 ? "no Salesforce context (account has none)"
                 : "Salesforce context not applicable (we have our own calls)";
+        const gateState = ctx.stageGates
+          ? `${ctx.stageGates.tickedCount}/${ctx.stageGates.total} ticked by rep (${ctx.stageGates.crmStageKey ?? "?"}), ${ctx.stageGates.confirmedCount} confirmed on a call` +
+            (ctx.stageGates.claimedNotConfirmed.length
+              ? `, unverified: ${ctx.stageGates.claimedNotConfirmed.map((g) => g.name).join(", ")}`
+              : "")
+          : "no checklist read";
+        console.log(`   checklist   ${gateState}`);
         console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${sfState}`);
         try {
           const b = await generateBriefingFromState({

@@ -22,6 +22,7 @@ import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
 import { accountContextLines, getAccountContextByDomain } from "./salesforce-context";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import { getStageGateSummary, stageGateLines, type StageGateSummary } from "./stage-gates";
 import type { ExtractionResult } from "./scotsman";
 import type { Contact } from "./seed-data";
 import { getDealForTenant } from "./supabase-queries";
@@ -79,6 +80,12 @@ export type DealContext = {
    * change and nothing in the logs. Callers that can retry or warn should.
    */
   crmContextStatus: "present" | "absent" | "unavailable" | "not_applicable";
+  /**
+   * The rep's own stage checklist from Rolldog, and how it compares to what the
+   * calls confirm. Null when the deal has no opportunity or the read failed;
+   * an unreadable checklist must never render as an empty one.
+   */
+  stageGates: StageGateSummary | null;
 };
 
 export async function getDealContext(
@@ -114,6 +121,21 @@ export async function getDealContext(
     (externalId ? rolldogOppIdForDeal(externalId) : null) ??
     null;
   let oppCreatedAt: string | null = null;
+
+  // The rep's checklist. Independent of the summary read below, and deliberately
+  // fetched even when that one fails: they answer different questions and one
+  // being unavailable is no reason to discard the other.
+  let stageGates: StageGateSummary | null = null;
+  if (opp) {
+    try {
+      stageGates = await getStageGateSummary(opp, extraction as unknown as ExtractionMap);
+    } catch (err) {
+      console.warn(
+        `[deal-context] stage-gate read failed for opportunity ${opp}, briefing will not see the rep's checklist: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   if (opp) {
     try {
       // Authorize this one opportunity for the duration of the read. The scope
@@ -133,10 +155,15 @@ export async function getDealContext(
     }
   }
 
+  // Prefer the checklist's own current-stage-position over the stage parsed from
+  // the opportunity summary. It is the same fact from a more precise source: the
+  // checklist states the position numerically, while the summary's stage name
+  // has to be pattern-matched, and one of the six stages ("SQL - Develop
+  // Opportunity (Qualify)") carries no digit for a pattern to find.
   const effectiveStageKey = inferStageKey(
     framework,
     extraction,
-    crmStageKey ?? deal.stageKey,
+    stageGates?.crmStageKey ?? crmStageKey ?? deal.stageKey,
   );
   const ds = deriveDealState(framework, extraction, effectiveStageKey);
 
@@ -230,6 +257,7 @@ export async function getDealContext(
     lastCallDate,
     crmContext,
     crmContextStatus,
+    stageGates,
   };
 }
 
@@ -243,6 +271,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   framework: Framework;
   extraction: ExtractionMap;
   crmContext?: string;
+  stageGates?: string | null;
 } {
   return {
     account: ctx.account,
@@ -252,5 +281,6 @@ export function briefingStateFromContext(ctx: DealContext): {
     framework: ctx.framework,
     extraction: ctx.extraction as unknown as ExtractionMap,
     crmContext: ctx.crmContext ?? undefined,
+    stageGates: ctx.stageGates ? stageGateLines(ctx.stageGates) : null,
   };
 }

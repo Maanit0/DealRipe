@@ -77,6 +77,8 @@ export type BriefingState = {
   crmContext?: string;
   /** Calendar subject of the call, so the briefing matches the kind of call. */
   meetingSubject?: string | null;
+  /** The rep's ticked checklist from Rolldog, rendered for the prompt. */
+  stageGates?: string | null;
 };
 
 /**
@@ -114,6 +116,7 @@ export async function generateBriefingFromState(
     nextGaps,
     crmContext: state.crmContext,
     meetingSubject: state.meetingSubject,
+    stageGates: state.stageGates,
     today: new Date().toISOString().slice(0, 10),
   });
 

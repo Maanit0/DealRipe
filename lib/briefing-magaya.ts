@@ -166,6 +166,15 @@ export function buildMagayaBriefingUserMessage(args: {
    * walkthrough is how a briefing loses their trust in one reading.
    */
   meetingSubject?: string | null;
+  /**
+   * The rep's own stage checklist from Rolldog, rendered.
+   *
+   * This is the single biggest thing the briefing was missing. Without it a
+   * deal three stages into the pipeline looked identical to a cold inbound,
+   * because our extraction record was empty for both, and the briefing opened
+   * an audit session with a customer of two years by asking what they do.
+   */
+  stageGates?: string | null;
 }): string {
   const { framework, extraction } = args;
 
@@ -241,6 +250,16 @@ export function buildMagayaBriefingUserMessage(args: {
       `- "Audit", "Review", "Check-in", "Office Hours": an existing relationship. Brief on the account's health and what they are trying to get done.`,
       `- "Intro", "Discovery", "Demo" with nothing prior: genuinely early, so discovery framing is right.`,
       `Where the title and the qualification record disagree, trust the title about the STAGE of the relationship and the record about WHICH FACTS are confirmed.`,
+    );
+  }
+
+  if (args.stageGates) {
+    lines.push(
+      ``,
+      `WHAT THE REP HAS ALREADY DONE (their checklist in the CRM):`,
+      args.stageGates,
+      ``,
+      `This is the rep's own record of the work, so treat every ticked item as done and never ask the customer to confirm it happened. If a demo, a proposal or a site visit is ticked, that call has already occurred: brief for what comes after it. These ticks are a claim rather than evidence, so they may be used to rule a question OUT but never to fill a qualification gap IN.`,
     );
   }
 
