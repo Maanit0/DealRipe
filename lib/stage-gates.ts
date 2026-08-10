@@ -116,10 +116,27 @@ export function summarizeStageGates(
     }
   }
 
+  // Rolldog does not always carry current-stage-position: opportunity 70908 (TW
+  // Customs) returns it null. Falling back to "no stage" meant that deal briefed
+  // at SQL0 as a first discovery call while the rep had "Is Magaya Selected
+  // Vendor?" ticked, which is about as wrong as a briefing can be. The ticks
+  // themselves establish a floor: a deal cannot be earlier than the latest stage
+  // it has ticked work in.
+  const ticked = gates.filter((g) => g.ticked);
+  const inferredFloor = ticked.length
+    ? ticked
+        .map((g) => Number(g.stageKey.replace("SQL", "")))
+        .reduce((a, b) => Math.max(a, b), 0)
+    : null;
+
   return {
     gates,
     crmStageKey:
-      raw.currentStagePosition !== null ? stageKeyForPosition(raw.currentStagePosition) : null,
+      raw.currentStagePosition !== null
+        ? stageKeyForPosition(raw.currentStagePosition)
+        : inferredFloor !== null
+          ? `SQL${inferredFloor}`
+          : null,
     tickedCount: gates.filter((g) => g.ticked).length,
     confirmedCount: gates.filter((g) => g.state === "confirmed").length,
     total: gates.length,
@@ -146,6 +163,25 @@ export async function getStageGateSummary(
   return raw ? summarizeStageGates(raw, extraction) : null;
 }
 
+/**
+ * Ticks that change what kind of call this is, and what each one means.
+ *
+ * Most of the checklist is texture. A few items are decisive: if Magaya is the
+ * selected vendor, the customer has chosen us and nothing about that call is
+ * discovery. TW Customs had exactly that ticked and was still being briefed to
+ * ask what software they use today, because the checklist reached the prompt as
+ * an undifferentiated list and the model weighted it like any other line.
+ */
+const DECISIVE_GATES: Readonly<Record<number, string>> = Object.freeze({
+  409: "The customer has SELECTED MAGAYA. This is not a competitive evaluation and nothing here is discovery. Brief for execution: paperwork, timeline, rollout.",
+  404: "A product demonstration has already been given. Never propose a demo or ask what they want to see.",
+  408: "A proposal has been delivered. A number is in front of them, so budget is a reaction to that number, never a question of whether budget exists.",
+  406: "A preliminary estimate has been shared, so they have seen pricing.",
+  420: "The agreement is signed. This is a customer, not a prospect.",
+  424: "Their license is confirmed and they are live or going live.",
+  402: "A site visit has happened.",
+});
+
 /** The checklist block for the briefing prompt. Null when there is nothing useful. */
 export function stageGateLines(summary: StageGateSummary): string | null {
   const ticked = summary.gates.filter((g) => g.ticked);
@@ -155,10 +191,21 @@ export function stageGateLines(summary: StageGateSummary): string | null {
   const byStage = (list: StageGate[]): string =>
     list.map((g) => `- [${g.stageKey}] ${g.name}`).join("\n");
 
-  const parts = [
+  const parts: string[] = [];
+
+  // Decisive ticks go first and carry their consequence with them, so the model
+  // cannot read past them. Buried in a list they were being ignored.
+  const decisive = ticked
+    .map((g) => DECISIVE_GATES[g.rolldogId])
+    .filter((v): v is string => Boolean(v));
+  if (decisive.length > 0) {
+    parts.push(`THIS CHANGES THE CALL:`, ...decisive.map((d) => `- ${d}`), ``);
+  }
+
+  parts.push(
     `The rep has ticked ${summary.tickedCount} of ${summary.total} items on this deal's checklist in the CRM:`,
     byStage(ticked),
-  ];
+  );
 
   if (openAtOrBelow.length > 0) {
     parts.push(
