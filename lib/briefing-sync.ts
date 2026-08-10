@@ -20,6 +20,7 @@ import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph"
 import type { Json } from "./database.types";
 import { briefingStateFromContext, getDealContext } from "./deal-context";
 import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-config";
+import { prewarmRolldogToken } from "./rolldog";
 import { recordSentMessage } from "./sent-messages";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
@@ -89,6 +90,15 @@ export async function runBriefingSync(
 
   const tenantId = await resolveTenantId(TENANT_SLUG);
   const db = supabaseAdmin();
+
+  // Warm the Rolldog token before the run, as the pipeline page already does.
+  // Every briefing now reads the rep's stage checklist, so a cold process makes
+  // its first Rolldog call inside the first briefing, and a token fetch that is
+  // throttled or slow there surfaces as a bare "fetch failed" that drops the
+  // checklist for that deal only. One warm call up front removes the whole
+  // class. Best-effort: a missing credential legitimately throws and must not
+  // stop briefings from going out.
+  await prewarmRolldogToken().catch(() => {});
 
   const connections = await db
     .from("microsoft_connections")

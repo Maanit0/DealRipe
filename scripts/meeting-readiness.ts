@@ -39,7 +39,7 @@ import {
   isFreeMailDomain,
   rolldogOppIdForDeal,
 } from "../lib/pilot-config";
-import { searchOpportunities } from "../lib/rolldog";
+import { prewarmRolldogToken, searchOpportunities } from "../lib/rolldog";
 import { normalizeName } from "../lib/rolldog-match";
 import { getAccountContextByDomain } from "../lib/salesforce-context";
 import { supabaseAdmin } from "../lib/supabase";
@@ -59,6 +59,10 @@ async function main(): Promise<void> {
   const days = Number(arg("--days") ?? 7);
   const onlyRep = arg("--rep")?.toLowerCase() ?? null;
   const wantBriefing = process.argv.includes("--briefing");
+
+  // Same reason as the briefing cron: warm the token so the first Rolldog read
+  // of the run is not also the first token fetch of the run.
+  await prewarmRolldogToken().catch(() => {});
 
   const tenantId = await resolveTenantId(TENANT_SLUG);
   const db = supabaseAdmin();
