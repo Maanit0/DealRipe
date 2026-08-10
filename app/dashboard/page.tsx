@@ -141,7 +141,8 @@ function Dashboard({ tenant, weekParam, repParam }: { tenant: string; weekParam:
           <div>
             <span className="font-semibold text-ink">Upside if fixed</span> is the same weighted math as your Adj
             Weighted column, applied to risk: resolve a deal&apos;s open flags and its probability moves back up, adding
-            that much weighted forecast. Rowan Hill: fixing the owner gap moves 30% → 55%, worth +$34K weighted. Not
+            that much weighted forecast. Take the largest one on this book: closing its open flags is worth{" "}
+            {moneyK(Math.max(...scoped.map((f) => f.recoverableUsd), 0))} weighted on that deal alone. Not
             cash in hand on one deal, but across {atRiskCount} deals it&apos;s +{moneyK(recoverable)}, roughly{" "}
             {Math.max(1, Math.round(recoverable / 110_000))} extra closed deals a quarter at your sizes. Interventions
             queued in <Link href={withTenant("/today", tenant)} className="text-accent hover:underline">Today</Link>.

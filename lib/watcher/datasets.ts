@@ -5,11 +5,13 @@
  */
 
 import { registerWatcherDataset } from "./index";
+import { KEELSON_WATCHER } from "./keelson-watcher";
 import { LEDGERLINE_WATCHER } from "./ledgerline-watcher";
 import { SECOND_NATURE_WATCHER } from "./second-nature-watcher";
 
 registerWatcherDataset("second-nature", () => SECOND_NATURE_WATCHER);
 registerWatcherDataset("ledgerline", () => LEDGERLINE_WATCHER);
+registerWatcherDataset("keelson", () => KEELSON_WATCHER);
 
 export { getWatcherDataset, totals, bucketCounts } from "./index";
 export type * from "./types";

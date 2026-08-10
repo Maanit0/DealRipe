@@ -36,6 +36,12 @@ const DEMO_ORDER: NavKey[] = ["review", "forecastBoard", "oneOnOnes", "deals", "
 const WATCHER_ORDER: NavKey[] = ["today", "dashboard", "oneOnOnes", "deals", "meetings", "report"];
 // Watcher-only tenants (no DB rows): just the watcher surfaces.
 const WATCHER_ONLY_ORDER: NavKey[] = ["today", "dashboard"];
+// Keelson is both a watcher tenant and a fully DB-backed one, so it keeps the
+// Forecast Room, Actions and Activity that the watcher IA drops. It omits the
+// 1-on-1s tab: that view's calibration card is authored against Second Nature's
+// roster, and a demo must never render another prospect's data.
+const WATCHER_DB_ORDER: NavKey[] = ["today", "dashboard", "review", "deals", "meetings", "actions", "report", "activity"];
+const WATCHER_DB_SLUGS = new Set(["keelson"]);
 
 function navHref(base: string, tenant: string): string {
   return base === "/pipeline" ? pipelineHref(tenant) : withTenant(base, tenant);
@@ -63,9 +69,11 @@ export function AppShell({
       ? DEFAULT_ORDER
       : WATCHER_ONLY_SLUGS.has(tenant)
         ? WATCHER_ONLY_ORDER
-        : WATCHER_SLUGS.has(tenant)
-          ? WATCHER_ORDER
-          : DEMO_ORDER;
+        : WATCHER_DB_SLUGS.has(tenant)
+          ? WATCHER_DB_ORDER
+          : WATCHER_SLUGS.has(tenant)
+            ? WATCHER_ORDER
+            : DEMO_ORDER;
   return (
     <div className="min-h-screen bg-bg flex">
       <aside className="w-[184px] shrink-0 bg-white border-r border-line flex flex-col sticky top-0 h-screen px-3 py-4">

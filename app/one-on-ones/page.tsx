@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AppShell } from "@/components/AppShell";
 import { REP_CALIBRATION } from "@/lib/demos/second-nature/board-meta";
+import { getWatcherDataset } from "@/lib/watcher/datasets";
 import { getForecastRoom, type ForecastRoom, type ForecastRoomDeal } from "@/lib/forecast-room";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getTasks, type TaskItem } from "@/lib/tasks";
@@ -25,6 +26,24 @@ function moneyK(v: number): string {
   if (a >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
   if (a >= 1000) return `$${Math.round(v / 1000)}K`;
   return `$${Math.round(v)}`;
+}
+
+/**
+ * Per-rep calibration: of every $100 this rep commits, what actually lands.
+ *
+ * Watcher tenants carry it on their own rep personas, so this reads from there
+ * first and only falls back to the Second Nature board metadata. Without that
+ * order, a Keelson rep name misses the Second Nature map and the card collapses
+ * to "no calibration history" on the one screen where the number is the point.
+ */
+function calibrationFor(tenant: string, repName: string): { landsPerHundred: number; note: string } | null {
+  const ds = getWatcherDataset(tenant);
+  if (ds) {
+    const first = repName.split(" ")[0]?.toLowerCase();
+    const persona = ds.reps.find((r) => r.name === repName || r.name.split(" ")[0]?.toLowerCase() === first);
+    if (persona) return { landsPerHundred: persona.landsPerHundred, note: persona.calibrationNote };
+  }
+  return REP_CALIBRATION[repName] ?? REP_CALIBRATION[repName.split(" ")[0]] ?? null;
 }
 
 type MissPattern = { label: string; count: number; total: number; accounts: string[] };
@@ -102,7 +121,7 @@ export default async function OneOnOnesPage({ searchParams }: { searchParams: SP
   const misses = (repEmail ? missByRepEmail.get(repEmail) : null) ?? [];
   const topMisses = misses.filter((m) => m.count >= 2).slice(0, 2);
   const repTasks = tasks.filter((t) => t.repEmail === repEmail && t.status !== "done").slice(0, 5);
-  const cal = activeRep ? REP_CALIBRATION[activeRep] : null;
+  const cal = activeRep ? calibrationFor(tenant, activeRep) : null;
   const repCommitW = repDeals.reduce((s, d) => s + Math.round((d.arr * d.repProbPct) / 100), 0);
   const drW = repDeals.reduce((s, d) => s + Math.round((d.arr * d.drProbPct) / 100), 0);
 

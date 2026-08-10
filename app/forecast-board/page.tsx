@@ -18,6 +18,8 @@ const NEAT_STAGE: Record<string, string> = {
   SQL4: "Contract Out",
   SQL5: "Signed",
 };
+/** Tenants this board is authored for. See the guard in the page body. */
+const BOARD_TENANTS = new Set(["second-nature"]);
 const STAGE_ORDER = ["SQL1", "SQL2", "SQL3", "SQL4", "SQL5"];
 function stageRank(k: string): number {
   const i = STAGE_ORDER.indexOf(k);
@@ -61,7 +63,17 @@ export default async function ForecastBoardPage({ searchParams }: { searchParams
 
   return (
     <AppShell active="forecastBoard" tenant={tenant}>
-      {room ? (
+      {!BOARD_TENANTS.has(tenant) ? (
+        // Every column below the headline (Type, Doors, the closed-won band, the
+        // per-rep calibration copy) is authored against Second Nature's roster
+        // in lib/demos/second-nature/board-meta. Rendering it for another tenant
+        // would put one prospect's accounts on another prospect's screen, so the
+        // view refuses rather than degrading to a table of dashes.
+        <div className="max-w-[1220px] mx-auto px-6 py-7 text-[13px] text-muted">
+          The Forecast Board is authored for the Second Nature demo. This tenant uses the Forecast Room and the Forecast
+          dashboard instead.
+        </div>
+      ) : room ? (
         <Board room={room} tenant={tenant} repFilter={repFilter} />
       ) : (
         <div className="max-w-[1220px] mx-auto px-6 py-7 text-[13px] text-muted">Forecast Board could not load for this tenant.</div>

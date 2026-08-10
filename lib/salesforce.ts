@@ -102,12 +102,20 @@ export async function getSalesforceClient(): Promise<{
  * getSalesforceClient(), which caches.
  */
 export async function mintAccessToken(): Promise<CachedToken> {
+  // Magaya's connected app is JWT bearer, not client_credentials: Ernesto
+  // registered our certificate and set the OAuth policy to "admin-approved
+  // users are pre-authorized", which is why no client secret was ever issued.
+  // Prefer that flow whenever it is configured and fall back to the original
+  // secret flow for any tenant still on it.
+  if (jwtConfigured()) return mintViaJwt();
+
   const instanceUrl = process.env.SALESFORCE_INSTANCE_URL;
   const clientId = process.env.SALESFORCE_CLIENT_ID;
   const clientSecret = process.env.SALESFORCE_CLIENT_SECRET;
   if (!instanceUrl || !clientId || !clientSecret) {
     throw new SalesforceConfigError(
-      "SALESFORCE_INSTANCE_URL, SALESFORCE_CLIENT_ID, and SALESFORCE_CLIENT_SECRET must be set",
+      "Set the JWT bearer vars (SF_CLIENT_ID, SF_USERNAME and SF_PRIVATE_KEY or SF_PRIVATE_KEY_PATH), " +
+        "or the legacy SALESFORCE_INSTANCE_URL, SALESFORCE_CLIENT_ID and SALESFORCE_CLIENT_SECRET",
     );
   }
 
@@ -150,6 +158,81 @@ export async function mintAccessToken(): Promise<CachedToken> {
     token: json.access_token,
     instanceUrl: resolvedInstance,
     expiresAt: Date.now() + ttlMs,
+  };
+}
+
+// ====================================================================
+// JWT bearer flow (Magaya)
+// ====================================================================
+
+/**
+ * The signing key. Vercel cannot read a file from the repo, so production sets
+ * SF_PRIVATE_KEY with the PEM inline (newlines may be escaped as \n) while local
+ * development keeps using SF_PRIVATE_KEY_PATH. Never log the return value.
+ */
+function privateKey(): string | null {
+  const inline = process.env.SF_PRIVATE_KEY;
+  if (inline && inline.trim()) return inline.includes("\\n") ? inline.replace(/\\n/g, "\n") : inline;
+  const path = process.env.SF_PRIVATE_KEY_PATH;
+  if (!path) return null;
+  try {
+    // Required lazily so bundling for the edge does not pull in node:fs when
+    // the inline key is being used.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function jwtConfigured(): boolean {
+  return Boolean(process.env.SF_CLIENT_ID && process.env.SF_USERNAME && privateKey());
+}
+
+function b64url(input: Buffer | string): string {
+  return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function mintViaJwt(): Promise<CachedToken> {
+  const loginUrl = (process.env.SF_LOGIN_URL ?? "https://login.salesforce.com").replace(/\/$/, "");
+  const clientId = process.env.SF_CLIENT_ID!;
+  const username = process.env.SF_USERNAME!;
+  const key = privateKey()!;
+  // `aud` is the Salesforce LOGIN host even when the token endpoint is My
+  // Domain. Getting this wrong returns a bare "invalid_grant" with no detail,
+  // which is the usual first failure on this flow.
+  const audience = process.env.SF_AUDIENCE ?? "https://login.salesforce.com";
+
+  const { createSign } = await import("node:crypto");
+  const header = b64url(JSON.stringify({ alg: "RS256" }));
+  const claims = b64url(
+    JSON.stringify({ iss: clientId, sub: username, aud: audience, exp: Math.floor(Date.now() / 1000) + 180 }),
+  );
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${claims}`);
+  const assertion = `${header}.${claims}.${b64url(signer.sign(key))}`;
+
+  const res = await fetch(`${loginUrl}/services/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }).toString(),
+  });
+  if (!res.ok) throw new SalesforceAuthError(res.status, await safeReadText(res));
+
+  const json = (await res.json()) as { access_token?: string; instance_url?: string; expires_in?: number };
+  if (!json.access_token) {
+    throw new SalesforceAuthError(res.status, `response missing access_token: ${JSON.stringify(json).slice(0, 200)}`);
+  }
+  return {
+    token: json.access_token,
+    instanceUrl: (json.instance_url ?? loginUrl).replace(/\/$/, ""),
+    // JWT bearer responses often omit expires_in. Fall back to the module
+    // default rather than treating the token as immortal.
+    expiresAt: Date.now() + (typeof json.expires_in === "number" && json.expires_in > 0 ? json.expires_in * 1000 : DEFAULT_TOKEN_TTL_MS),
   };
 }
 

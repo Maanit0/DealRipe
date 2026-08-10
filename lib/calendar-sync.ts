@@ -28,6 +28,7 @@
  */
 
 import type { Json } from "./database.types";
+import { shouldJoinAutoMeeting } from "./join-gate";
 import {
   accountFromAddress,
   isAutoJoinRep,
@@ -54,6 +55,9 @@ export type CalendarSyncCounts = {
   reconciledVanished: number;
   // New deals auto-created from an auto-join rep's external customer calls.
   autoCreated: number;
+  // External meetings the join gate declined: no CRM record and the invite did
+  // not read as a sales conversation. Interviews, benefits calls, vendors.
+  skippedNotCommercial: number;
 };
 
 export type CalendarSyncDecision =
@@ -99,6 +103,14 @@ export type CalendarSyncDecision =
       domain: string;
     }
   | {
+      kind: "not-commercial";
+      eventId: string;
+      subject: string | null;
+      domain: string;
+      reason: string;
+      detail: string;
+    }
+  | {
       kind: "vanished";
       eventId: string;
       callId: string;
@@ -129,6 +141,7 @@ export async function runCalendarSync(
     connectionsSkipped: 0,
     reconciledVanished: 0,
     autoCreated: 0,
+    skippedNotCommercial: 0,
   };
   const emit = opts.onDecision ?? (() => {});
 
@@ -321,6 +334,33 @@ async function processEvent(
   }
   const dealExternalId = resolved.dealExternalId;
   if (resolved.isAuto && resolved.domain && resolved.address) {
+    // An external attendee is not on its own a reason to record someone. Require
+    // positive evidence this is a commercial conversation before a bot joins.
+    // Without this, auto-join walks into 1-on-1s, benefits calls and candidate
+    // interviews on calendars nobody has inspected.
+    const verdict = await shouldJoinAutoMeeting({
+      tenantId,
+      dealExternalId,
+      domain: resolved.domain,
+      address: resolved.address,
+      isFreeMail: resolved.isFreeMail === true,
+      subject: ev.subject,
+      attendeeEmails,
+      sellerName: "Magaya",
+    });
+    if (!verdict.join) {
+      counts.skippedNotCommercial += 1;
+      emit({
+        kind: "not-commercial",
+        eventId: ev.eventId,
+        subject: ev.subject,
+        domain: resolved.domain,
+        reason: verdict.reason,
+        detail: verdict.detail,
+      });
+      return;
+    }
+
     // For consumer mail the domain is meaningless as a name ("Gmail"), so pass
     // the attendee's calendar display name through for a human account label.
     const displayName =

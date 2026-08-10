@@ -136,6 +136,47 @@ async function main(): Promise<void> {
     console.log(`  ${mark}  ${o.name.padEnd(24)} ${o.why}${note}`);
   }
 
+  // Object-level access is not field-level access. Salesforce hides fields the
+  // running user cannot read from the describe response entirely, so this is a
+  // true test of whether the Sales Development fields actually came through.
+  const WANTED_LABELS = [
+    "Software Purposes",
+    "Business Issues",
+    "Compelling Events",
+    "Executive Sponsorship",
+    "Budget Confirmed",
+    "Number of Users",
+    "Desired Go-Live Date",
+  ];
+  if (!denied.includes("Account")) {
+    const d = await fetch(`${instance}/services/data/v61.0/sobjects/Account/describe`, {
+      headers: { authorization: `Bearer ${auth.access_token}` },
+    });
+    if (d.ok) {
+      const desc = (await d.json()) as { fields?: Array<{ name: string; label: string }> };
+      const visible = desc.fields ?? [];
+      console.log(`\nACCOUNT FIELD ACCESS  (${visible.length} fields visible to this user)`);
+      const missing: string[] = [];
+      for (const label of WANTED_LABELS) {
+        const hit = visible.find(
+          (f) => f.label.toLowerCase() === label.toLowerCase() || f.name.toLowerCase() === `${label.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}__c`,
+        );
+        if (hit) console.log(`  OK    ${label.padEnd(24)} ${hit.name}`);
+        else {
+          missing.push(label);
+          console.log(`  MISS  ${label}`);
+        }
+      }
+      if (missing.length > 0) {
+        console.log(`\n  ${missing.length} field(s) not readable. Field-level security is separate from`);
+        console.log(`  object access, so Account being readable does not grant these.`);
+        console.log(`  Send Ernesto the exact list above before confirming.`);
+      }
+    } else {
+      console.log(`\nACCOUNT FIELD ACCESS: describe failed (HTTP ${d.status}), cannot verify fields.`);
+    }
+  }
+
   if (denied.includes("Account")) {
     console.log("");
     console.log("ACCOUNT IS NOT READABLE.");
