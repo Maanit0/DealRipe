@@ -204,7 +204,10 @@ async function main(): Promise<void> {
         }
         console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${ctx.crmContext ? "Salesforce BDR context PRESENT" : "no Salesforce context"}`);
         try {
-          const b = await generateBriefingFromState(briefingStateFromContext(ctx));
+          const b = await generateBriefingFromState({
+            ...briefingStateFromContext(ctx),
+            meetingSubject: m.subject ?? null,
+          });
           if (!b) {
             console.log("   briefing    generation returned nothing");
             continue;

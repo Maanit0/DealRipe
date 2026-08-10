@@ -19,3 +19,6 @@ dealripe-sf.key
 welcome-preview.html
 digest-preview.html
 digest-generated.html
+
+# Local Claude Code tool permissions, per-machine.
+.claude/

@@ -273,6 +273,10 @@ async function processEvent(
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
     attendees: attendees ?? `the ${ctx.account} team`,
+    // The calendar title is the only signal we have about what kind of call
+    // this is before it happens. Without it every briefing for an account with
+    // no captured history reads as a first discovery call.
+    meetingSubject: ev.subject,
   });
   if (!briefing) throw new Error("briefing generation returned null");
 

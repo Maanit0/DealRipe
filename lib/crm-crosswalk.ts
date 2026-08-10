@@ -34,6 +34,16 @@ export const CRM_CROSSWALK: Readonly<Record<string, CrosswalkEntry>> = Object.fr
   // resolution abstained. "IFF US" is the right one: it is the Account Name
   // Eduardo screenshotted in the Sales Development thread on Aug 4, and Rolldog
   // 80018 carries the same name. The two "IFF, INC." records are duplicates.
+  // Three names for one customer: the attendees are @protrans.com, Salesforce
+  // calls the account "ProTrans", and Rolldog calls it "TOC Logistics". No
+  // automatic match can bridge that, and "ProTrans" returns zero opportunities
+  // in Rolldog. Opportunity 80731 is owned by Alexandra, sits at SQL2, and is
+  // named "TOC Logistics -INBOND ONLY", which is the same product line as her
+  // "TOC Inbond Additional Session" meeting.
+  "protrans.com": {
+    rolldogOpportunityId: "80731",
+    note: "Rolldog account 'TOC Logistics', SF account 'ProTrans', domain protrans.com. Owner asuntrup, SQL2, created 2026-06-08. MS 2026-08-10",
+  },
   "iffusa.com": {
     salesforceAccountId: "001RN00000iG0abYAC",
     rolldogOpportunityId: "80018",

@@ -152,6 +152,17 @@ export function buildMagayaBriefingUserMessage(args: {
    * confirmed to us, so the prompt is told to treat it as a lead to test.
    */
   crmContext?: string;
+  /**
+   * The calendar subject of the call being briefed.
+   *
+   * Without it the prompt sees only that a deal has no captured history and
+   * concludes "first discovery call", which was wrong on half of Alexandra's
+   * week: "Onboarding & Training" is an existing customer, "Proposal Walk
+   * Through" is late-stage, "CONT. DEMO" and "Follow up session" are neither
+   * first nor discovery. Telling a rep to book a demo before a proposal
+   * walkthrough is how a briefing loses their trust in one reading.
+   */
+  meetingSubject?: string | null;
 }): string {
   const { framework, extraction } = args;
 
@@ -171,6 +182,7 @@ export function buildMagayaBriefingUserMessage(args: {
   const lines = [
     args.today ? `TODAY: ${args.today}` : "",
     `ACCOUNT: ${args.account}`,
+    args.meetingSubject ? `THIS MEETING IS TITLED: "${args.meetingSubject}"` : "",
     `CURRENT STAGE: ${args.stage}${args.nextStage ? ` (next: ${args.nextStage})` : ""}`,
     args.closeDate ? `CLOSE DATE: ${args.closeDate}` : "",
     ``,
@@ -188,6 +200,19 @@ export function buildMagayaBriefingUserMessage(args: {
 
   if (args.history) {
     lines.push(``, `SINCE LAST CALL:`, args.history);
+  }
+
+  if (args.meetingSubject) {
+    lines.push(
+      ``,
+      `WHAT KIND OF CALL THIS IS. Read the meeting title above and brief for THAT call. An empty qualification record means DealRipe has not listened to this account before; it does NOT mean this is a first conversation, and the rep will know instantly if you get this wrong.`,
+      `- "Onboarding", "Training", "Kickoff", "Implementation": they have already bought. Do not qualify them and never propose a demo. Brief on making the rollout succeed and on what is unresolved operationally.`,
+      `- "Proposal", "Proposal Walk Through", "Pricing", "Contract", "Renewal": late stage. The objective is a decision, a signature path or a redline, not discovery.`,
+      `- "CONT.", "Continued", "Follow up", "Additional session", "Next steps", "Part 2": a conversation already in progress. Never open as though meeting them for the first time.`,
+      `- "Audit", "Review", "Check-in", "Office Hours": an existing relationship. Brief on the account's health and what they are trying to get done.`,
+      `- "Intro", "Discovery", "Demo" with nothing prior: genuinely early, so discovery framing is right.`,
+      `Where the title and the qualification record disagree, trust the title about the STAGE of the relationship and the record about WHICH FACTS are confirmed.`,
+    );
   }
 
   if (args.crmContext) {
