@@ -86,6 +86,18 @@ const DASH_RE = /[—–]/;
 const BUDGET_EXISTENCE_RE =
   /\b(do you have|is there|have you (got|set))\b[^?]{0,40}\bbudget\b[^?]{0,40}\b(set aside|allocated|approved|in place|for this)\b/i;
 
+/**
+ * Unfilled placeholders in something the rep says out loud.
+ *
+ * The pricing play in magaya-plays is written as "runs about [X] to [Y] per
+ * month", which is correct as a reference and wrong as a script: TOC shipped
+ * "licensing typically runs in the range of X to Y per month" while Joe Arevalo
+ * got a real range in the same run. A rep reading the first one live has to
+ * invent a number mid-sentence. Either the briefing commits to a range or it
+ * does not raise price.
+ */
+const PLACEHOLDER_RE = /(\bX to Y\b|\[[A-Za-z ]{1,20}\]|<[A-Za-z ]{1,20}>|\$X\b|\bTBD\b|\bINSERT\b)/;
+
 const LATE_STAGE_SUBJECT_RE = /\b(proposal|pricing|quote|contract|redline|negotiat|renewal|agreement)\b/i;
 
 function text(v: unknown): string {
@@ -133,6 +145,18 @@ export function lintBriefing(
   for (const [field, value] of scalars) {
     for (const { re, rule } of OUR_RECORD_PATTERNS) {
       if (re.test(value)) findings.push({ level: "error", field, rule, detail: value });
+    }
+  }
+
+  // Unfilled placeholders in anything spoken to the customer.
+  for (const [field, value] of asks) {
+    if (PLACEHOLDER_RE.test(value)) {
+      findings.push({
+        level: "error",
+        field,
+        rule: "unfilled placeholder in something the rep says out loud",
+        detail: value,
+      });
     }
   }
 

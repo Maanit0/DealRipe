@@ -74,7 +74,12 @@ function isRoleMailbox(email: string, hasRealDisplayName: boolean): boolean {
   // person whose company gave her the sales alias.
   if (hasRealDisplayName) return false;
   const local = (email.split("@")[0] ?? "").toLowerCase().replace(/[._-]/g, "");
-  return ROLE_MAILBOXES.has(local);
+  if (ROLE_MAILBOXES.has(local)) return true;
+  // An address named after the company itself is a company inbox. EWI's invite
+  // carries ewi@ewiinc.com, which arrived in a briefing as a person called
+  // "Ewi" sitting alongside Evey, Frank and Cynthia.
+  const stem = (email.split("@")[1] ?? "").split(".")[0]?.toLowerCase() ?? "";
+  return local.length >= 2 && stem.length >= 2 && stem.startsWith(local);
 }
 
 /**
