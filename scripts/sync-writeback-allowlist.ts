@@ -1,23 +1,22 @@
 /**
- * Which linked opportunities can DealRipe write to, and which are still locked?
+ * Which deals can write back to Rolldog, and which cannot?
  *
- * PILOT_OPPORTUNITY_IDS is the fail-closed allowlist that decides whether
- * write-back may touch a customer's CRM record. It is hand-maintained, and on
- * 2026-08-10 that caught up with us: three reps were onboarded, thirteen deals
- * were linked to real Rolldog opportunities, and write-back silently no-opped
- * on every one of them because nobody had added the ids. Nothing errored. The
- * reps would simply have found an empty Rolldog after a week of calls.
+ * The first version of this script got the authorization model wrong and
+ * reported four healthy deals as BLOCKED, including Ztransportation, which had
+ * written Situation and Timeline to Rolldog that same afternoon. Worth stating
+ * plainly, because a diagnostic that invents problems is worse than none.
  *
- * A pilot that runs to year-end will link new opportunities every week, so the
- * failure repeats unless someone remembers. This makes remembering unnecessary:
- * it diffs every confirmed link against the allowlist and prints a paste-ready
- * block for whatever is missing.
+ * There are TWO ways a write is authorized, not one:
  *
- * It deliberately does NOT edit the allowlist itself. That file is the security
- * boundary for writing into someone else's CRM, and it stays under human review
- * in code, not something a nightly job can widen on its own. The cost of that
- * choice is one command a week. The cost of the alternative is a script that
- * can grant itself write access to any record it happens to match.
+ *   1. Hand-seeded pilot deals, via the static PILOT_OPPORTUNITY_IDS allowlist.
+ *   2. Auto-linked deals, via the confirmed/high match stored on the deal row,
+ *      authorized for the duration of one write by runWithAuthorizedOpportunities.
+ *
+ * Route 2 is how most deals write, and it needs no allowlist entry at all. So
+ * the real risk is not "linked but not allowlisted". It is a deal that HAS an
+ * opportunity whose link confidence is 'review' or null, because that fails
+ * closed silently and no amount of allowlisting fixes it: the link itself has
+ * to be confirmed.
  *
  *   npx tsx scripts/sync-writeback-allowlist.ts
  *   npx tsx scripts/sync-writeback-allowlist.ts --days 30
@@ -50,7 +49,7 @@ async function main(): Promise<void> {
 
   const deals = await db
     .from("deals")
-    .select("id, account, external_id, rolldog_opportunity_id, rep_email")
+    .select("id, account, external_id, rolldog_opportunity_id, rolldog_link_confidence, rep_email")
     .eq("tenant_id", tenantId);
   if (deals.error) throw new Error(deals.error.message);
 
@@ -78,16 +77,17 @@ async function main(): Promise<void> {
     rep: string;
     when: string | null;
     title: string;
+    /** Link confidence, which is what actually decides most of these. */
+    why: string;
   };
-  const missing: Row[] = [];
-  const covered: Row[] = [];
+  const blocked: Row[] = [];
+  const writable: Row[] = [];
 
   for (const d of deals.data ?? []) {
-    const opp =
-      d.rolldog_opportunity_id ??
-      (d.external_id ? rolldogOppIdForDeal(d.external_id) : null) ??
-      null;
+    const staticOpp = d.external_id ? rolldogOppIdForDeal(d.external_id) : null;
+    const opp = staticOpp ?? d.rolldog_opportunity_id ?? null;
     if (!opp) continue;
+    const conf = d.rolldog_link_confidence;
     const up = nextCall.get(d.id);
     const row: Row = {
       opp: String(opp),
@@ -95,8 +95,16 @@ async function main(): Promise<void> {
       rep: (d.rep_email ?? "").split("@")[0] || "-",
       when: up?.when ?? null,
       title: up?.title ?? "",
+      why: conf ?? "none",
     };
-    (allowed.has(String(opp)) ? covered : missing).push(row);
+    // Mirror rolldog-writeback exactly. Any other rule here and this script
+    // starts disagreeing with the code it is supposed to be checking.
+    const authorized =
+      Boolean(staticOpp) ||
+      allowed.has(String(opp)) ||
+      conf === "confirmed" ||
+      conf === "high";
+    (authorized ? writable : blocked).push(row);
   }
 
   // Soonest call first; deals with no upcoming call last.
@@ -106,41 +114,41 @@ async function main(): Promise<void> {
     if (b.when) return 1;
     return a.account.localeCompare(b.account);
   };
-  missing.sort(byUrgency);
-  covered.sort(byUrgency);
+  blocked.sort(byUrgency);
+  writable.sort(byUrgency);
 
   console.log("");
-  console.log(`${covered.length} linked opportunities can be written to.`);
-  console.log(`${missing.length} are linked but BLOCKED by the allowlist.`);
+  console.log(`${writable.length} deals with an opportunity CAN write back.`);
+  console.log(`${blocked.length} have an opportunity but CANNOT.`);
 
-  if (missing.length > 0) {
+  if (blocked.length > 0) {
     console.log("");
-    console.log("BLOCKED. Write-back will silently no-op on these:");
+    console.log("CANNOT WRITE. Each of these has an opportunity on the deal but a");
+    console.log("link confidence that fails closed, so the recap and draft go out");
+    console.log("and Rolldog stays untouched:");
     console.log("");
-    for (const r of missing) {
+    for (const r of blocked) {
       const when = r.when ? formatMeetingTime(r.when) : "no call scheduled";
       console.log(
-        `  ${r.opp.padEnd(8)} ${r.account.slice(0, 26).padEnd(28)} ${r.rep.padEnd(11)} ${when}`,
+        `  ${r.opp.padEnd(8)} ${r.account.slice(0, 24).padEnd(26)} ${r.rep.padEnd(11)} link=${r.why.padEnd(10)} ${when}`,
       );
     }
     console.log("");
-    console.log("Paste into PILOT_OPPORTUNITY_IDS in lib/crm-scope.ts, after");
-    console.log("confirming each account is the customer you expect:");
+    console.log("The fix is to confirm the LINK, not to allowlist the id:");
+    console.log("  npx tsx scripts/link-deal.ts --deal <account> --opp <id> --apply");
     console.log("");
-    for (const r of missing) {
-      console.log(`  "${r.opp}", // ${r.account}${r.rep !== "-" ? ` (${r.rep})` : ""}`);
-    }
+    console.log("Allowlisting an id whose link is unconfirmed would authorize a");
+    console.log("write to an opportunity nobody has verified belongs to this deal.");
   }
 
-  const upcomingBlocked = missing.filter((r) => r.when).length;
+  const upcomingBlocked = blocked.filter((r) => r.when).length;
   console.log("");
   if (upcomingBlocked > 0) {
-    console.log(
-      `${upcomingBlocked} of the blocked deals have a call in the next ${days} days.`,
-    );
-    console.log("Those calls will produce a recap and a draft but write nothing to Rolldog.");
-  } else if (missing.length === 0) {
-    console.log("Every linked opportunity is writable. Nothing to do.");
+    console.log(`${upcomingBlocked} of them have a call within ${days} days.`);
+  } else if (blocked.length === 0) {
+    console.log("Every deal with an opportunity can write back. Nothing to do.");
+  } else {
+    console.log("None of them have a call scheduled, so nothing is at risk this week.");
   }
   console.log("");
 }
