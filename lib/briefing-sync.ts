@@ -93,14 +93,13 @@ export async function runBriefingSync(
   const tenantId = await resolveTenantId(TENANT_SLUG);
   const db = supabaseAdmin();
 
-  // Warm the Rolldog token before the run, as the pipeline page already does.
-  // Every briefing now reads the rep's stage checklist, so a cold process makes
-  // its first Rolldog call inside the first briefing, and a token fetch that is
-  // throttled or slow there surfaces as a bare "fetch failed" that drops the
-  // checklist for that deal only. One warm call up front removes the whole
-  // class. Best-effort: a missing credential legitimately throws and must not
-  // stop briefings from going out.
-  await prewarmRolldogToken().catch(() => {});
+  // NOTE: the Rolldog token is warmed lazily, in processEvent, once a meeting is
+  // actually inside the briefing window. It used to be warmed here, at the top
+  // of every run. This cron fires every five minutes, and the large majority of
+  // those runs have no meeting to brief, so that was ~288 token requests a day
+  // for work that never happened. Rolldog noticed on August 11 and asked us to
+  // stop. The token cache is per process, so a cold container could not reuse
+  // the previous run's token either.
 
   const connections = await db
     .from("microsoft_connections")
@@ -179,6 +178,18 @@ async function processEvent(
     return;
   }
   counts.inWindow += 1;
+
+  // Now that this meeting is genuinely going to be briefed, warm the Rolldog
+  // token. Every briefing reads the rep's stage checklist, so on a cold process
+  // the first Rolldog call happens inside the first briefing, where a throttled
+  // token fetch surfaces as a bare "fetch failed" and silently drops the
+  // checklist for that deal. Warming first removes that class of failure.
+  //
+  // Safe to call once per in-window meeting: it returns the cached token when
+  // the process already has one, so only the first call in a cold process costs
+  // a request. Best-effort, because a missing credential legitimately throws and
+  // must never stop a briefing going out.
+  await prewarmRolldogToken().catch(() => {});
 
   const db = supabaseAdmin();
 

@@ -86,6 +86,18 @@ export async function prewarmRolldogToken(): Promise<void> {
 }
 
 /**
+ * How many tokens this process has minted from Rolldog's OAuth endpoint.
+ *
+ * Exists so scripts/check-token-usage.ts can assert the caching actually works
+ * against the real code path, rather than a script re-deriving the rule and
+ * agreeing with itself. Rolldog counts these requests on their side; this is
+ * the same number counted on ours.
+ */
+export function rolldogTokenMintCount(): number {
+  return _tokenMints;
+}
+
+/**
  * Write to a Rolldog opportunity at the opportunity-scalar level
  * (i.e. attributes that live directly on /opportunities/{id}, not on
  * a sub-resource). `updates` keys are snake_case LOGICAL field names
@@ -274,12 +286,136 @@ export class RolldogApiError extends Error {
 // Token manager
 // ---------------------------------------------------------------------
 //
-// Single in-memory token cache. Refreshed when within 60s of expiry; a
-// 401 from the API force-refreshes and retries the call once.
+// Two tiers. In memory for the life of the process, then crm_token_cache in
+// Supabase so a cold process reuses a token another one already minted.
+//
+// The second tier exists because the first cannot span invocations. Vercel
+// crons, cold renders of /pipeline and /deals/[id], and every one-shot script
+// each start with an empty module cache, so each was asking Rolldog for a new
+// 24 hour token. Rolldog measured 125 in a day on 2026-08-11 and asked us to
+// stop before they enforce a limit. With the shared tier the right number is
+// about one a day.
+//
+// Refreshed when within 60s of expiry; a 401 from the API force-refreshes,
+// bypasses both tiers, and overwrites the shared row so other processes stop
+// presenting the dead token.
 
 type CachedToken = { token: string; expiresAt: number };
 
 let _tokenCache: CachedToken | null = null;
+
+/** Tokens minted from the OAuth endpoint by this process. Read by
+ *  rolldogTokenMintCount(); this is the number Rolldog is counting. */
+let _tokenMints = 0;
+
+const TOKEN_SKEW_MS = 60_000;
+
+/**
+ * Namespace for the shared row. Hashed so the credential itself never lands in
+ * a table, and so rotating ROLLDOG_CLIENT_ID or pointing at a sandbox audience
+ * cannot serve a token minted for a different one. FNV-1a rather than a crypto
+ * hash on purpose: this is a cache key, not a secret, and importing node:crypto
+ * would tie this module to the nodejs runtime.
+ */
+function tokenCacheKey(config: RolldogConfig): string {
+  const s = `${config.clientId ?? ""}|${config.audience}|${config.oauthUrl}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `rolldog:${h.toString(16)}`;
+}
+
+/**
+ * The shared token, if there is a usable one.
+ *
+ * Three outcomes, deliberately distinguishable: a token, `null` meaning we
+ * looked and there is nothing usable, and `"unavailable"` meaning we could not
+ * look. Callers treat the last two the same (mint a token) but only `null` is
+ * evidence that none exists, and a table that has quietly stopped being
+ * readable should say so rather than look like an empty cache forever.
+ */
+/**
+ * lib/database.types.ts is generated from the schema, and crm_token_cache
+ * arrives via supabase/add-crm-token-cache.sql, which is applied by hand. Until
+ * the types are regenerated the table name is not in the union, so this narrows
+ * the client to just the two calls made here rather than widening the generated
+ * types or reaching for `any`.
+ */
+type TokenCacheClient = {
+  from: (table: string) => {
+    select: (cols: string) => {
+      eq: (
+        col: string,
+        val: string,
+      ) => {
+        maybeSingle: () => Promise<{
+          data: { token?: string; expires_at?: string } | null;
+          error: { message: string } | null;
+        }>;
+      };
+    };
+    upsert: (
+      values: Record<string, unknown>,
+      opts: { onConflict: string },
+    ) => Promise<{ error: { message: string } | null }>;
+  };
+};
+
+async function readSharedToken(
+  key: string,
+): Promise<CachedToken | null | "unavailable"> {
+  try {
+    const { supabaseAdmin } = await import("./supabase");
+    const res = await (supabaseAdmin() as unknown as TokenCacheClient)
+      .from("crm_token_cache")
+      .select("token, expires_at")
+      .eq("key", key)
+      .maybeSingle();
+    if (res.error) {
+      console.warn(`[rolldog] shared token cache unreadable: ${res.error.message}`);
+      return "unavailable";
+    }
+    const row = res.data;
+    if (!row?.token || !row.expires_at) return null;
+    const expiresAt = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresAt)) return null;
+    return { token: row.token, expiresAt };
+  } catch (err) {
+    console.warn(
+      `[rolldog] shared token cache unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return "unavailable";
+  }
+}
+
+/** Publish a freshly minted token. Best effort: failing to share a token must
+ *  never fail the call that needed it, it only costs the next process a mint.
+ *  The token is never included in any log line here. */
+async function writeSharedToken(key: string, t: CachedToken): Promise<void> {
+  try {
+    const { supabaseAdmin } = await import("./supabase");
+    const res = await (supabaseAdmin() as unknown as TokenCacheClient)
+      .from("crm_token_cache")
+      .upsert(
+        {
+          key,
+          token: t.token,
+          expires_at: new Date(t.expiresAt).toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" },
+      );
+    if (res.error) {
+      console.warn(`[rolldog] could not share token: ${res.error.message}`);
+    }
+  } catch (err) {
+    console.warn(
+      `[rolldog] could not share token: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 async function getAccessToken(
   config: RolldogConfig,
@@ -289,10 +425,22 @@ async function getAccessToken(
   if (
     !forceRefresh &&
     _tokenCache &&
-    _tokenCache.expiresAt > now + 60_000
+    _tokenCache.expiresAt > now + TOKEN_SKEW_MS
   ) {
     return _tokenCache.token;
   }
+
+  // Second tier. Skipped entirely on a forced refresh, because the whole point
+  // of a 401 refresh is that the token everyone is sharing has stopped working.
+  const key = tokenCacheKey(config);
+  if (!forceRefresh) {
+    const shared = await readSharedToken(key);
+    if (shared !== null && shared !== "unavailable" && shared.expiresAt > now + TOKEN_SKEW_MS) {
+      _tokenCache = shared;
+      return shared.token;
+    }
+  }
+
   if (!config.clientId || !config.clientSecret) {
     // Should never reach here — ensureCredentials runs before any call
     // that needs a token. Throw a generic error rather than
@@ -300,6 +448,7 @@ async function getAccessToken(
     throw new Error("getAccessToken called without credentials configured");
   }
 
+  _tokenMints += 1;
   const res = await fetch(config.oauthUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -329,6 +478,11 @@ async function getAccessToken(
     token: json.access_token,
     expiresAt: now + ttlSec * 1000,
   };
+  // Publish it so the next cold process does not mint another. Awaited rather
+  // than fired and forgotten: on Vercel the function can be frozen the moment
+  // the request resolves, which would drop the write and leave the next
+  // invocation minting again, which is the bug this exists to fix.
+  await writeSharedToken(key, _tokenCache);
   return _tokenCache.token;
 }
 

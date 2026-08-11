@@ -12,6 +12,14 @@ import { getRolldogSummary } from "./rolldog-summary";
 import { supabaseAdmin } from "./supabase";
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed", "duplicate"]);
+
+// Outcomes that mean nobody showed. A strict subset of NO_CONTENT, which is a
+// wider question: "did this row capture a conversation". The two were the same
+// set until the merge script started marking rows 'duplicate', at which point
+// the digest would have told six reps that a meeting they actually held was a
+// no-show. 'capture_failed' is the same error in reverse: people were there and
+// our bot missed them, which is our failure to report, not the customer's.
+const NO_SHOW_OUTCOMES = new Set(["no_show", "no_conversation"]);
 const BUYER_RE = /budget|cfo|chief financ|owner|final (say|decision)|economic|controller/i;
 
 // Clean display names for the pilot's domain-derived accounts.
@@ -133,7 +141,7 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
     // No-show: own section, fires regardless of captured content.
     const now = Date.now();
     const noShowCall = (callsBy[d.id] ?? []).find((c) => {
-      if (!c.outcome || !NO_CONTENT.has(String(c.outcome))) return false;
+      if (!c.outcome || !NO_SHOW_OUTCOMES.has(String(c.outcome))) return false;
       const t = Date.parse(String(c.scheduled_start ?? c.call_date ?? ""));
       // Only a call that has already happened can be a no-show. A future
       // scheduled call is "upcoming", never a no-show.
