@@ -55,12 +55,22 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
   "82482", // Air Americas LLC (auto-linked). Website-verified match
            // (airamericas.com) confirmed by Maanit 2026-07-21 before linking.
 
-  // ---- Aug 2026 expansion: Alexandra, Daniel and Eduardo's live pipeline. ----
-  // Every id below was confirmed by scripts/meeting-readiness.ts on 2026-08-10:
-  // the deal resolves to this opportunity, the Rolldog account name matches the
-  // meeting's customer, and a bot is scheduled on the call. Without these,
-  // write-back silently no-ops for the three newest reps, which is the opposite
-  // of what Mark told the team DealRipe would do for them.
+  // ---- Aug 2026: Alexandra, Daniel and Eduardo's live pipeline. ----
+  //
+  // These are REDUNDANT and kept deliberately. I added them believing write-back
+  // would otherwise no-op for the three newest reps. It would not: an auto-linked
+  // deal authorizes its own confirmed/high match at write time through
+  // runWithAuthorizedOpportunities, so it never needed an entry here. The proof
+  // was Ztransportation writing Situation and Timeline while absent from this
+  // list.
+  //
+  // They stay because each was independently verified on 2026-08-10 (the deal
+  // resolves to this opportunity, the Rolldog account name matches the customer
+  // on the invite), so they are a second, human-reviewed path to the same
+  // permission. Nobody needs to add ids here as new deals link. If you are here
+  // because a write was refused, the cause is almost certainly a link whose
+  // confidence is 'review' or null, and the fix is to confirm the link rather
+  // than to add an id to this list.
   "81051", // Bee Imagine (Alexandra). FTZ connect, Tue Aug 11.
   "81491", // EWI (Alexandra). Onboarding and training, Tue and Wed Aug 11-12.
   "88491", // All Square Logistics (Alexandra). ABI demo, Tue Aug 11.
