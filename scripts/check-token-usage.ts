@@ -35,9 +35,54 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { prewarmRolldogToken, rolldogTokenMintCount } from "../lib/rolldog";
+import { supabaseAdmin } from "../lib/supabase";
+
+/**
+ * Is the shared cache actually there?
+ *
+ * Without this the script reports a mint of 1 as "absent or near expiry" whether
+ * the row is genuinely missing or the table was never created, and those need
+ * completely different responses. Run the migration, or wait 24 hours.
+ */
+async function sharedCacheState(): Promise<"missing_table" | "empty" | "populated" | "unreadable"> {
+  try {
+    const res = await (supabaseAdmin() as unknown as {
+      from: (t: string) => {
+        select: (c: string) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
+      };
+    })
+      .from("crm_token_cache")
+      .select("key");
+    if (res.error) {
+      return /could not find the table|does not exist|schema cache/i.test(res.error.message)
+        ? "missing_table"
+        : "unreadable";
+    }
+    return (res.data ?? []).length > 0 ? "populated" : "empty";
+  } catch {
+    return "unreadable";
+  }
+}
 
 async function main(): Promise<void> {
   console.log("");
+
+  const before = await sharedCacheState();
+  if (before === "missing_table") {
+    console.log("The shared cache does not exist yet.");
+    console.log("");
+    console.log("  crm_token_cache has not been created, so every process still mints its own");
+    console.log("  token and nothing below will change until it does.");
+    console.log("");
+    console.log("  Run supabase/add-crm-token-cache.sql in the SQL editor, then run this again.");
+    console.log("");
+    process.exit(1);
+  }
+  if (before === "unreadable") {
+    console.log("The shared cache exists but could not be read. That is not the same as empty.");
+    console.log("Fix the read before trusting any number below.");
+    console.log("");
+  }
 
   // Five warms in one process. A process should never need more than one token.
   for (let i = 0; i < 5; i++) {
@@ -52,12 +97,21 @@ async function main(): Promise<void> {
     console.log("  0 means the shared cache in crm_token_cache served every one.");
     console.log("  This is the steady state. A cold Vercel invocation costs Rolldog nothing.");
   } else if (minted === 1) {
-    console.log("  1 means the in-process cache worked, and the shared row was absent or");
-    console.log("  near expiry so this run refreshed it. Expected on the first run after");
-    console.log("  deploying, or once every 24 hours.");
+    console.log(
+      before === "empty"
+        ? "  1 with an empty shared cache is exactly right: this run minted the token"
+        : "  1 with a populated shared cache means the stored token was near expiry",
+    );
+    console.log("  and published it for everyone else. Expected on the first run after");
+    console.log("  deploying, and once every 24 hours after that.");
     console.log("");
-    console.log("  Run this script once more. The second run must print 0. If it prints 1");
-    console.log("  again, the shared write is failing and the warning above says why.");
+    const after = await sharedCacheState();
+    console.log(
+      after === "populated"
+        ? "  The shared row is now written. Run this once more and it must print 0."
+        : `  The shared row was NOT written (state: ${after}). The warning above says why,` +
+            "\n  and until it is fixed every cold process will keep minting its own.",
+    );
   } else {
     console.log(`  ${minted} is a bug. One process asked for more than one token, which means`);
     console.log("  the in-memory cache is not being consulted at all. Check that");
