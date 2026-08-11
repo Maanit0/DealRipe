@@ -46,6 +46,7 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
 import { sendNoShowFollowup } from "./no-show-followup";
 import { logNoShowToRolldog, writeBackDealToRolldog } from "./rolldog-writeback";
+import { writeBackDealToSalesforce } from "./salesforce-writeback-run";
 import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
 import { customerParticipation } from "./attendance";
@@ -641,6 +642,44 @@ async function processRow(
         console.error(
           `[transcript-sync] rolldog write-back threw for call ${callId}:`,
           wbErr instanceof Error ? wbErr.message : wbErr,
+        );
+      }
+
+      // Best-effort: the same push to Salesforce. In its OWN try/catch, and
+      // deliberately after Rolldog rather than inside the same block, so a
+      // failure of either CRM cannot stop the other. Two CRMs means two
+      // independent chances to fail and neither is allowed to be load-bearing.
+      //
+      // Inert unless SALESFORCE_WRITEBACK_ENABLED is "1" and the deal carries a
+      // domain-verified link. See the security-review note in
+      // lib/salesforce-scope.ts before switching it on.
+      try {
+        // Its own lookup rather than reusing the draft block's, so this stays
+        // isolated: the date is only a provenance stamp and a failure to read
+        // it must not cost the write.
+        const sfCall = await db
+          .from("calls")
+          .select("scheduled_start, call_date")
+          .eq("id", callId)
+          .maybeSingle();
+        const sf = await writeBackDealToSalesforce("magaya", ingestResult.dealExternalId, {
+          callId,
+          callDate: sfCall.data?.scheduled_start ?? sfCall.data?.call_date ?? null,
+          apply: true,
+        });
+        if (!sf.written) {
+          console.warn(
+            `[transcript-sync] salesforce write-back skipped for call ${callId}: ${sf.reason}`,
+          );
+        } else {
+          console.log(
+            `[transcript-sync] salesforce write-back wrote ${sf.plan?.writes.length ?? 0} field(s) to account ${sf.accountId} for call ${callId}`,
+          );
+        }
+      } catch (sfErr) {
+        console.error(
+          `[transcript-sync] salesforce write-back threw for call ${callId}:`,
+          sfErr instanceof Error ? sfErr.message : sfErr,
         );
       }
 

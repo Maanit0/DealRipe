@@ -74,25 +74,22 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Base columns only. The two salesforce_* columns arrive in
+  // supabase/add-deal-salesforce-link.sql and are read per deal below, so this
+  // report still works before that migration is run: resolution is a Salesforce
+  // question and does not depend on our schema. What we lose without the
+  // migration is the ability to STORE a link, and that is said out loud rather
+  // than showing every deal as unlinked.
   const deals = await db
     .from("deals")
-    .select("id, account, external_id, salesforce_account_id, salesforce_link_confidence")
+    .select("id, account, external_id")
     .eq("tenant_id", tenantId)
     .in("id", [...byDeal.keys()]);
   if (deals.error) {
-    // The two new columns arrive in supabase/add-deal-salesforce-link.sql. Say
-    // that plainly rather than reporting every deal as unlinked.
-    if (/column .* does not exist/i.test(deals.error.message)) {
-      console.error(
-        "The salesforce link columns are not in the database yet.\n" +
-          "Run supabase/add-deal-salesforce-link.sql in the Supabase SQL editor, then re-run this.\n" +
-          `(${deals.error.message})`,
-      );
-      process.exit(1);
-    }
     console.error(`could not load deals: ${deals.error.message}`);
     process.exit(1);
   }
+  let schemaMissing = false;
 
   console.log(
     `\n${apply ? "APPLYING" : "DRY RUN"}: Salesforce links for ${deals.data?.length ?? 0} deal(s) with a call in the next ${days} day(s)\n`,
@@ -112,7 +109,7 @@ async function main(): Promise<void> {
     const { domain, address } = domainOfDeal(d.external_id);
     const subject = byDeal.get(d.id)?.subject ?? null;
 
-    const { resolution, fresh } = await resolveAccountForDeal({
+    const { resolution, fresh, stored } = await resolveAccountForDeal({
       tenantId,
       dealId: d.id,
       dealAccountName: d.account,
@@ -122,9 +119,15 @@ async function main(): Promise<void> {
       force: true, // this sweep is the thing that establishes links, so always look
     });
 
-    const current = d.salesforce_account_id
-      ? `${d.salesforce_account_id} (${d.salesforce_link_confidence ?? "?"})`
-      : "none";
+    if (stored.status === "schema_missing") schemaMissing = true;
+    const current =
+      stored.status === "linked"
+        ? `${stored.accountId} (${stored.confidence})`
+        : stored.status === "schema_missing"
+          ? "unknown (link columns not migrated yet)"
+          : stored.status === "none"
+            ? "none"
+            : `unreadable (${stored.status})`;
 
     console.log(`${d.account}`);
     console.log(`   external    ${d.external_id ?? "(none)"}`);
@@ -176,6 +179,14 @@ async function main(): Promise<void> {
   console.log(`   no account             ${none}`);
   console.log(`   lookup failed          ${failed}`);
   if (apply) console.log(`   links written          ${written}`);
+  if (schemaMissing) {
+    console.log(
+      `\nNo link could be stored: the salesforce_account_id / salesforce_link_confidence` +
+        `\ncolumns do not exist yet. Run supabase/add-deal-salesforce-link.sql in the` +
+        `\nSupabase SQL editor, then re-run with --apply. The resolutions above are live` +
+        `\nSalesforce answers and are unaffected by this.`,
+    );
+  }
   if (!apply && confirmed > 0) console.log(`\nRe-run with --apply to write the ${confirmed} confirmed link(s).`);
   if (failed > 0) {
     console.log(

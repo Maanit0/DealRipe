@@ -452,6 +452,68 @@ async function processEvent(
     throw new Error(`calls lookup failed: ${existing.error.message}`);
   }
 
+  // Neither key matched. That does NOT mean this meeting is new.
+  //
+  // The lookup above handles one identifier changing FORM, from a Graph event
+  // id to an iCalUId. It cannot handle the invite being re-issued, which mints a
+  // genuinely new iCalUId. When that happens we insert a second row for a
+  // meeting that already has one, and the work splits across the pair: on
+  // August 11 Gezairi had its briefing on the new row and its capture, recap and
+  // draft on the original, so the Activity card read "Briefing never sent" next
+  // to a completed recap. FTZ had the bot on the Monday row and a second row
+  // created 25 minutes before the call.
+  //
+  // A rep cannot be in two customer meetings on the same deal at the same
+  // instant, so a row matching on deal plus start is the same meeting. Adopt it.
+  // Adopting rather than inserting is the point: the older row usually holds the
+  // already-dispatched bot, and a new row silently orphans that bot's work.
+  let adopted: typeof existing.data = null;
+  if (!existing.data) {
+    const sameSlot = await db
+      .from("calls")
+      .select("id, recall_bot_id, call_date, external_id, scheduled_start")
+      .eq("deal_id", dealId)
+      .eq("scheduled_start", eventIso)
+      .limit(2);
+    if (sameSlot.error) {
+      // Say what we could not check. Falling through to an insert here would
+      // create exactly the duplicate this branch exists to prevent, and it would
+      // do so silently.
+      console.warn(
+        `[calendar-sync] same-slot lookup failed for deal ${dealId} at ${eventIso}, ` +
+          `so a duplicate row may be created: ${sameSlot.error.message}`,
+      );
+    } else if ((sameSlot.data ?? []).length === 1) {
+      adopted = sameSlot.data![0];
+      const mig = await db
+        .from("calls")
+        .update({ external_id: callKey })
+        .eq("id", adopted.id);
+      if (mig.error) {
+        console.warn(
+          `[calendar-sync] could not adopt call ${adopted.id} onto re-issued key ${callKey}: ${mig.error.message}`,
+        );
+        adopted = null;
+      } else {
+        console.log(
+          `[calendar-sync] adopted existing call ${adopted.id} for deal ${dealId} at ${eventIso} ` +
+            `onto re-issued invite key ${callKey}, rather than creating a duplicate row`,
+        );
+      }
+    } else if ((sameSlot.data ?? []).length > 1) {
+      // Already duplicated. Do not guess which one to adopt; that is what
+      // scripts/merge-duplicate-calls.ts is for, and picking wrong here would
+      // move the bot away from the row that captures.
+      console.warn(
+        `[calendar-sync] ${sameSlot.data!.length} existing calls for deal ${dealId} at ${eventIso}. ` +
+          `Not adopting. Run scripts/merge-duplicate-calls.ts.`,
+      );
+    }
+  }
+  if (adopted) {
+    existing.data = adopted;
+  }
+
   // Migrate a legacy row onto the stable key so the other rep's copy finds it.
   if (existing.data && existing.data.external_id !== callKey) {
     const mig = await db.from("calls").update({ external_id: callKey }).eq("id", existing.data.id);

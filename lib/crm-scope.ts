@@ -552,7 +552,14 @@ function computeViolation(
   return null;
 }
 
-function emitAudit(entry: CrmAccessAuditEntry): void {
+/**
+ * Exported so lib/salesforce-scope.ts writes into the SAME crm_access_log
+ * through the SAME hook. A second audit path would be a second thing to keep
+ * correct, and the table would stop being the canonical record of every CRM
+ * access this system attempted. Authorization for Salesforce is decided in
+ * salesforce-scope; only the logging is shared.
+ */
+export function emitAudit(entry: CrmAccessAuditEntry): void {
   try {
     // Capture the call context synchronously, before any await in the hook,
     // so the stamp is reliable regardless of how the hook defers its write.
