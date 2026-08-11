@@ -38,6 +38,7 @@ import {
   firstExternalAddress,
   isAutoJoinRep,
   isFreeMailDomain,
+  resolveMeetingDeal,
   rolldogOppIdForDeal,
 } from "../lib/pilot-config";
 import { prewarmRolldogToken, searchOpportunities } from "../lib/rolldog";
@@ -97,7 +98,15 @@ async function main(): Promise<void> {
       const address = firstExternalAddress(emails);
       if (!address || !m.joinUrl) continue;
       const domain = address.split("@")[1] ?? "";
-      const externalId = autoDealExternalIdForAddress(address);
+
+      // Resolve exactly the way the crons do. Computing the auto id directly
+      // skipped the pilot mapping, so IFF and SEINO, which match a pilot deal
+      // by domain and by subject, were looked up under an "auto:" id that has
+      // never existed. Both reported "deal will be created on next sync" and no
+      // bot, for deals that have been running for weeks. A diagnostic that
+      // resolves differently from production is not a diagnostic.
+      const resolved = resolveMeetingDeal(emails, m.subject, true);
+      const externalId = resolved?.dealExternalId ?? autoDealExternalIdForAddress(address);
 
       const verdict = await shouldJoinAutoMeeting({
         tenantId,
