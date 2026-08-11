@@ -135,7 +135,9 @@ function excludedDomains(): ReadonlyArray<string> {
   return [...EXCLUDED_DOMAINS, ...env];
 }
 
-function autoJoinRepEmails(): ReadonlyArray<string> {
+/** The reps whose calendars are in auto-join mode. Exported so a diagnostic can
+ *  report the real list rather than re-parsing the env var and drifting. */
+export function autoJoinRepEmails(): ReadonlyArray<string> {
   const raw = process.env.AUTO_JOIN_REP_EMAILS ?? "";
   return raw
     .split(",")
@@ -174,6 +176,26 @@ export const FREE_MAIL_DOMAINS: ReadonlyArray<string> = Object.freeze([
 /** True when a domain identifies a person rather than a company. */
 export function isFreeMailDomain(domain: string | null | undefined): boolean {
   return FREE_MAIL_DOMAINS.includes((domain ?? "").toLowerCase().trim());
+}
+
+/**
+ * A deal keyed to a consumer-mail DOMAIN rather than to a person.
+ *
+ * "auto:icloud.com" is Apple's mail domain, not a company. These are shells
+ * left from before free-mail addresses were keyed per person, and they sit
+ * alongside the real person-keyed deal. In the Aug 11 digest that rendered
+ * Luke Rousselle's single no-show as two deal cards and two no-show lines, one
+ * of them titled "Icloud", in the CRO's weekly email.
+ *
+ * A person-keyed free-mail deal carries the full address and is legitimate;
+ * the test is specifically a bare consumer-mail domain.
+ */
+export function isConsumerMailShell(externalId: string | null | undefined): boolean {
+  const id = (externalId ?? "").toLowerCase();
+  if (!id.startsWith("auto:")) return false;
+  const tail = id.slice("auto:".length);
+  if (tail.includes("@")) return false;
+  return isFreeMailDomain(tail);
 }
 
 /** First external (non-internal, non-excluded) attendee ADDRESS, or null. */

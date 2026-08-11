@@ -19,7 +19,7 @@
 import { isMeaningfulContact } from "./contacts-extract";
 import { prettyAccount, repName } from "./display-names";
 import { loadFramework, type Framework } from "./framework";
-import { rolldogOppIdForDeal } from "./pilot-config";
+import { isConsumerMailShell, rolldogOppIdForDeal } from "./pilot-config";
 import { getRolldogSummary, daysSince, type RolldogSummary } from "./rolldog-summary";
 import type { DealSignals } from "./snapshot";
 import { supabaseAdmin } from "./supabase";
@@ -591,13 +591,13 @@ export async function getPipelineChanges(
   const callsBy = group((callsRes.data ?? []) as Array<Row & { deal_id: string }>);
   const snapsBy = group((snapsRes.data ?? []) as Array<Row & { deal_id: string }>);
 
-  const deals = (dealsRes.data ?? []) as Array<{
+  const deals = ((dealsRes.data ?? []) as Array<{
     id: string;
     account: string;
     external_id: string | null;
     rep_email: string | null;
     rolldog_opportunity_id: string | null;
-  }>;
+  }>).filter((d) => !isConsumerMailShell(d.external_id));
 
   // Resolve each deal's Rolldog opportunity from the static pilot map OR the
   // stored column (statically-mapped pilot deals like Duty Free do not carry the

@@ -7,7 +7,7 @@
  */
 
 import { isMeaningfulContact } from "./contacts-extract";
-import { isFreeMailDomain } from "./pilot-config";
+import { isConsumerMailShell } from "./pilot-config";
 import { getRolldogSummary } from "./rolldog-summary";
 import { supabaseAdmin } from "./supabase";
 
@@ -67,27 +67,6 @@ function shortDate(iso: string | null | undefined): string {
   } catch {
     return "";
   }
-}
-
-/**
- * A deal keyed to a consumer-mail DOMAIN rather than to a person.
- *
- * These are shells left from before free-mail addresses were keyed per person.
- * "auto:icloud.com" is not a company, it is Apple's mail domain, and it
- * duplicates the real person-keyed deal beside it. In the Aug 11 digest that
- * showed as Luke Rousselle's single no-show rendered as two deal cards and two
- * no-show lines, one of them titled "Icloud", in the CRO's weekly email.
- *
- * Excluded from the digest rather than deleted here: this file reports, it does
- * not own the deal table. Cleaning the rows up is a separate, reviewable job.
- */
-function isConsumerMailShell(externalId: string | null | undefined): boolean {
-  const id = (externalId ?? "").toLowerCase();
-  if (!id.startsWith("auto:")) return false;
-  const tail = id.slice("auto:".length);
-  // A person-keyed free-mail deal carries the full address and is legitimate.
-  if (tail.includes("@")) return false;
-  return isFreeMailDomain(tail);
 }
 
 export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDigestData> {
