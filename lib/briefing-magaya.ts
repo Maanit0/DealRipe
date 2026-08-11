@@ -179,6 +179,11 @@ export function buildMagayaBriefingUserMessage(args: {
    * an audit session with a customer of two years by asking what they do.
    */
   stageGates?: string | null;
+  /**
+   * The rep's own notes from Rolldog's narrative tabs. Ranks above the BDR
+   * record: the rep has spoken to this customer and the BDR filled in a form.
+   */
+  rolldogNarrative?: string | null;
 }): string {
   const { framework, extraction } = args;
 
@@ -265,6 +270,16 @@ export function buildMagayaBriefingUserMessage(args: {
       args.stageGates,
       ``,
       `This is the rep's own record of the work, so treat every ticked item as done and never ask the customer to confirm it happened. If a demo, a proposal or a site visit is ticked, that call has already occurred: brief for what comes after it. These ticks are a claim rather than evidence, so they may be used to rule a question OUT but never to fill a qualification gap IN.`,
+    );
+  }
+
+  if (args.rolldogNarrative) {
+    lines.push(
+      ``,
+      `WHAT THE REP HAS WRITTEN ABOUT THIS DEAL (their own notes in the CRM):`,
+      args.rolldogNarrative,
+      ``,
+      `This is the rep's own account, so it outranks the BDR record below and is usually the most accurate picture of the deal available before the call. It is still not the customer speaking, so use it to aim the questions rather than to fill a qualification gap. If it records a concern, a competitor or a stated objection, that is almost always the most important thing on this call.`,
     );
   }
 

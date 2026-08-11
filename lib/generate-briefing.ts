@@ -83,6 +83,8 @@ export type BriefingState = {
   history?: string;
   /** When this call happens (YYYY-MM-DD), so commitments land after it. */
   meetingDate?: string | null;
+  /** The rep's own written notes from Rolldog's narrative tabs. */
+  rolldogNarrative?: string | null;
 };
 
 /**
@@ -123,6 +125,7 @@ export async function generateBriefingFromState(
     meetingDate: state.meetingDate,
     stageGates: state.stageGates,
     history: state.history,
+    rolldogNarrative: state.rolldogNarrative,
     today: new Date().toISOString().slice(0, 10),
   });
 

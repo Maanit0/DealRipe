@@ -224,6 +224,7 @@ async function main(): Promise<void> {
               : "")
           : "no checklist read";
         console.log(`   checklist   ${gateState}`);
+        console.log(`   rep notes   ${ctx.rolldogNarrative ? `${ctx.rolldogNarrative.split("\n").length} lines from Rolldog tabs` : "none written"}`);
         console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${sfState}`);
         try {
           const b = await generateBriefingFromState({

@@ -23,6 +23,7 @@ import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
 import { accountContextLines, getAccountContextByDomain } from "./salesforce-context";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { buildBriefingHistory } from "./briefing-history";
+import { buildRolldogNarrative } from "./rolldog-narrative";
 import { getStageGateSummary, stageGateLines, type StageGateSummary } from "./stage-gates";
 import type { ExtractionResult } from "./scotsman";
 import type { Contact } from "./seed-data";
@@ -107,6 +108,13 @@ export type DealContext = {
    * and did not get. Null on a genuinely first conversation.
    */
   history: string | null;
+  /**
+   * What the rep wrote in Rolldog's Situation, Timeline, Budget, Competition
+   * and People tabs. Their own account of the deal, which outranks a BDR intake
+   * form and is where recorded concerns actually live. Null when the deal has
+   * no opportunity, the rep has written nothing, or the read failed.
+   */
+  rolldogNarrative: string | null;
 };
 
 export async function getDealContext(
@@ -209,6 +217,20 @@ export async function getDealContext(
     /* best-effort */
   }
 
+  // The rep's own notes in Rolldog. getDealRoom has been able to read these for
+  // months and nothing ever called it, so deals briefed off a BDR intake form
+  // while the rep's account of the same deal sat one call away.
+  let rolldogNarrative: string | null = null;
+  if (opp) {
+    try {
+      rolldogNarrative = await buildRolldogNarrative(opp);
+    } catch (err) {
+      console.warn(
+        `[deal-context] Rolldog narrative read failed for opportunity ${opp}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // What happened last time. The recaps read specific and the briefings read
   // vague for one reason: a recap is written with the transcript in hand and the
   // briefing only ever saw a snapshot of the record.
@@ -301,6 +323,7 @@ export async function getDealContext(
     stageGates,
     crmContacts,
     history,
+    rolldogNarrative,
   };
 }
 
@@ -316,6 +339,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   crmContext?: string;
   stageGates?: string | null;
   history?: string;
+  rolldogNarrative?: string | null;
 } {
   return {
     account: ctx.account,
@@ -327,5 +351,6 @@ export function briefingStateFromContext(ctx: DealContext): {
     crmContext: ctx.crmContext ?? undefined,
     stageGates: ctx.stageGates ? stageGateLines(ctx.stageGates) : null,
     history: ctx.history ?? undefined,
+    rolldogNarrative: ctx.rolldogNarrative,
   };
 }
