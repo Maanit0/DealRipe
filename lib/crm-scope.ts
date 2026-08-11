@@ -216,6 +216,19 @@ export type CrmAccessAuditEntry = {
   /** The call this access belongs to, captured from callContextStore at emit
    *  time. Informational only; null outside a runWithCallContext scope. */
   callId?: string | null;
+  /**
+   * What was actually written, label and value, at the moment of the write.
+   *
+   * `fields` above records the scope token the assert checked, which for
+   * Salesforce is the single coarse value 'sales_development' and therefore says
+   * nothing about which Account fields were touched. This says. It is the only
+   * record of the values: the Activity view's Rolldog expander re-composes
+   * content from the deal, which shows what we would write NOW and drifts as the
+   * deal changes.
+   *
+   * Omitted for reads and refusals, which have no values.
+   */
+  fieldValues?: ReadonlyArray<{ label: string; value: string; mode?: string }>;
 };
 
 /**
@@ -316,6 +329,7 @@ async function writeCrmAccessLogToSupabase(
     // write "Wrote to Rolldog", which is not a cosmetic error but a false claim
     // about where a customer's data went.
     system: entry.system ?? "rolldog",
+    field_values: entry.fieldValues && entry.fieldValues.length > 0 ? entry.fieldValues : null,
   };
   const { error } = await supabaseAdmin().from("crm_access_log").insert(row as never);
   if (!error) return;
@@ -325,14 +339,15 @@ async function writeCrmAccessLogToSupabase(
   // insert would fail on an unknown column and take the audit down with it, and
   // an audit that stops recording is worse than one that records less. So fall
   // back once, without the column, and say so.
-  if (/system/i.test(error.message) && /column|schema/i.test(error.message)) {
-    const { system: _dropped, ...legacy } = row;
+  if (/system|field_values/i.test(error.message) && /column|schema/i.test(error.message)) {
+    const { system: _dropped, field_values: _alsoDropped, ...legacy } = row;
     const retry = await supabaseAdmin().from("crm_access_log").insert(legacy as never);
     if (!retry.error) {
       console.warn(
-        "[crm-scope] crm_access_log has no `system` column yet, so this write was" +
-          " logged without one and will display as Rolldog." +
-          " Run supabase/add-crm-access-log-system.sql.",
+        "[crm-scope] crm_access_log is missing `system` and/or `field_values`, so" +
+          " this write was logged without them: it will display as Rolldog and" +
+          " without its values. Run supabase/add-crm-access-log-system.sql and" +
+          " supabase/add-crm-access-log-field-values.sql.",
       );
       return;
     }

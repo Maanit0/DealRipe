@@ -30,6 +30,14 @@ export type ActivityEntry = {
   bodyHtml: string | null;
   /** For a Rolldog write: the fields that were updated. */
   fields: string | null;
+  /**
+   * What was actually written, label and value, recorded at write time.
+   *
+   * Null for everything except a permitted CRM write, and for writes that
+   * predate crm_access_log.field_values. Null is "we did not record it", never
+   * "nothing was written": the field names in `fields` still apply.
+   */
+  values: Array<{ label: string; value: string; mode?: string }> | null;
   /** The call this activity relates to (nearest in time on the deal), for
    *  showing when the call was and linking to the meeting. */
   callId: string | null;
@@ -73,7 +81,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       .order("sent_at", { ascending: false }),
     db
       .from("crm_access_log")
-      .select("id, opportunity_external_id, fields, allowed, operation, call_id, created_at, system")
+      .select("id, opportunity_external_id, fields, allowed, operation, call_id, created_at, system, field_values")
       .eq("tenant_id", tenantId)
       .eq("operation", "write")
       .eq("allowed", true)
@@ -172,6 +180,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       detail: m.to_email ? `To ${m.to_email}` : m.subject,
       bodyHtml: m.body_html,
       fields: null,
+      values: null,
       callId: call?.id ?? null,
       callDate: call?.date ?? null,
     });
@@ -184,6 +193,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     call_id: string | null;
     created_at: string;
     system?: string | null;
+    field_values?: Array<{ label: string; value: string; mode?: string }> | null;
   }>) {
     // Which CRM. Rows written before the `system` column existed are Rolldog by
     // architectural constraint, so the default is a fact rather than a guess.
@@ -194,7 +204,15 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     const resolved = isSalesforce
       ? sfAccountToDeal.get(String(c.opportunity_external_id))
       : oppToDeal.get(String(c.opportunity_external_id));
-    const fields = Array.isArray(c.fields) ? (c.fields as string[]).join(", ") : "";
+    // Prefer the real labels over the scope token. `fields` on a Salesforce row
+    // is the single value 'sales_development', which tells a reader nothing.
+    const written = Array.isArray(c.field_values) ? c.field_values : [];
+    const fields =
+      written.length > 0
+        ? written.map((w) => w.label).join(", ")
+        : Array.isArray(c.fields)
+          ? (c.fields as string[]).join(", ")
+          : "";
     // Prefer the call_id stamped on the write (bulletproof); fall back to
     // nearest-in-time only for legacy rows written before call_id existed.
     const stored = c.call_id ? { id: c.call_id, date: callDateById.get(c.call_id) ?? c.created_at } : null;
@@ -211,6 +229,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       detail: fields ? `Updated ${fields}` : null,
       bodyHtml: null,
       fields: fields || null,
+      values: written.length > 0 ? written : null,
       callId: call?.id ?? null,
       callDate: call?.date ?? null,
     });

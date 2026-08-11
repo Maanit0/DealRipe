@@ -100,6 +100,14 @@ export function assertScopedAccountWrite(
   tenantSlug: string,
   accountId: string,
   fields: readonly string[],
+  /**
+   * The actual labels and values being written, for the audit.
+   *
+   * `fields` is the scope token, which for Salesforce is the single coarse
+   * value 'sales_development'. On its own the audit row therefore cannot say
+   * which Account fields were touched, let alone with what. This can.
+   */
+  fieldValues?: ReadonlyArray<{ label: string; value: string; mode?: string }>,
 ): void {
   let reason: string | null = null;
   if (!salesforceWritebackEnabled()) {
@@ -122,6 +130,9 @@ export function assertScopedAccountWrite(
     allowed: reason === null,
     violationReason: reason,
     at: new Date(),
+    // Only on a permitted write. A refusal wrote nothing, and recording values
+    // against it would read as though it had.
+    fieldValues: reason === null ? fieldValues : undefined,
   });
 
   if (reason !== null) throw new SalesforceScopeViolationError({ reason, accountId });

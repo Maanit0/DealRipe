@@ -240,7 +240,14 @@ export async function writeBackDealToSalesforce(
       // Inside the grant, so the assert sees the runtime authorization. Throws
       // SalesforceScopeViolationError if anything is out of scope, and appends
       // to crm_access_log either way.
-      assertScopedAccountWrite(tenantSlug, accountId, ["sales_development"]);
+      assertScopedAccountWrite(
+        tenantSlug,
+        accountId,
+        ["sales_development"],
+        // What is about to land, captured before the PATCH so the audit
+        // describes the write rather than a later re-derivation of it.
+        plan.writes.map((w) => ({ label: w.label, value: w.display, mode: w.mode })),
+      );
       return applyAccountWriteBack(plan);
     });
     if (res.error) return { written: false, accountId, plan, reason: res.error };
