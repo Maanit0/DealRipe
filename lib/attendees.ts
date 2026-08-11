@@ -30,6 +30,54 @@ function isSeller(email: string | null | undefined): boolean {
 }
 
 /**
+ * Shared mailboxes, which are not people.
+ *
+ * Title-casing the local part of an address is fine for "joel@" and wrong for
+ * "docs@": the YES Customs briefing opened with "Walk Docs through the
+ * proposal", which is a rep being told to address a distribution list by name.
+ * These addresses still belong on the invite line, they simply must never be
+ * spoken to or counted as a stakeholder.
+ */
+const ROLE_MAILBOXES = new Set([
+  "docs",
+  "documents",
+  "info",
+  "sales",
+  "admin",
+  "administration",
+  "accounting",
+  "accounts",
+  "billing",
+  "support",
+  "help",
+  "contact",
+  "office",
+  "team",
+  "ops",
+  "operations",
+  "customs",
+  "imports",
+  "exports",
+  "logistics",
+  "noreply",
+  "no-reply",
+  "donotreply",
+  "invoices",
+  "ar",
+  "ap",
+  "hr",
+  "it",
+]);
+
+function isRoleMailbox(email: string, hasRealDisplayName: boolean): boolean {
+  // A real display name beats the heuristic: "Sales, Maria <sales@x.com>" is a
+  // person whose company gave her the sales alias.
+  if (hasRealDisplayName) return false;
+  const local = (email.split("@")[0] ?? "").toLowerCase().replace(/[._-]/g, "");
+  return ROLE_MAILBOXES.has(local);
+}
+
+/**
  * A display name for one attendee.
  *
  * Exchange returns the email address as the display name when the person is
@@ -68,6 +116,7 @@ export function attendeeLineFromMeeting(
 
   const customers: string[] = [];
   const colleagues: string[] = [];
+  const mailboxes: string[] = [];
 
   for (const a of attendees) {
     const email = (a.email ?? "").toLowerCase();
@@ -77,6 +126,12 @@ export function attendeeLineFromMeeting(
       continue;
     }
     const known = byEmail.get(email);
+    const rawName = (a.name ?? "").trim();
+    const hasRealName = Boolean(known?.name) || (rawName && rawName.toLowerCase() !== email);
+    if (isRoleMailbox(email, Boolean(hasRealName))) {
+      mailboxes.push(email);
+      continue;
+    }
     const title = known?.title ? `, ${known.title}` : "";
     // Prefer the Salesforce spelling of a name over an Exchange display name:
     // "Joel Del Toro" beats "joel@joearevalo.com".
@@ -84,10 +139,22 @@ export function attendeeLineFromMeeting(
     customers.push(`${name}${title}`);
   }
 
-  if (customers.length === 0) return null;
+  const parts: string[] = [];
+  if (customers.length > 0) parts.push(customers.join("; "));
+  if (mailboxes.length > 0) {
+    // Named explicitly as inboxes so the prompt cannot address one as a person,
+    // but kept visible, since a documents alias on a proposal call is a real
+    // signal about how that company handles paperwork.
+    parts.push(
+      `Also copied, shared inboxes rather than people, never address these by name: ${mailboxes.join(", ")}.`,
+    );
+  }
+  if (colleagues.length > 0) {
+    parts.push(`Also on the call from Magaya: ${colleagues.join(", ")}.`);
+  }
 
-  const line = customers.join("; ");
-  return colleagues.length > 0
-    ? `${line}. Also on the call from Magaya: ${colleagues.join(", ")}.`
-    : line;
+  // A meeting with only a shared inbox on the customer side still has no named
+  // attendee, so fall back rather than claim we know who is coming.
+  if (customers.length === 0) return null;
+  return parts.join(" ");
 }

@@ -22,6 +22,7 @@ import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
 import { accountContextLines, getAccountContextByDomain } from "./salesforce-context";
 import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import { buildBriefingHistory } from "./briefing-history";
 import { getStageGateSummary, stageGateLines, type StageGateSummary } from "./stage-gates";
 import type { ExtractionResult } from "./scotsman";
 import type { Contact } from "./seed-data";
@@ -101,6 +102,11 @@ export type DealContext = {
    * title against a calendar attendee. Empty when no account matched.
    */
   crmContacts: Array<{ name: string; title: string | null; email: string | null }>;
+  /**
+   * What the last calls established, what we still owe, and what we asked for
+   * and did not get. Null on a genuinely first conversation.
+   */
+  history: string | null;
 };
 
 export async function getDealContext(
@@ -203,6 +209,16 @@ export async function getDealContext(
     /* best-effort */
   }
 
+  // What happened last time. The recaps read specific and the briefings read
+  // vague for one reason: a recap is written with the transcript in hand and the
+  // briefing only ever saw a snapshot of the record.
+  let history: string | null = null;
+  try {
+    history = await buildBriefingHistory(tenantId, dealId);
+  } catch {
+    /* best-effort: a thin briefing beats no briefing */
+  }
+
   // Salesforce BDR context. Best-effort in the strongest sense: Salesforce
   // being slow or unreachable must never stop a briefing being generated, it
   // just makes it thinner.
@@ -284,6 +300,7 @@ export async function getDealContext(
     crmContextStatus,
     stageGates,
     crmContacts,
+    history,
   };
 }
 
@@ -298,6 +315,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   extraction: ExtractionMap;
   crmContext?: string;
   stageGates?: string | null;
+  history?: string;
 } {
   return {
     account: ctx.account,
@@ -308,5 +326,6 @@ export function briefingStateFromContext(ctx: DealContext): {
     extraction: ctx.extraction as unknown as ExtractionMap,
     crmContext: ctx.crmContext ?? undefined,
     stageGates: ctx.stageGates ? stageGateLines(ctx.stageGates) : null,
+    history: ctx.history ?? undefined,
   };
 }

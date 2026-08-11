@@ -79,6 +79,8 @@ export type BriefingState = {
   meetingSubject?: string | null;
   /** The rep's ticked checklist from Rolldog, rendered for the prompt. */
   stageGates?: string | null;
+  /** What the last calls established and what is still owed. */
+  history?: string;
 };
 
 /**
@@ -117,6 +119,7 @@ export async function generateBriefingFromState(
     crmContext: state.crmContext,
     meetingSubject: state.meetingSubject,
     stageGates: state.stageGates,
+    history: state.history,
     today: new Date().toISOString().slice(0, 10),
   });
 
