@@ -69,17 +69,32 @@ const ROLE_MAILBOXES = new Set([
   "it",
 ]);
 
-function isRoleMailbox(email: string, hasRealDisplayName: boolean): boolean {
-  // A real display name beats the heuristic: "Sales, Maria <sales@x.com>" is a
-  // person whose company gave her the sales alias.
-  if (hasRealDisplayName) return false;
+function isRoleMailbox(email: string, displayName: string): boolean {
   const local = (email.split("@")[0] ?? "").toLowerCase().replace(/[._-]/g, "");
-  if (ROLE_MAILBOXES.has(local)) return true;
-  // An address named after the company itself is a company inbox. EWI's invite
-  // carries ewi@ewiinc.com, which arrived in a briefing as a person called
-  // "Ewi" sitting alongside Evey, Frank and Cynthia.
+  const shown = displayName.toLowerCase().replace(/[\s._-]/g, "");
   const stem = (email.split("@")[1] ?? "").split(".")[0]?.toLowerCase() ?? "";
-  return local.length >= 2 && stem.length >= 2 && stem.startsWith(local);
+
+  // Check the display name as well as the address, not instead of it.
+  //
+  // The first version bailed out whenever a display name existed, on the theory
+  // that "Sales, Maria <sales@x.com>" is a person. But Exchange returned "Ewi"
+  // as the display name for ewi@ewiinc.com, so the guard fired and the mailbox
+  // sailed through as a person named Ewi, standing in a briefing alongside
+  // Evey, Frank and Cynthia. A display name that is itself the company name or
+  // a role word is not a person's name.
+  const candidates = [local, shown].filter((c) => c.length >= 2);
+  if (candidates.length === 0) return false;
+
+  for (const c of candidates) {
+    if (ROLE_MAILBOXES.has(c)) return true;
+    // An address or display name that is the company's own name is a company
+    // inbox: "ewi" against ewiinc.com, "protrans" against protrans.com.
+    if (stem.length >= 2 && (stem.startsWith(c) || c.startsWith(stem))) return true;
+  }
+
+  // A multi-word display name is a person. "Joel Del Toro" survives everything
+  // above only by coincidence of length, so make it explicit.
+  return !/\s/.test(displayName.trim()) && candidates.includes(local) && ROLE_MAILBOXES.has(local);
 }
 
 /**
@@ -131,9 +146,10 @@ export function attendeeLineFromMeeting(
       continue;
     }
     const known = byEmail.get(email);
-    const rawName = (a.name ?? "").trim();
-    const hasRealName = Boolean(known?.name) || (rawName && rawName.toLowerCase() !== email);
-    if (isRoleMailbox(email, Boolean(hasRealName))) {
+    // A Salesforce contact record is a strong signal of personhood: someone
+    // filed them as a human being. Trust that over the heuristic.
+    const shown = known?.name ?? displayName(a);
+    if (!known?.name && isRoleMailbox(email, shown)) {
       mailboxes.push(email);
       continue;
     }
