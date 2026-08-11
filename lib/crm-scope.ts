@@ -54,6 +54,35 @@ export const PILOT_OPPORTUNITY_IDS: readonly string[] = Object.freeze([
            // on the Eduardo call. Backfills the recovered Jul 20 call's gates.
   "82482", // Air Americas LLC (auto-linked). Website-verified match
            // (airamericas.com) confirmed by Maanit 2026-07-21 before linking.
+
+  // ---- Aug 2026 expansion: Alexandra, Daniel and Eduardo's live pipeline. ----
+  // Every id below was confirmed by scripts/meeting-readiness.ts on 2026-08-10:
+  // the deal resolves to this opportunity, the Rolldog account name matches the
+  // meeting's customer, and a bot is scheduled on the call. Without these,
+  // write-back silently no-ops for the three newest reps, which is the opposite
+  // of what Mark told the team DealRipe would do for them.
+  "81051", // Bee Imagine (Alexandra). FTZ connect, Tue Aug 11.
+  "81491", // EWI (Alexandra). Onboarding and training, Tue and Wed Aug 11-12.
+  "88491", // All Square Logistics (Alexandra). ABI demo, Tue Aug 11.
+  "70908", // TW Customs Brokers (Alexandra). At SQL4, agreement on signature.
+  "65462", // GHY International (Alexandra). At SQL3, entry view audit session.
+  "80082", // Joe Arevalo and Associates (Alexandra). Continued demo, Wed Aug 12.
+  "80731", // TOC Logistics / ProTrans (Alexandra). Inbond session, Wed Aug 12.
+  "82445", // YES Customs Broker (Alexandra). Proposal walk-through, Wed Aug 12.
+  "82986", // Elif Utsukarci Consulting (Alexandra). Follow-up demo, Thu Aug 13.
+  "83271", // ILS Inc (Alexandra and Daniel, co-sold). Import/WMS demo, Thu Aug 13.
+  "88494", // Integrity Customs Service (Alexandra). ABI demo, Fri Aug 14.
+  "82005", // Custom Goods (Daniel). Platform demo, Tue Aug 11.
+  "83111", // FM Global Logistics (Eduardo). Rate Management, Wed Aug 12.
+
+  // Deliberately NOT added, and why. Each would be a guess, and a wrong id
+  // writes one customer's call notes onto another customer's deal:
+  //   TQL Global      seven identically-named opportunities, none owned by
+  //                   Alexandra. Needs her to say which.
+  //   Medov Logistics seventeen candidates. Needs Eduardo to say which.
+  //   Dunavant 23866  one confident search hit but not yet linked on the deal
+  //                   row, so write-back would decline anyway. Link first.
+  //   Febest          no Rolldog opportunity exists. Magaya has to create it.
 ]);
 
 /**
