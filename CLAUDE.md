@@ -86,9 +86,27 @@ parses them as local and shifts every meeting by the reader's UTC offset. Use
 **`iCalUId` is stable across mailboxes, `id` is per-mailbox.** Calls are keyed on
 `iCalUId` so a co-sold meeting on two calendars produces one bot, not two.
 
-**Salesforce is read-only today.** We resolve an Account by email domain for BDR
-context. There is no Salesforce opportunity linking, `SALESFORCE_PILOT_OPPORTUNITY_IDS`
-is empty, and `lib/salesforce-writeback.ts` has no caller.
+**Salesforce writes were forbidden until 2026-08-11, then authorized.** The old
+rule was a Magaya security-review commitment, recorded above `assertScopedWrite`.
+Mark Buman lifted it with Magaya security, without a field restriction.
+
+Permitted and implemented are different. The writer touches exactly the eight
+Account fields in `FIELD_SOURCES` (`lib/salesforce-writeback-run.ts`): Business
+Issues, Software Purposes, Any Other Software, Other Providers Reached Out,
+Desired Go-Live Date, and the Compelling Events, Budget Confirmed and Executive
+Sponsorship booleans. Adding a field needs a mapping and a look at its type and
+length, not just permission.
+
+`SALESFORCE_PILOT_ACCOUNT_IDS` and `SALESFORCE_WRITEBACK_ENABLED` still gate
+every write. They are blast-radius gates rather than permission gates now, for
+the same reason `PILOT_OPPORTUNITY_IDS` gates Rolldog. `assertScopedWrite` stays
+Rolldog-only; Salesforce goes through `assertScopedAccountWrite` in
+`lib/salesforce-scope.ts`.
+
+The Salesforce READ side is separate and unrestricted: `resolveAccount` returns
+a six-way result and falls back to a name search when the domain is free-mail,
+which is the only way Gezairi's real account was ever going to be reachable from
+a gmail invite.
 
 **Free-mail domains never resolve by domain**, only by exact address. Matching
 `%@gmail.com` once returned an unrelated company's account.

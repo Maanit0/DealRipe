@@ -135,8 +135,18 @@ async function main(): Promise<void> {
     priorByDeal.set(r.deal_id, [...(priorByDeal.get(r.deal_id) ?? []), String(r.call_subtype)]);
   }
 
-  const neither: string[] = [];
-  const seenDeal = new Set<string>();
+  // Deals with no write target at all, and deals whose Salesforce side is
+  // ambiguous or unreadable while Rolldog is missing. The second group is not
+  // "fine", it is unknown, and the first version of this summary counted only
+  // literal NEITHER and so announced "every upcoming call is backed by at least
+  // one CRM" on a run where Milsped had no Rolldog opportunity and ten
+  // Salesforce candidates.
+  const atRisk: Array<{ account: string; why: string }> = [];
+  // Remember the Salesforce answer per deal. Two call rows for one deal used to
+  // print "same deal as above, not re-checked" and then the verdict treated the
+  // missing lookup as "no Salesforce", so EWI's second session read ROLLDOG ONLY
+  // when its account resolves perfectly well.
+  const sfByDeal = new Map<string, SfResult>();
 
   console.log("");
   console.log(`Upcoming calls in the next ${hours} hours.`);
@@ -155,8 +165,10 @@ async function main(): Promise<void> {
     const rolldog = resolveWriteTarget(d);
     // One Salesforce lookup per deal, not per call. Two rows for one meeting is
     // common here and there is no reason to ask twice.
-    const sf = seenDeal.has(d.id) ? null : await salesforceFor(d.account ?? "", domains, customerEmails);
-    seenDeal.add(d.id);
+    const cached = sfByDeal.get(d.id);
+    const sf = cached ?? (await salesforceFor(d.account ?? "", domains, customerEmails));
+    if (!cached) sfByDeal.set(d.id, sf);
+    const firstTimeSeen = !cached;
 
     console.log(`${formatMeetingTime(c.scheduled_start)}   ${(c.title ?? "").slice(0, 52)}`);
     console.log(`   deal        ${d.account ?? "?"}   rep ${(d.rep_email ?? "?").split("@")[0]}`);
@@ -180,8 +192,16 @@ async function main(): Promise<void> {
       `   rolldog     ${rolldog.authorized ? `opp ${rolldog.opportunityId}, write authorized (${rolldog.route})` : `NO WRITE: ${rolldog.reason}`}`,
     );
 
-    if (sf === null) {
-      console.log(`   salesforce  (same deal as above, not re-checked)`);
+    if (!firstTimeSeen) {
+      const label =
+        sf.kind === "by_domain" || sf.kind === "by_name"
+          ? `${sf.name} (${sf.id})`
+          : sf.kind === "ambiguous"
+            ? "AMBIGUOUS"
+            : sf.kind === "failed"
+              ? "LOOKUP FAILED"
+              : "none";
+      console.log(`   salesforce  ${label}   (same deal as above, reusing that answer)`);
     } else {
       switch (sf.kind) {
         case "by_domain":
@@ -205,27 +225,58 @@ async function main(): Promise<void> {
       }
     }
 
-    const hasSf = sf !== null && (sf.kind === "by_domain" || sf.kind === "by_name");
+    const hasSf = sf.kind === "by_domain" || sf.kind === "by_name";
     const verdict = rolldog.authorized
       ? hasSf
         ? "BOTH"
         : "ROLLDOG ONLY"
       : hasSf
         ? "SALESFORCE ONLY (and Salesforce write-back has no caller yet, so nothing will be written)"
-        : sf !== null && (sf.kind === "failed" || sf.kind === "ambiguous")
+        : sf.kind === "failed" || sf.kind === "ambiguous"
           ? "ROLLDOG MISSING, SALESFORCE UNRESOLVED"
           : "NEITHER";
     console.log(`   verdict     ${verdict}`);
 
-    if (verdict === "NEITHER" && !neither.includes(d.account ?? "")) {
-      neither.push(d.account ?? "?");
+    // A demo, proposal or follow-up is mid-cycle work, and mid-cycle deals live
+    // in Rolldog. So "Salesforce is the record" for one of those is not a clean
+    // routing decision, it is a signal that Rolldog has an opportunity we cannot
+    // reach, or that nobody created one. Aquagulf raised this: a Warehouse and
+    // NVOCC demo and review routed to Salesforce, and Speed International had
+    // exactly that shape earlier, where the deal was 'Speedintlog' and Rolldog
+    // held "SPEED International Logistics - ABI and MSC" so no name or domain
+    // match could ever bridge them.
+    //
+    // This does not reroute the write. We cannot invent a Rolldog opportunity,
+    // and Salesforce is better than nowhere. It refuses to call the situation
+    // normal, which is the part that was missing.
+    const midCycle =
+      pred.callSubtype === "demo" || pred.callSubtype === "proposal" || pred.callSubtype === "follow_up";
+    const titleSaysMidCycle = /\bdemo\b|\bproposal\b|\bpricing\b|\bquote\b|\bcontract\b|\bnegotiat/i.test(
+      c.title ?? "",
+    );
+    if (!rolldog.authorized && (midCycle || titleSaysMidCycle)) {
+      console.log(
+        `   CHECK       this looks mid-cycle (${titleSaysMidCycle ? "title" : "predicted " + pred.callSubtype}) but has no Rolldog opportunity.`,
+      );
+      console.log(
+        `               Search Rolldog by the CUSTOMER's name, not the deal slug: npx tsx scripts/rolldog-opp-detail.ts --name "<company>"`,
+      );
+    }
+
+    const account = d.account ?? "?";
+    if (!rolldog.authorized && !hasSf && !atRisk.some((r) => r.account === account)) {
+      atRisk.push({
+        account,
+        why: sf.kind === "ambiguous" ? `Salesforce ambiguous, ${sf.candidates.length} candidates` : sf.kind === "failed" ? "Salesforce lookup failed" : "no CRM record found",
+      });
     }
     console.log("");
   }
 
   console.log("");
-  if (neither.length > 0) {
-    console.log(`${neither.length} deal(s) are backed by NEITHER CRM: ${neither.join(", ")}`);
+  if (atRisk.length > 0) {
+    console.log(`${atRisk.length} deal(s) have NO usable write target:`);
+    for (const r of atRisk) console.log(`  ${r.account.padEnd(22)} ${r.why}`);
     console.log(`These will brief and recap normally and then have nowhere to write.`);
     console.log(`Fix by linking a Rolldog opportunity:`);
     console.log(`  npx tsx scripts/rolldog-opp-detail.ts --name <company>`);

@@ -426,11 +426,31 @@ export function assertScopedRead(
  *   1. opportunityId is in PILOT_OPPORTUNITY_IDS, AND
  *   2. every field in fields is in ROLLDOG_WRITE_FIELDS.
  *
- * Writes are Rolldog-only by hard architectural constraint (Magaya
- * security review): no Salesforce write path is permitted anywhere in
- * the codebase, including this assert. Calling assertScopedWrite with
- * a Salesforce field will fail closed because that field is not in
- * ROLLDOG_WRITE_FIELDS.
+ * THIS assert remains Rolldog-only: calling it with a Salesforce field
+ * fails closed, because that field is not in ROLLDOG_WRITE_FIELDS.
+ * Salesforce writes go through assertScopedAccountWrite in
+ * lib/salesforce-scope.ts, never through here.
+ *
+ * The blanket ban that used to be recorded here ("no Salesforce write
+ * path is permitted anywhere in the codebase") was lifted on 2026-08-11.
+ * Mark Buman confirmed with Magaya security that DealRipe may write to
+ * Salesforce, without restricting it to a field list. This comment is
+ * the only record of that in the codebase, so correct it rather than
+ * work around it if the terms were different.
+ *
+ * What is PERMITTED and what is IMPLEMENTED are not the same thing, and
+ * conflating them is how a codebase quietly outgrows its approval in the
+ * other direction. Today the writer touches exactly the eight Account
+ * fields in FIELD_SOURCES (lib/salesforce-writeback-run.ts). Broader
+ * permission does not add fields on its own; each new one needs a
+ * mapping from a framework field and a look at the target field's type
+ * and length.
+ *
+ * SALESFORCE_PILOT_ACCOUNT_IDS and SALESFORCE_WRITEBACK_ENABLED still
+ * gate every write. Those are not permission gates, they are blast-radius
+ * gates, for the same fail-closed reason PILOT_OPPORTUNITY_IDS gates
+ * Rolldog: no automated process may widen what we touch in a customer's
+ * CRM.
  *
  * Always appends an audit entry to crm_access_log (pass or fail).
  */

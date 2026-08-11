@@ -25,6 +25,7 @@ config({ path: ".env.local" });
 import { resolutionSummary } from "../lib/salesforce-context";
 import { resolveAccountForDeal } from "../lib/salesforce-link";
 import { resolveSalesforceWriteTarget, salesforceWritebackEnabled } from "../lib/salesforce-scope";
+import { resolveWriteTarget } from "../lib/rolldog-writeback";
 import { writeBackDealToSalesforce } from "../lib/salesforce-writeback-run";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
 
     const deal = await db
       .from("deals")
-      .select("id, account, external_id")
+      .select("id, account, external_id, rolldog_opportunity_id, rolldog_link_confidence")
       .eq("tenant_id", tenantId)
       .eq("id", c.deal_id)
       .maybeSingle();
@@ -121,12 +122,33 @@ async function main(): Promise<void> {
       `   authorized  ${target.authorized ? `YES via ${target.route} route -> ${target.accountId}` : `NO: ${target.reason}`}`,
     );
 
+    // Salesforce scope authorization is not the last word. writeBackDealToSalesforce
+    // defers to Rolldog where Rolldog has an opportunity, so a deal can be
+    // authorized here and still, correctly, write nothing. Printing only the
+    // authorization would make this diagnostic disagree with production.
+    const rd = resolveWriteTarget(deal.data);
+    console.log(
+      `   record      ${rd.authorized ? `ROLLDOG (opportunity ${rd.opportunityId}), so Salesforce is skipped` : "SALESFORCE (Rolldog has no opportunity for this deal)"}`,
+    );
+
     // Dry run through the real write path, so the fields shown are the fields
     // that would actually go.
+    // When no link is stored yet, preview against the account we just resolved
+    // so the plan is still reviewable. This authorizes nothing: the preview
+    // path in writeBackDealToSalesforce refuses to be combined with apply.
+    const resolvedId =
+      resolution.status === "resolved_by_domain" || resolution.status === "resolved_by_name"
+        ? resolution.accountId
+        : null;
+    const previewAccountId = stored.status === "linked" ? null : resolvedId;
     const dry = await writeBackDealToSalesforce(SLUG, deal.data.external_id ?? "", {
       callId: null,
       callDate: c.scheduled_start ?? null,
+      previewAccountId,
     });
+    if (previewAccountId) {
+      console.log(`   plan basis  PREVIEW against ${previewAccountId} (no link stored, so this is hypothetical)`);
+    }
     if (dry.plan) {
       if (dry.plan.writes.length === 0) {
         console.log(`   would write nothing`);

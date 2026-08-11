@@ -22,6 +22,7 @@ import {
   runWithAuthorizedAccounts,
   SalesforceScopeViolationError,
 } from "./salesforce-scope";
+import { resolveWriteTarget } from "./rolldog-writeback";
 import { readSalesforceLink } from "./salesforce-link";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
@@ -82,43 +83,101 @@ export type SalesforceWriteResult = {
 export async function writeBackDealToSalesforce(
   tenantSlug: string,
   dealExternalId: string,
-  opts: { callId?: string | null; callDate?: string | null; apply?: boolean } = {},
+  opts: {
+    callId?: string | null;
+    callDate?: string | null;
+    apply?: boolean;
+    /**
+     * Plan against this account even though no link is stored for the deal.
+     *
+     * DRY RUN ONLY, and enforced below: passing it alongside apply is refused
+     * rather than honoured. It exists so the preflight can answer "what would
+     * we write" before the link columns are migrated, which is the difference
+     * between a reviewable plan and a blank page. It authorizes nothing: the
+     * scope assert never runs on this path.
+     */
+    previewAccountId?: string | null;
+    /**
+     * Write to Salesforce even when the deal already writes to Rolldog.
+     *
+     * Off by default. See the precedence note below.
+     */
+    evenIfRolldogWrites?: boolean;
+  } = {},
 ): Promise<SalesforceWriteResult> {
+  if (opts.previewAccountId && opts.apply) {
+    return {
+      written: false,
+      reason: "previewAccountId is a dry-run-only affordance and cannot be combined with apply",
+    };
+  }
   const tenantId = await resolveTenantId(tenantSlug);
   const db = supabaseAdmin();
 
   const dealRow = await db
     .from("deals")
-    .select("id, account")
+    .select("id, account, external_id, rolldog_opportunity_id, rolldog_link_confidence")
     .eq("tenant_id", tenantId)
     .eq("external_id", dealExternalId)
     .maybeSingle();
   if (dealRow.error) return { written: false, reason: `deal lookup failed: ${dealRow.error.message}` };
   if (!dealRow.data) return { written: false, reason: `deal '${dealExternalId}' not found` };
 
+  // ONE system of record per deal. Rolldog wins where it exists.
+  //
+  // Without this the two writers are independent and a deal with both a Rolldog
+  // opportunity and a Salesforce account writes to both, which is not a
+  // redundancy so much as a second version of the truth. Reps run their
+  // opportunities in Rolldog; Salesforce is where a deal lives when Rolldog has
+  // no opportunity for it, which today is Beyond Pegasus, Febest, Sunny Wing,
+  // Dunavant, Medov and TQL.
+  //
+  // resolveWriteTarget is the same function the Rolldog writer uses, so the two
+  // cannot disagree about whether Rolldog is going to write. A restatement of
+  // its rules here would eventually drift and produce a deal that writes to
+  // neither, which is worse than one that writes to both.
+  if (!opts.evenIfRolldogWrites) {
+    const rolldog = resolveWriteTarget(dealRow.data);
+    if (rolldog.authorized) {
+      return {
+        written: false,
+        accountId: null,
+        reason: `Rolldog is the system of record for this deal (opportunity ${rolldog.opportunityId}, ${rolldog.route} route). Salesforce is written only where Rolldog has no opportunity.`,
+      };
+    }
+  }
+
   // The link is read through readSalesforceLink so "no link" and "the link
   // columns do not exist yet" stay distinguishable all the way to the caller.
   const link = await readSalesforceLink(tenantId, dealRow.data.id);
-  if (link.status === "schema_missing") {
-    return {
-      written: false,
-      reason: "salesforce link columns are not migrated yet (run supabase/add-deal-salesforce-link.sql)",
-    };
-  }
-  if (link.status === "unavailable") {
-    return { written: false, reason: `could not read the deal's Salesforce link: ${link.error}` };
-  }
 
-  const target = resolveSalesforceWriteTarget({
-    salesforce_account_id: link.status === "linked" ? link.accountId : null,
-    salesforce_link_confidence: link.status === "linked" ? link.confidence : null,
-  });
-  if (!target.authorized) {
-    return { written: false, accountId: target.accountId, reason: `${dealExternalId}: ${target.reason}` };
+  // Preview path: no link needed, no authorization granted, never applies.
+  let accountId: string;
+  let target: ReturnType<typeof resolveSalesforceWriteTarget> | null = null;
+  if (opts.previewAccountId) {
+    accountId = opts.previewAccountId;
+  } else {
+    if (link.status === "schema_missing") {
+      return {
+        written: false,
+        reason: "salesforce link columns are not migrated yet (run supabase/add-deal-salesforce-link.sql)",
+      };
+    }
+    if (link.status === "unavailable") {
+      return { written: false, reason: `could not read the deal's Salesforce link: ${link.error}` };
+    }
+    target = resolveSalesforceWriteTarget({
+      salesforce_account_id: link.status === "linked" ? link.accountId : null,
+      salesforce_link_confidence: link.status === "linked" ? link.confidence : null,
+    });
+    if (!target.authorized) {
+      return { written: false, accountId: target.accountId, reason: `${dealExternalId}: ${target.reason}` };
+    }
+    accountId = target.accountId;
   }
 
   const deal = await getDealForTenant(tenantId, dealRow.data.id);
-  if (!deal) return { written: false, accountId: target.accountId, reason: "deal context could not be loaded" };
+  if (!deal) return { written: false, accountId, reason: "deal context could not be loaded" };
 
   const extraction = (deal.extraction ?? {}) as Record<
     string,
@@ -143,7 +202,7 @@ export async function writeBackDealToSalesforce(
   if (proposed.length === 0) {
     return {
       written: false,
-      accountId: target.accountId,
+      accountId,
       reason: "no confirmed extraction maps to a Sales Development field yet",
     };
   }
@@ -151,7 +210,7 @@ export async function writeBackDealToSalesforce(
   let plan: WriteBackPlan;
   try {
     plan = await planAccountWriteBack({
-      accountId: target.accountId,
+      accountId,
       accountName: dealRow.data.account,
       proposed,
       callDate: opts.callDate ?? new Date(),
@@ -161,35 +220,38 @@ export async function writeBackDealToSalesforce(
     // from reading later as "there was nothing to write".
     return {
       written: false,
-      accountId: target.accountId,
+      accountId,
       reason: `could not build the write plan: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
   if (!opts.apply) {
-    return { written: false, dryRun: true, accountId: target.accountId, plan, reason: "dry run" };
+    return { written: false, dryRun: true, accountId, plan, reason: "dry run" };
   }
   if (plan.writes.length === 0) {
-    return { written: false, accountId: target.accountId, plan, reason: "plan is empty; nothing to write" };
+    return { written: false, accountId, plan, reason: "plan is empty; nothing to write" };
   }
+  // Unreachable on the preview path (it returns above), but stated so the
+  // compiler and a reader agree that applying always has a resolved target.
+  if (!target) return { written: false, accountId, plan, reason: "no write target" };
 
   try {
     const res = await runWithAuthorizedAccounts(target.runtimeAuth, async () => {
       // Inside the grant, so the assert sees the runtime authorization. Throws
       // SalesforceScopeViolationError if anything is out of scope, and appends
       // to crm_access_log either way.
-      assertScopedAccountWrite(tenantSlug, target.accountId, ["sales_development"]);
+      assertScopedAccountWrite(tenantSlug, accountId, ["sales_development"]);
       return applyAccountWriteBack(plan);
     });
-    if (res.error) return { written: false, accountId: target.accountId, plan, reason: res.error };
-    return { written: true, accountId: target.accountId, plan };
+    if (res.error) return { written: false, accountId, plan, reason: res.error };
+    return { written: true, accountId, plan };
   } catch (err) {
     if (err instanceof SalesforceScopeViolationError) {
-      return { written: false, accountId: target.accountId, plan, reason: `scope blocked: ${err.reason}` };
+      return { written: false, accountId, plan, reason: `scope blocked: ${err.reason}` };
     }
     return {
       written: false,
-      accountId: target.accountId,
+      accountId,
       plan,
       reason: err instanceof Error ? err.message : String(err),
     };

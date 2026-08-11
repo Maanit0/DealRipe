@@ -20,7 +20,7 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { getFrameworkForDeal, type Framework } from "./framework";
 import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
-import { accountContextLines, getAccountContextByDomain } from "./salesforce-context";
+import { accountContextLines, loadAccountContext, resolveAccount } from "./salesforce-context";
 import { readRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { buildBriefingHistory } from "./briefing-history";
 import { buildRolldogNarrative } from "./rolldog-narrative";
@@ -105,7 +105,19 @@ export type DealContext = {
     /** Skipped because the customer's own words already beat a colleague's notes. */
     | "have_own_calls"
     /** Skipped because there is no company domain to resolve (consumer mail). */
-    | "no_company_domain";
+    | "no_company_domain"
+    /**
+     * Reached only by company name, not by email domain.
+     *
+     * This is the Gezairi case. The invite carried manele.khoury@gmail.com and
+     * nothing else, the free-mail guard correctly refused to match %@gmail.com,
+     * and the account named "Gezairi" was found by name instead. The context is
+     * real and worth briefing from, and the briefing says how it was reached so
+     * a rep can discount it if the match looks wrong.
+     */
+    | "present_by_name"
+    /** Several accounts matched the name. We refuse to pick; a human does. */
+    | "ambiguous";
   /**
    * The rep's own stage checklist from Rolldog, and how it compares to what the
    * calls confirm. Null when the deal has no opportunity or the read failed;
@@ -336,28 +348,73 @@ export async function getDealContext(
     const tail = externalId.slice("auto:".length);
     const domain = tail.includes("@") ? (tail.split("@")[1] ?? "") : tail;
     const addresses = tail.includes("@") ? [tail] : [];
-    if (domain && !isFreeMailDomain(domain)) {
-      try {
-        const sf = await getAccountContextByDomain(domain, addresses);
-        if (sf) crmContacts = sf.contacts;
-        const rendered = sf ? accountContextLines(sf) : "";
-        if (rendered) {
-          crmContext = rendered + bdrNotesAgeNote;
-          crmContextStatus = "present";
-        } else {
-          // Keep these apart. One "absent" bucket reported Milsped as "account
-          // matched, its BDR fields are empty" on the same screen as "no account
-          // found", which is a diagnostic contradicting itself. No account is a
-          // matching problem worth chasing; an empty account is Magaya's data
-          // and nothing for us to fix.
-          crmContextStatus = sf ? "empty" : "no_account";
+
+    // Resolution moved behind resolveAccount so the free-mail case stops being
+    // a dead end. The old code required a non-free-mail domain to even try,
+    // which is why a Gezairi invite carrying only a gmail.com address produced
+    // a briefing with no Salesforce context and no explanation, while an
+    // account named "Gezairi" sat in Salesforce the whole time.
+    const resolution = await resolveAccount({
+      domain,
+      addresses,
+      dealAccountName: deal.account,
+      meetingSubject: null,
+    });
+
+    switch (resolution.status) {
+      case "resolved_by_domain":
+      case "resolved_by_name": {
+        try {
+          const sf = await loadAccountContext(resolution.accountId);
+          if (sf) crmContacts = sf.contacts;
+          const rendered = sf ? accountContextLines(sf) : "";
+          if (rendered) {
+            // Name matches are labelled in the prompt itself. A rep reading
+            // "matched by company name" can discount it; a rep reading an
+            // unlabelled block cannot.
+            const provenance =
+              resolution.status === "resolved_by_name"
+                ? `\n(This account was matched to the customer by company name, not by their email domain, so confirm it is the right company before relying on it.)`
+                : "";
+            crmContext = rendered + bdrNotesAgeNote + provenance;
+            crmContextStatus = resolution.status === "resolved_by_name" ? "present_by_name" : "present";
+          } else {
+            // Keep these apart. One "absent" bucket reported Milsped as "account
+            // matched, its BDR fields are empty" on the same screen as "no account
+            // found", which is a diagnostic contradicting itself. No account is a
+            // matching problem worth chasing; an empty account is Magaya's data
+            // and nothing for us to fix.
+            crmContextStatus = sf ? "empty" : "no_account";
+          }
+        } catch (err) {
+          crmContextStatus = "unavailable";
+          console.warn(
+            `[deal-context] SALESFORCE ACCOUNT READ FAILED for ${resolution.accountId}, briefing will be thinner than it should be: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-      } catch (err) {
+        break;
+      }
+      case "ambiguous":
+        // Deliberately no context. Picking one of several same-named accounts
+        // is how one customer's qualification data ends up in front of another
+        // customer, which is unrecoverable.
+        crmContextStatus = "ambiguous";
+        console.warn(
+          `[deal-context] ${resolution.candidates.length} Salesforce accounts match ${deal.account}; briefing without CRM context until a human picks one.`,
+        );
+        break;
+      case "lookup_failed":
         crmContextStatus = "unavailable";
         console.warn(
-          `[deal-context] SALESFORCE LOOKUP FAILED for ${domain}, briefing will be thinner than it should be: ${err instanceof Error ? err.message : String(err)}`,
+          `[deal-context] SALESFORCE LOOKUP FAILED at the ${resolution.stage} stage for ${deal.account}, briefing will be thinner than it should be: ${resolution.error}`,
         );
-      }
+        break;
+      case "no_account":
+        crmContextStatus = "no_account";
+        break;
+      case "no_identifier":
+        crmContextStatus = "no_company_domain";
+        break;
     }
   }
 
