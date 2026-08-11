@@ -16,6 +16,32 @@ import { getAnthropicClient, getAnthropicModel } from "./anthropic";
 
 export type MeetingType = "new_opportunity" | "existing_customer" | "internal";
 
+/**
+ * Subjects that mean the deal is already won and this is delivery work.
+ *
+ * The tracked-opportunity tiebreaker below forces any customer-facing call on an
+ * open CRM opportunity to be a sales call. That rule is right for a deep demo
+ * that superficially reads as support, and wrong for these: EWI is a paying
+ * customer in onboarding whose Rolldog opportunity 81491 is still open, so the
+ * tiebreaker classified "Onboarding & Training" as new_opportunity/discovery and
+ * counted a delivery session as pipeline in the CRO's digest. EWI is also the
+ * account that previously produced a briefing telling a paying customer Magaya
+ * was not their selected vendor, so it has been misread in this direction before.
+ *
+ * Exported and used by BOTH the pre-call prediction and the post-call
+ * classifier. Two copies of this list would eventually disagree, and then the
+ * prediction and the record would say different things about the same meeting.
+ */
+export function looksPostSigning(subject: string | null | undefined): boolean {
+  const s = (subject ?? "").toLowerCase();
+  if (!s) return false;
+  // "Kickoff Meeting Intro" with a prospect is discovery, so "kickoff" alone is
+  // not enough. It counts only alongside a delivery word.
+  const delivery = /\bonboard(ing)?\b|\btraining\b|\bimplementation\b|\bgo[- ]live\b|\bhandoff\b|\bhand[- ]over\b|\bpost[- ]sale\b/.test(s);
+  const kickoffDelivery = /\bkick[- ]?off\b/.test(s) && /\bimplementation\b|\bproject\b|\bonboard|\btraining\b/.test(s);
+  return delivery || kickoffDelivery;
+}
+
 const MAX_CHARS = 14000; // enough signal for classification/summary, keeps cost low
 
 /**
@@ -30,10 +56,14 @@ const MAX_CHARS = 14000; // enough signal for classification/summary, keeps cost
  */
 export async function classifyMeetingType(
   transcript: string,
-  opts?: { trackedOpportunity?: boolean },
+  opts?: { trackedOpportunity?: boolean; subject?: string | null },
 ): Promise<MeetingType> {
   if (!process.env.ANTHROPIC_API_KEY || transcript.trim().length < 50) return "new_opportunity";
-  const tracked = opts?.trackedOpportunity === true;
+  // An onboarding or training session is delivery work even when the CRM
+  // opportunity is still open, so the tiebreaker must stand down. Without this
+  // the classifier cannot ever answer existing_customer for a tracked deal, and
+  // a customer in implementation stays in the pipeline forever.
+  const tracked = opts?.trackedOpportunity === true && !looksPostSigning(opts?.subject);
   const system = tracked
     ? `Classify a B2B call transcript for a deal that is a TRACKED, OPEN sales opportunity in the CRM. Because this deal is an active opportunity being sold, a call with the customer is a SALES call, not an existing-customer support call, even if a deep product demo makes it sound like one. Reply with ONLY the type word, nothing else.
 - new_opportunity: a customer or prospect is on the call (discovery, demo, qualification, evaluation, pricing, negotiation). This is the default for any customer-facing call on this deal.
@@ -182,5 +212,178 @@ Ground everything strictly in the transcript. If there are no clear next steps, 
     };
   } catch {
     return null;
+  }
+}
+
+// ====================================================================
+// Pre-call classification
+// ====================================================================
+
+/**
+ * What kind of meeting is this likely to be, BEFORE it happens?
+ *
+ * classifyMeetingType and classifyCallSubtype both read a transcript, so
+ * nothing can be said about an upcoming call until after it is over. That is
+ * fine for storage and wrong for planning: a rep wants to know on Monday that
+ * Thursday's "Onboarding & Training" is a customer call and Thursday's "Kickoff
+ * Meeting Intro" is discovery, and a check that only answers afterwards cannot
+ * tell them.
+ *
+ * The signals available beforehand are weaker but real: the subject line, who
+ * is on the invite, what previous calls on this deal turned out to be, and
+ * whether the CRM holds an open opportunity. A human planner uses exactly these
+ * and is right most of the time.
+ *
+ * This returns a PREDICTION and says so. It must never be written to
+ * calls.meeting_type. The transcript classifier is the record; this exists to
+ * be read by a person, and storing it would make a guess indistinguishable from
+ * a read, which is the mistake this codebase keeps paying for.
+ */
+export type PredictedMeeting = {
+  meetingType: MeetingType;
+  callSubtype: CallSubtype;
+  /** How much the signals actually supported this, for a human to weigh. */
+  confidence: "high" | "medium" | "low";
+  /** Plain sentence naming what drove it, so a wrong call is debuggable. */
+  basis: string;
+  /** True when the model was not consulted and this is rule-only. */
+  heuristicOnly: boolean;
+};
+
+export type PredictUpcomingInput = {
+  subject: string | null;
+  /** Everyone on the invite, seller and customer alike. */
+  attendeeEmails: ReadonlyArray<string>;
+  sellerDomain: string;
+  /** Subtypes of previous captured calls on this deal, newest first. */
+  priorSubtypes: ReadonlyArray<string>;
+  /** Stage from the CRM or the deal row, when known. */
+  stageKey: string | null;
+  /** The deal has an open CRM opportunity. Same tiebreaker as the post-call path. */
+  trackedOpportunity: boolean;
+};
+
+export async function predictUpcomingMeeting(
+  input: PredictUpcomingInput,
+): Promise<PredictedMeeting> {
+  const subject = (input.subject ?? "").trim();
+  const customerPresent = input.attendeeEmails.some(
+    (e) => e.includes("@") && !e.toLowerCase().endsWith(`@${input.sellerDomain}`),
+  );
+
+  // No customer on the invite is decisive on its own and needs no model call.
+  if (!customerPresent && input.attendeeEmails.length > 0) {
+    return {
+      meetingType: "internal",
+      callSubtype: "internal",
+      confidence: "high",
+      basis: "no external attendee on the invite",
+      heuristicOnly: true,
+    };
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY || subject.length < 3) {
+    return {
+      meetingType: "new_opportunity",
+      callSubtype: "discovery",
+      confidence: "low",
+      basis: subject.length < 3 ? "no usable subject line" : "no model available, defaulted",
+      heuristicOnly: true,
+    };
+  }
+
+  const system = `You predict what a B2B sales meeting will be, from its invitation. You do NOT have a transcript. Reply with ONLY two words separated by a slash: <type>/<subtype>.
+
+type is one of:
+- new_opportunity: a prospect or an open, not-yet-won deal. Discovery, demo, evaluation, pricing, negotiation.
+- existing_customer: a company already using or implementing the product. Onboarding, training, kickoff after signing, support, account management.
+- internal: only the seller's own people.
+
+subtype is one of:
+- discovery: fact finding, first conversations, introductions.
+- demo: a product demonstration is the main event.
+- proposal: pricing, quote, terms, contract or negotiation is the main event.
+- follow_up: a check in on something already in motion.
+- customer: use this whenever type is existing_customer.
+- internal: use this whenever type is internal.
+
+Judge from the wording of the subject and the context given. "Kickoff" after a signed deal is existing_customer/customer; "Kickoff Meeting Intro" with a prospect is new_opportunity/discovery. "Onboarding" and "Training" are existing_customer/customer. Weigh the prior calls heavily: a deal whose last call was a proposal is not back at discovery.`;
+
+  const context = [
+    `Subject: ${subject}`,
+    `External attendees present: ${customerPresent ? "yes" : "no"}`,
+    input.stageKey ? `CRM stage: ${input.stageKey}` : null,
+    input.priorSubtypes.length > 0
+      ? `Previous calls on this deal, newest first: ${input.priorSubtypes.join(", ")}`
+      : `No previous captured calls on this deal.`,
+    input.trackedOpportunity
+      ? `This deal is an OPEN, TRACKED sales opportunity in the CRM.`
+      : `This deal has no open opportunity in the CRM.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const resp = await getAnthropicClient().messages.create({
+      model: getAnthropicModel(),
+      max_tokens: 12,
+      temperature: 0,
+      system,
+      messages: [{ role: "user", content: context }],
+    });
+    const text = resp.content
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("")
+      .toLowerCase();
+
+    let meetingType: MeetingType = "new_opportunity";
+    if (text.includes("internal")) meetingType = "internal";
+    else if (text.includes("existing_customer")) meetingType = "existing_customer";
+
+    // Apply the SAME tiebreaker the post-call path uses, so the two cannot
+    // disagree on the one rule that has already caused a misclassification: an
+    // open opportunity means a customer-facing call is a sales call, however
+    // much a deep product session sounds like support.
+    if (
+      meetingType === "existing_customer" &&
+      input.trackedOpportunity &&
+      !looksPostSigning(input.subject)
+    ) {
+      meetingType = "new_opportunity";
+    }
+
+    let callSubtype: CallSubtype = "discovery";
+    if (meetingType === "existing_customer") callSubtype = "customer";
+    else if (meetingType === "internal") callSubtype = "internal";
+    else if (text.includes("demo")) callSubtype = "demo";
+    else if (text.includes("proposal")) callSubtype = "proposal";
+    else if (text.includes("follow")) callSubtype = "follow_up";
+
+    // A subject line alone is thin. Prior calls are what make a prediction
+    // trustworthy, so say which situation the reader is in.
+    const confidence =
+      input.priorSubtypes.length > 0 ? "high" : subject.length >= 12 ? "medium" : "low";
+
+    return {
+      meetingType,
+      callSubtype,
+      confidence,
+      basis:
+        input.priorSubtypes.length > 0
+          ? `subject plus ${input.priorSubtypes.length} prior call(s) on this deal`
+          : "subject line and invite only, no call history on this deal",
+      heuristicOnly: false,
+    };
+  } catch (err) {
+    console.warn(
+      `[meeting-classify] pre-call prediction failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return {
+      meetingType: "new_opportunity",
+      callSubtype: "discovery",
+      confidence: "low",
+      basis: "prediction failed, this is a default and not a read",
+      heuristicOnly: true,
+    };
   }
 }

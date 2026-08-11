@@ -31,6 +31,10 @@ const NO_CONTENT = new Set([
   "rescheduled",
   "placeholder",
   "capture_failed",
+  // A second row for a meeting already recorded on another row. Set by
+  // scripts/merge-duplicate-calls.ts. Not a real call and must never be
+  // counted as one.
+  "duplicate",
 ]);
 
 /** How many past calls to summarize. Two is the useful window: the last call

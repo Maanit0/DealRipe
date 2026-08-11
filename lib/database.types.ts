@@ -56,6 +56,8 @@ export type Database = {
           rep_email: string | null;
           rolldog_opportunity_id: string | null;
           rolldog_link_confidence: string | null;
+          salesforce_account_id: string | null;
+          salesforce_link_confidence: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -80,6 +82,8 @@ export type Database = {
           rep_email?: string | null;
           rolldog_opportunity_id?: string | null;
           rolldog_link_confidence?: string | null;
+          salesforce_account_id?: string | null;
+          salesforce_link_confidence?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -104,6 +108,8 @@ export type Database = {
           rep_email?: string | null;
           rolldog_opportunity_id?: string | null;
           rolldog_link_confidence?: string | null;
+          salesforce_account_id?: string | null;
+          salesforce_link_confidence?: string | null;
           created_at?: string;
           updated_at?: string;
         };

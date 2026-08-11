@@ -11,7 +11,7 @@ import { isConsumerMailShell } from "./pilot-config";
 import { getRolldogSummary } from "./rolldog-summary";
 import { supabaseAdmin } from "./supabase";
 
-const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
+const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed", "duplicate"]);
 const BUYER_RE = /budget|cfo|chief financ|owner|final (say|decision)|economic|controller/i;
 
 // Clean display names for the pilot's domain-derived accounts.

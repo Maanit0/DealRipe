@@ -24,7 +24,8 @@
  */
 
 import { crosswalkSalesforceAccountId } from "./crm-crosswalk";
-import { isFreeMailDomain } from "./pilot-config";
+import { accountFromSubject, isFreeMailDomain } from "./pilot-config";
+import { normalizeName } from "./rolldog-match";
 import { getSalesforceClient, SalesforceError } from "./salesforce";
 
 const API_VERSION = "v61.0";
@@ -284,7 +285,19 @@ export async function getAccountContextByDomain(
 ): Promise<SalesforceAccountContext | null> {
   const id = await resolveAccountId(domain, attendeeEmails);
   if (!id) return null;
+  return loadAccountContext(id);
+}
 
+/**
+ * Pull one known Account's Sales Development context plus contacts.
+ *
+ * Split out from getAccountContextByDomain so an account reached by name (see
+ * resolveAccount below) loads through exactly the same code. Returns null only
+ * when the id does not come back from Salesforce; every transport or auth
+ * failure throws, because "we could not read it" must not look like "it is not
+ * there".
+ */
+export async function loadAccountContext(id: string): Promise<SalesforceAccountContext | null> {
   const map = await accountFieldMap();
   const select = ["Id", "Name", "Website", ...map.values()].join(", ");
 
@@ -365,6 +378,192 @@ export async function findAccountsByName(
     out.push({ id, name: String(r.Name ?? "").trim(), website: render(r.Website), contacts });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------
+// Resolution that cannot silently fail
+// ---------------------------------------------------------------------
+
+/**
+ * The outcome of trying to find a customer's Salesforce Account.
+ *
+ * This exists because the previous entry point returned
+ * `SalesforceAccountContext | null` and that null carried five different
+ * meanings at once. Eduardo's Gezairi call is the example that forced it: the
+ * only address on the invite was manele.khoury@gmail.com, the free-mail guard
+ * correctly refused to match %@gmail.com, and the briefing therefore said
+ * nothing about Gezairi at all. Account 001RN00000mNkLHYA0 named "Gezairi"
+ * existed the whole time. "No account exists" and "no route from this invite to
+ * an account" are different facts and only one of them is about the customer.
+ *
+ * Note which statuses authorize what. Reading is permitted on a name match,
+ * because a labelled, human-reviewable block of BDR notes in a briefing beats a
+ * blank page. WRITING is not: see resolveSalesforceWriteTarget in
+ * lib/salesforce-scope.ts, which requires `confirmed`. A name match is evidence
+ * enough to inform a rep and not evidence enough to edit a customer's CRM.
+ */
+export type AccountResolution =
+  /** An email domain or exact contact address matched. The strong case. */
+  | {
+      status: "resolved_by_domain";
+      accountId: string;
+      accountName: string;
+      confidence: "confirmed";
+    }
+  /** Reached only by company name. Good enough to brief from, not to write to. */
+  | {
+      status: "resolved_by_name";
+      accountId: string;
+      accountName: string;
+      confidence: "review";
+      /** The name we searched, so a human can judge the match. */
+      matchedName: string;
+    }
+  /** Salesforce answered and nothing matched. A real fact about the customer. */
+  | { status: "no_account"; searchedNames: string[] }
+  /** Several candidates survived the guard. A human resolves this, never us. */
+  | {
+      status: "ambiguous";
+      candidates: Array<{ id: string; name: string; website: string | null; contacts: number }>;
+      searchedNames: string[];
+    }
+  /** The lookup threw. We know nothing. Never persisted, never briefed as absence. */
+  | { status: "lookup_failed"; error: string; stage: "domain" | "name" }
+  /** Nothing on the invite or the deal to search with. Not a Salesforce fact. */
+  | { status: "no_identifier" };
+
+/** Candidates whose name genuinely overlaps the one we searched for.
+ *
+ *  Salesforce `LIKE '%x%'` is fuzzy and will happily return a different
+ *  customer: searching "IFF" matches "Griffiths". Same guard the Rolldog side
+ *  uses in meeting-readiness, normalized on both sides and requiring one to be
+ *  a prefix of the other, so "Gezairi" matches "Gezairi Group" and does not
+ *  match "Gezairi" inside some unrelated string.
+ */
+function nameOverlaps(candidateName: string, searched: string): boolean {
+  const a = normalizeName(candidateName);
+  const b = normalizeName(searched);
+  if (!a || !b) return false;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+/**
+ * Find a customer's Salesforce Account, saying exactly how it went.
+ *
+ * Order is deliberate. Domain first, because an email domain is a fact about
+ * the counterparty. Name second, and only when the domain route could not
+ * apply (free mail) or came back empty. A thrown error at either stage returns
+ * `lookup_failed` and STOPS: it never falls through to the weaker strategy.
+ * That fall-through is the exact bug that cost four briefings their BDR context
+ * between two runs with nothing in the logs.
+ */
+export async function resolveAccount(args: {
+  /** Customer email domain from the invite, if any. */
+  domain?: string | null;
+  /** Exact attendee addresses, which work even for consumer mail. */
+  addresses?: ReadonlyArray<string>;
+  /** The deal's account name. Tried before the subject: it is more stable. */
+  dealAccountName?: string | null;
+  /** Meeting subject, mined via accountFromSubject as the last identifier. */
+  meetingSubject?: string | null;
+}): Promise<AccountResolution> {
+  const domain = (args.domain ?? "").trim().toLowerCase();
+  const addresses = args.addresses ?? [];
+  const freeMail = domain ? isFreeMailDomain(domain) : false;
+
+  // 1. Domain and exact address. resolveAccountId throws on a real failure and
+  //    returns null only for a genuine miss, which is what lets these two be
+  //    told apart here.
+  if (domain || addresses.length > 0) {
+    try {
+      const id = await resolveAccountId(domain, addresses);
+      if (id) {
+        const ctx = await loadAccountContext(id);
+        return {
+          status: "resolved_by_domain",
+          accountId: id,
+          accountName: ctx?.accountName ?? "",
+          confidence: "confirmed",
+        };
+      }
+    } catch (err) {
+      return {
+        status: "lookup_failed",
+        stage: "domain",
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  // 2. Name fallback. Reached when the domain was free mail (so the domain
+  //    route was never usable) or when it resolved to nothing.
+  const searchedNames = [
+    (args.dealAccountName ?? "").trim(),
+    (accountFromSubject(args.meetingSubject ?? null) ?? "").trim(),
+  ].filter((n) => n.length >= 3);
+
+  if (searchedNames.length === 0) {
+    // Nothing to search with. If we never had a domain either, this is not a
+    // statement about Salesforce at all.
+    return domain && !freeMail ? { status: "no_account", searchedNames: [] } : { status: "no_identifier" };
+  }
+
+  const survivors = new Map<string, { id: string; name: string; website: string | null; contacts: number; via: string }>();
+  for (const name of searchedNames) {
+    let hits: Awaited<ReturnType<typeof findAccountsByName>>;
+    try {
+      hits = await findAccountsByName(name);
+    } catch (err) {
+      return {
+        status: "lookup_failed",
+        stage: "name",
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+    for (const h of hits) {
+      if (!nameOverlaps(h.name, name)) continue;
+      if (!survivors.has(h.id)) survivors.set(h.id, { ...h, via: name });
+    }
+  }
+
+  const list = [...survivors.values()];
+  if (list.length === 0) return { status: "no_account", searchedNames };
+  if (list.length > 1) {
+    return {
+      status: "ambiguous",
+      candidates: list.map(({ id, name, website, contacts }) => ({ id, name, website, contacts })),
+      searchedNames,
+    };
+  }
+
+  const only = list[0];
+  return {
+    status: "resolved_by_name",
+    accountId: only.id,
+    accountName: only.name,
+    confidence: "review",
+    matchedName: only.via,
+  };
+}
+
+/** One-line, human-readable account of a resolution. Used by the diagnostics. */
+export function resolutionSummary(r: AccountResolution): string {
+  switch (r.status) {
+    case "resolved_by_domain":
+      return `${r.accountName || r.accountId} (matched by email domain)`;
+    case "resolved_by_name":
+      return `${r.accountName} (matched by name "${r.matchedName}", needs a human to confirm)`;
+    case "no_account":
+      return r.searchedNames.length
+        ? `no account (searched ${r.searchedNames.map((n) => `"${n}"`).join(", ")})`
+        : "no account matched this domain";
+    case "ambiguous":
+      return `AMBIGUOUS, ${r.candidates.length} candidates: ${r.candidates.map((c) => `${c.id} ${c.name}`).join(" | ")}`;
+    case "lookup_failed":
+      return `LOOKUP FAILED at the ${r.stage} stage, this is not "no account": ${r.error}`;
+    case "no_identifier":
+      return "no company domain or name to search with";
+  }
 }
 
 /**

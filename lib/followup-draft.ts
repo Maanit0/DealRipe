@@ -319,7 +319,11 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
   });
   const me = domainOf(mailbox);
   const external = msgs.filter((m) => {
-    if (!m.outbound || m.preview.length < 80) return false;
+    if (!m.outbound) return false;
+    // Clean first, then measure. See stripMailChrome.
+    const real = stripMailChrome(m.preview);
+    if (real.length < 80) return false;
+    if (isMeetingInviteBoilerplate(`${m.subject}\n${m.preview}`)) return false;
     return [...m.to, ...m.cc].some((r) => {
       const d = domainOf(r);
       return Boolean(d) && d !== me && !isFreeMailNoise(d as string);
@@ -327,7 +331,15 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
   });
   // Fall back to any sent mail rather than none: a slightly-off voice beats a
   // generic one, and a new rep may have no customer mail yet.
-  const pool = external.length > 0 ? external : msgs.filter((m) => m.outbound && m.preview.length >= 80);
+  const pool =
+    external.length > 0
+      ? external
+      : msgs.filter(
+          (m) =>
+            m.outbound &&
+            stripMailChrome(m.preview).length >= 80 &&
+            !isMeetingInviteBoilerplate(`${m.subject}\n${m.preview}`),
+        );
   const chosen = pool.slice(0, VOICE_SAMPLES);
 
   // Fetch the real body for these few. bodyPreview is the first ~255 characters,
@@ -346,7 +358,15 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
   return withBodies.map(({ m, body }) => {
     if (!body) return `Subject: ${m.subject}\n${m.preview}`;
     // Trim the quoted thread below a reply, which is someone else's writing.
-    const own = body.split(/\n\s*(?:From:|On .{0,60}wrote:|-----Original Message-----)/)[0].trim();
+    // Cut the quoted thread. Outlook's text rendering separates a reply with a
+    // long underscore rule before "From:", which the original pattern missed
+    // entirely, so Steven's samples carried the whole chain. That made them long
+    // enough to trip the head/tail truncation, which put his sign-off in the
+    // head and a "[...]" marker where his name should have been.
+    const own = body
+      .split(/\n\s*(?:_{10,}|-{10,})\s*\n(?=\s*(?:From|Sent|To|Subject):)/)[0]
+      .split(/\n\s*(?:From:|On .{0,60}wrote:|-----Original Message-----)/)[0]
+      .trim();
     if (own.length <= VOICE_HEAD + VOICE_TAIL) return `Subject: ${m.subject}\n${own}`;
     // Head carries the greeting and register, tail carries the sign-off.
     return `Subject: ${m.subject}\n${own.slice(0, VOICE_HEAD)}\n[...]\n${own.slice(-VOICE_TAIL)}`;
@@ -360,6 +380,116 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
  */
 function repFirstName(mailbox: string): string {
   return repName(mailbox);
+}
+
+
+// ====================================================================
+// Voice sample hygiene
+// ====================================================================
+
+/**
+ * Boilerplate that is outbound, external and long, and teaches the model
+ * nothing about how a rep writes.
+ *
+ * Alexandra's six samples were four of these and two real emails: two raw Teams
+ * invitations she organized, and two one-line acknowledgements. So most of what
+ * the model saw as "her voice" was Microsoft's meeting template.
+ */
+function isMeetingInviteBoilerplate(text: string): boolean {
+  return (
+    /Microsoft Teams meeting/i.test(text) ||
+    /teams\.microsoft\.com\/l\/meetup-join/i.test(text) ||
+    /\bMeeting ID:\s*[\d ]{9,}/i.test(text) ||
+    /\bPasscode:\s*\S+/i.test(text) ||
+    /zoom\.us\/j\/\d+/i.test(text)
+  );
+}
+
+/**
+ * Strip the parts of a message the rep did not type: mobile footers, the rule
+ * Outlook draws above them, and image placeholders.
+ *
+ * This has to run BEFORE any length test. "Perfect thank you" is seventeen
+ * characters of actual writing and only cleared the 80 character minimum
+ * because "Get Outlook for iOS" and a divider were counted with it, so two of
+ * the six samples were acknowledgements dressed up as substantial emails.
+ */
+function stripMailChrome(text: string): string {
+  return text
+    .replace(/Get Outlook for (iOS|Android)\s*<[^>]*>/gi, "")
+    .replace(/Sent from my (iPhone|iPad|Android|BlackBerry)[^\n]*/gi, "")
+    .replace(/\[cid:[^\]]*\]\s*(<[^>]*>)?/gi, "")
+    .replace(/\[(?:A |An )?[^\]]{0,80}(?:picture|image|drawing|logo)[^\]]{0,80}\]\s*(<[^>]*>)?/gi, "")
+    .replace(/^[_\-\u2500-\u257F]{6,}$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Sign-offs reps actually use. Order does not matter; the match does. */
+const SIGNOFF_RE =
+  /^(kindly|best|best regards|warm regards|warmest regards|regards|thanks|thank you|thanks so much|many thanks|cheers|sincerely|talk soon|all the best|respectfully)[,!.]?$/i;
+
+/**
+ * The rep's real closing block, learned from their own sent mail.
+ *
+ * Every draft has always ended "Best regards," plus a first name, on the
+ * assumption that Outlook appends the rep's configured signature. Drafts
+ * created through Graph do not get the client-side signature, so the rep opens
+ * the draft and pastes their block in by hand every single time. Alexandra
+ * signs "Kindly," and her block is name, title and phone; "Best regards,
+ * Alexandra" is not how she has closed a single email we sampled.
+ *
+ * Returns null when the samples do not agree on anything, because a guessed
+ * signature on outgoing customer mail is worse than the generic one.
+ */
+export function learnSignature(
+  samples: ReadonlyArray<string>,
+  repDisplayName?: string | null,
+): string | null {
+  const candidates: string[] = [];
+
+  for (const raw of samples) {
+    // A sample may carry a "[...]" marker where the middle was cut out. A block
+    // read across that marker is not a signature, it is two fragments with a
+    // hole in it, and it shipped "Cheers," followed by a job title and no name.
+    const usable = stripMailChrome(raw).split("\n[...]\n")[0];
+    const lines = usable.split("\n").map((l) => l.trimEnd());
+    // Search from the end: a sign-off word can appear mid-email ("thanks for
+    // sending that"), and only the last one closes the message.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!SIGNOFF_RE.test(lines[i].trim())) continue;
+      const block = lines
+        .slice(i)
+        // A long line after the sign-off is prose from a quoted reply, not part
+        // of the block.
+        .filter((l) => l.trim().length <= 60 && !l.includes("[...]"))
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (block.length > 0) candidates.push(block);
+      break;
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  // Prefer the richest block, which is the one carrying title and phone rather
+  // than a bare "Thanks, Alex" off a phone.
+  candidates.sort((a, b) => b.split("\n").length - a.split("\n").length || b.length - a.length);
+  const best = candidates[0];
+
+  // A signature without the sender's name is worse than the generic fallback:
+  // it reads as a template someone forgot to fill in. If the block never names
+  // the rep, put the name back directly under the sign-off.
+  const name = (repDisplayName ?? "").trim();
+  if (!name) return best;
+  const first = name.split(/\s+/)[0].toLowerCase();
+  const namesTheRep = best
+    .split("\n")
+    .slice(1)
+    .some((l) => l.trim().toLowerCase().includes(first));
+  if (namesTheRep) return best;
+  const [signOff, ...rest] = best.split("\n");
+  return [signOff, name, ...rest].join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /** Calendar and notification senders that are external but not customers. */
@@ -567,7 +697,13 @@ export async function generateFollowUpDraft(
   // Append the sign-off ourselves. The model kept abandoning it mid-word
   // ("Ha" for "Happy to..."), and a rep's sign-off is fixed text anyway: not
   // worth a generation, and worth getting exactly right.
-  parsed.body = `${parsed.body.trimEnd()}\n\nBest regards,\n${repFirstName(input.mailbox)}`;
+  // Use the rep's OWN closing block when their sent mail agrees on one, and
+  // fall back to the generic pair only when it does not. Hardcoding "Best
+  // regards" gave every rep the same sign-off regardless of how they actually
+  // close, and gave none of them their name, title and phone, so the first
+  // thing each rep did to a draft was retype their own signature.
+  const signature = learnSignature(samples, repFirstName(input.mailbox));
+  parsed.body = `${parsed.body.trimEnd()}\n\n${signature ?? `Best regards,\n${repFirstName(input.mailbox)}`}`;
 
   const tail = parsed.body.trimEnd().slice(-1);
   const looksComplete = /[.!?"')\dA-Za-z]/.test(tail);

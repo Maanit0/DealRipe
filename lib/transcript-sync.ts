@@ -498,7 +498,7 @@ async function processRow(
 
   // Resolve the deal for this call (calendar-sync always sets deal_id) for the
   // classification tiebreaker and recap routing.
-  const callDealRow = await db.from("calls").select("deal_id, participants").eq("id", callId).maybeSingle();
+  const callDealRow = await db.from("calls").select("deal_id, participants, title").eq("id", callId).maybeSingle();
   let dealExternalId: string | null = null;
   let trackedOpportunity = false;
   if (callDealRow.data?.deal_id) {
@@ -516,7 +516,14 @@ async function processRow(
   // A deal with a Rolldog opportunity is a tracked, open sales opportunity, so
   // customer-facing calls are sales calls (never existing-customer). An
   // all-internal meeting (no customer voice) still classifies as "internal".
-  const meetingType = await classifyMeetingType(transcript, { trackedOpportunity });
+  // The subject goes in so an onboarding or training session on a still-open
+  // opportunity is not forced back into the pipeline by the tiebreaker. Without
+  // it, EWI's "Onboarding & Training" classified as new_opportunity and a
+  // paying customer in delivery counted as an active deal in the CRO's digest.
+  const meetingType = await classifyMeetingType(transcript, {
+    trackedOpportunity,
+    subject: callDealRow.data?.title ?? null,
+  });
   const callSubtype = await classifyCallSubtype({ transcript, meetingType }).catch(() => null);
   const mt = await db
     .from("calls")

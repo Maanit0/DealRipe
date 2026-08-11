@@ -17,7 +17,7 @@ database, and a Scotsman framework. None of that governs today.
 
 **The live thing is the Magaya pilot.** Magaya sells logistics software
 (customs filing, freight forwarding, WMS). Real reps, real customers, real
-money. Mark Buman is the sponsor, Mitch Nemmers the VP.
+money. Mark Buman is the CRO and sponsor, Mitch Nemmers the VP.
 
 Six reps are enrolled: Juan Lopez, Eduardo Bencomo, Alexandra Suntrup, Daniel
 Blitstein, Ariel Rodriguez, Steven Johnson. The first four have connected
