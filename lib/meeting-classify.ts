@@ -55,7 +55,19 @@ Do NOT answer existing_customer for this deal.`
     if (text.includes("internal")) return "internal";
     if (!tracked && text.includes("existing_customer")) return "existing_customer";
     return "new_opportunity";
-  } catch {
+  } catch (err) {
+    // The default stands: callers, the coverage report and the digest all treat
+    // meeting_type as non-null, and a null here would ripple further than this
+    // pass should. But it must not be silent. A failed classification is stored
+    // as "new_opportunity" and is then indistinguishable from a classifier that
+    // read the transcript and said so, which matters because join-gate later
+    // counts a "new_opportunity" call as positive evidence that a counterparty
+    // is commercial. Absence of a classification is not evidence of a sale.
+    console.warn(
+      `[meeting-classify] classification failed, defaulting to new_opportunity, which is a guess and not a read: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return "new_opportunity";
   }
 }
@@ -109,7 +121,18 @@ Pick the label that best fits what the call was mostly about.`;
     if (text.includes("proposal")) return "proposal";
     if (text.includes("follow")) return "follow_up";
     return "discovery";
-  } catch {
+  } catch (err) {
+    // transcript-sync wraps this call in `.catch(() => null)`, intending to
+    // store null when the subtype is unknown. That catch can never fire while
+    // this one returns a value, so a failure is stored as "discovery" instead.
+    // Leaving the default in place (changing it would change what lands in the
+    // calls row) but saying so, because "discovery" on a signed-contract call
+    // is the kind of wrong that reads as a product that is not paying attention.
+    console.warn(
+      `[meeting-classify] subtype classification failed, defaulting to discovery, which is a guess and not a read: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return "discovery";
   }
 }

@@ -21,7 +21,7 @@ import { getFrameworkForDeal, type Framework } from "./framework";
 import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
 import { accountContextLines, getAccountContextByDomain } from "./salesforce-context";
-import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import { readRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { buildBriefingHistory } from "./briefing-history";
 import { buildRolldogNarrative } from "./rolldog-narrative";
 import { getStageGateSummary, stageGateLines, type StageGateSummary } from "./stage-gates";
@@ -50,6 +50,20 @@ export type DealContext = {
   nominalStageKey: string;
   /** Stage from Rolldog, if the deal has an opportunity. Null otherwise. */
   crmStageKey: string | null;
+  /**
+   * Why crmStageKey is what it is. Same reasoning as crmContextStatus: a null
+   * stage because the deal has no opportunity and a null stage because Rolldog
+   * would not answer are opposite facts that produced the same briefing.
+   */
+  crmStageStatus:
+    /** Rolldog answered and the stage name parsed. */
+    | "present"
+    /** Rolldog answered but its stage name carries no recognizable SQL number. */
+    | "unparsed"
+    /** The deal has no Rolldog opportunity to read a stage from. */
+    | "no_opportunity"
+    /** The read failed. We do not know this deal's CRM stage. */
+    | "unavailable";
   /** The stage to qualify/brief against: calls-first, CRM as fallback floor. */
   effectiveStageKey: string;
   confirmed: number;
@@ -98,6 +112,15 @@ export type DealContext = {
    * an unreadable checklist must never render as an empty one.
    */
   stageGates: StageGateSummary | null;
+  /**
+   * Why stageGates is what it is.
+   *
+   * A deal with no opportunity, a deal whose opportunity carries no checklist,
+   * and a checklist read that failed all arrive as null. Only the last is a
+   * problem, and it is the one that briefs a deal with three stages ticked as
+   * though no work had been done on it.
+   */
+  stageGatesStatus: "present" | "no_opportunity" | "no_checklist" | "unavailable";
   /**
    * Contacts on the matched Salesforce account, for putting a real name and
    * title against a calendar attendee. Empty when no account matched.
@@ -155,9 +178,14 @@ export async function getDealContext(
   // fetched even when that one fails: they answer different questions and one
   // being unavailable is no reason to discard the other.
   let stageGates: StageGateSummary | null = null;
+  let stageGatesStatus: DealContext["stageGatesStatus"] = opp ? "unavailable" : "no_opportunity";
   if (opp) {
     try {
       stageGates = await getStageGateSummary(opp, extraction as unknown as ExtractionMap);
+      // getStageRequirements returns null only on a 404, and throws on every
+      // other failure. So a null that got here is Rolldog saying this
+      // opportunity genuinely has no checklist, which is an answer.
+      stageGatesStatus = stageGates ? "present" : "no_checklist";
     } catch (err) {
       console.warn(
         `[deal-context] stage-gate read failed for opportunity ${opp}, briefing will not see the rep's checklist: ${err instanceof Error ? err.message : String(err)}`,
@@ -165,6 +193,7 @@ export async function getDealContext(
     }
   }
 
+  let crmStageStatus: DealContext["crmStageStatus"] = opp ? "unavailable" : "no_opportunity";
   if (opp) {
     try {
       // Authorize this one opportunity for the duration of the read. The scope
@@ -172,15 +201,30 @@ export async function getDealContext(
       // without this every opportunity the reconciler linked throws and the
       // deal briefs as though it has no CRM record at all. The wrapper is
       // per-call and per-opportunity: nothing else becomes readable.
-      const summary = await runWithAuthorizedOpportunities([opp], () => getRolldogSummary(opp));
-      crmStageKey = stageKeyFromSummary(summary);
-      // Null summary means the opportunity could not be read. Leaving the age
-      // unknown is correct: it falls through to "no opportunity age", and the
-      // BDR-notes test below then depends only on whether we have our own
-      // calls, which is the safer default when Rolldog is unreadable.
-      oppCreatedAt = summary?.createdAt ?? null;
-    } catch {
-      /* best-effort */
+      const read = await runWithAuthorizedOpportunities([opp], () => readRolldogSummary(opp));
+      if (read.status === "ok") {
+        crmStageKey = stageKeyFromSummary(read.summary);
+        // Rolldog answered. A null key here is a stage name we could not parse,
+        // which is a different thing from Rolldog not answering, and only the
+        // second is worth chasing.
+        crmStageStatus = crmStageKey ? "present" : "unparsed";
+      } else {
+        console.warn(
+          `[deal-context] Rolldog summary read failed for opportunity ${opp}, briefing will not see this deal's CRM stage: ${read.error}`,
+        );
+      }
+      // A failed read leaves the age unknown, which is correct: it falls
+      // through to "no opportunity age", and the BDR-notes test below then
+      // depends only on whether we have our own calls, which is the safer
+      // default when Rolldog is unreadable.
+      oppCreatedAt = read.summary?.createdAt ?? null;
+    } catch (err) {
+      // The scope guard, not the network. readRolldogSummary catches its own
+      // read failures, so anything arriving here is authorization refusing the
+      // opportunity, and "unavailable" is the honest label for it.
+      console.warn(
+        `[deal-context] Rolldog summary read blocked for opportunity ${opp}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -206,6 +250,11 @@ export async function getDealContext(
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
       .lte("scheduled_start", nowIso);
+    // Supabase reports failure in the result, not by throwing, so without this
+    // a failed query walks straight into the loop over `?? []` and lands as
+    // "this deal has never had a call". That is not a thin answer, it is the
+    // wrong one, and it also flips the BDR-context branch below.
+    if (calls.error) throw new Error(calls.error.message);
     for (const c of calls.data ?? []) {
       if (c.outcome && NO_CONTENT.has(c.outcome)) continue;
       const when = c.scheduled_start ?? c.call_date;
@@ -213,8 +262,12 @@ export async function getDealContext(
         lastCallDate = when;
       }
     }
-  } catch {
-    /* best-effort */
+  } catch (err) {
+    console.warn(
+      `[deal-context] call-history read failed for deal ${dealId}, this deal will look like it has never had a call: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
 
   // The rep's own notes in Rolldog. getDealRoom has been able to read these for
@@ -237,8 +290,16 @@ export async function getDealContext(
   let history: string | null = null;
   try {
     history = await buildBriefingHistory(tenantId, dealId);
-  } catch {
-    /* best-effort: a thin briefing beats no briefing */
+  } catch (err) {
+    // Best-effort: a thin briefing beats no briefing. But a null history is
+    // rendered as a genuinely first conversation, so a failure here does not
+    // just omit context, it asserts the opposite of the truth on a deal with
+    // months of calls behind it.
+    console.warn(
+      `[deal-context] history read failed for deal ${dealId}, it will brief as a first conversation: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
 
   // Salesforce BDR context. Best-effort in the strongest sense: Salesforce
@@ -308,6 +369,7 @@ export async function getDealContext(
     extraction,
     nominalStageKey: deal.stageKey,
     crmStageKey,
+    crmStageStatus,
     effectiveStageKey,
     confirmed: ds.confirmed,
     total: ds.total,
@@ -321,6 +383,7 @@ export async function getDealContext(
     crmContext,
     crmContextStatus,
     stageGates,
+    stageGatesStatus,
     crmContacts,
     history,
     rolldogNarrative,

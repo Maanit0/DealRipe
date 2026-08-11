@@ -113,14 +113,59 @@ export function stageKeyFromSummary(s: RolldogSummary | null): string | null {
   return m ? `SQL${m[1]}` : null;
 }
 
-/** Read one opportunity's summary. Best-effort: returns null on any failure. */
+/**
+ * A summary read, saying which of "read it" and "could not read it" happened.
+ *
+ * There is no third case. getOpportunityCore throws on every non-ok status,
+ * 404 included, so an opportunity that does not exist arrives here as an error
+ * and not as an empty body. That means a null from getRolldogSummary has only
+ * ever meant "the read failed", and every caller that treated it as "this deal
+ * has no CRM stage" was reading a failure as a fact. The stage it silently
+ * dropped is the one that decides whether a briefing opens as first-touch
+ * discovery or as a proposal follow-up.
+ */
+export type RolldogSummaryRead =
+  | { status: "ok"; summary: RolldogSummary }
+  /** The read threw. We know nothing about this opportunity, including whether it exists. */
+  | { status: "unavailable"; summary: null; error: string };
+
+/**
+ * Read one opportunity's summary, distinguishing a failure from an answer.
+ *
+ * Prefer this over getRolldogSummary anywhere the absence of a summary changes
+ * what a rep or a customer's CRM sees.
+ */
+export async function readRolldogSummary(
+  opportunityId: string,
+): Promise<RolldogSummaryRead> {
+  try {
+    const core = await readOpportunity(opportunityId, READ_FIELDS as unknown as string[]);
+    return { status: "ok", summary: summaryFromCore(core) };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      summary: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Read one opportunity's summary. Best-effort.
+ *
+ * Null means the read FAILED, not that the opportunity is empty or missing.
+ * Kept for the display surfaces (the pipeline page, the deal page, the digest)
+ * where a thinner card is the right outcome either way; the failure is logged
+ * rather than returned so it stops being invisible. Anywhere the difference
+ * matters, call readRolldogSummary instead.
+ */
 export async function getRolldogSummary(
   opportunityId: string,
 ): Promise<RolldogSummary | null> {
-  try {
-    const core = await readOpportunity(opportunityId, READ_FIELDS as unknown as string[]);
-    return summaryFromCore(core);
-  } catch {
-    return null;
-  }
+  const read = await readRolldogSummary(opportunityId);
+  if (read.status === "ok") return read.summary;
+  console.warn(
+    `[rolldog-summary] read failed for opportunity ${opportunityId}, callers will see no CRM summary for it: ${read.error}`,
+  );
+  return null;
 }

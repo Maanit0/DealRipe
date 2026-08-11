@@ -7,6 +7,7 @@
  */
 
 import { isMeaningfulContact } from "./contacts-extract";
+import { isFreeMailDomain } from "./pilot-config";
 import { getRolldogSummary } from "./rolldog-summary";
 import { supabaseAdmin } from "./supabase";
 
@@ -68,6 +69,27 @@ function shortDate(iso: string | null | undefined): string {
   }
 }
 
+/**
+ * A deal keyed to a consumer-mail DOMAIN rather than to a person.
+ *
+ * These are shells left from before free-mail addresses were keyed per person.
+ * "auto:icloud.com" is not a company, it is Apple's mail domain, and it
+ * duplicates the real person-keyed deal beside it. In the Aug 11 digest that
+ * showed as Luke Rousselle's single no-show rendered as two deal cards and two
+ * no-show lines, one of them titled "Icloud", in the CRO's weekly email.
+ *
+ * Excluded from the digest rather than deleted here: this file reports, it does
+ * not own the deal table. Cleaning the rows up is a separate, reviewable job.
+ */
+function isConsumerMailShell(externalId: string | null | undefined): boolean {
+  const id = (externalId ?? "").toLowerCase();
+  if (!id.startsWith("auto:")) return false;
+  const tail = id.slice("auto:".length);
+  // A person-keyed free-mail deal carries the full address and is legitimate.
+  if (tail.includes("@")) return false;
+  return isFreeMailDomain(tail);
+}
+
 export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDigestData> {
   const db = supabaseAdmin();
   const [deals, fe, contacts, calls] = await Promise.all([
@@ -77,13 +99,23 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
     db.from("calls").select("deal_id, outcome, scheduled_start, call_date, meeting_type").eq("tenant_id", tenantId),
   ]);
 
+  // Drop consumer-mail domain shells before anything reads the list, so no
+  // downstream loop has to remember to.
+  const dealRows = ((deals.data ?? []) as Array<{ external_id: string | null }>).filter(
+    (d) => !isConsumerMailShell(d.external_id),
+  );
+  const dropped = (deals.data ?? []).length - dealRows.length;
+  if (dropped > 0) {
+    console.warn(`[weekly-digest] excluded ${dropped} consumer-mail domain shell deal(s) from the digest`);
+  }
+
   const feBy = group((fe.data ?? []) as Array<Row & { deal_id: string }>);
   const contactsBy = group((contacts.data ?? []) as Array<Row & { deal_id: string }>);
   const callsBy = group((calls.data ?? []) as Array<Row & { deal_id: string }>);
 
   // Each deal's linked Rolldog opp, for the rep-forecast enrichment below.
   const oppByDeal = new Map<string, string>();
-  for (const d of (deals.data ?? []) as Array<{ id: string; rolldog_opportunity_id: string | null }>) {
+  for (const d of dealRows as unknown as Array<{ id: string; rolldog_opportunity_id: string | null }>) {
     if (d.rolldog_opportunity_id) oppByDeal.set(d.id, d.rolldog_opportunity_id);
   }
 
@@ -92,7 +124,7 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
   const noShows: DigestNoShow[] = [];
   const tenDaysAgo = Date.now() - 10 * 864e5;
 
-  for (const d of (deals.data ?? []) as Array<{
+  for (const d of dealRows as unknown as Array<{
     id: string;
     account: string;
     external_id: string | null;

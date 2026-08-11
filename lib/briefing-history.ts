@@ -85,6 +85,14 @@ export async function buildBriefingHistory(
   // Facts confirmed on those calls, with the customer's own words. This is the
   // material that makes a recap concrete, and the briefing never had it.
   let byCall = new Map<string, Array<{ label: string; answer: string }>>();
+  // Whether we actually read the extractions. Without this the block below
+  // prints "(nothing was confirmed on this call)" under every call on the deal
+  // when the read fails, which is not a thinner briefing but a false one: it
+  // tells the rep their last three calls established nothing. Supabase returns
+  // an error in the result rather than throwing, so the error field has to be
+  // checked too; relying on the catch alone let a failed query render as a
+  // confident empty history.
+  let factsRead = true;
   try {
     const fx = await db
       .from("field_extractions")
@@ -92,6 +100,7 @@ export async function buildBriefingHistory(
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
       .eq("status", "Yes");
+    if (fx.error) throw new Error(fx.error.message);
     for (const r of fx.data ?? []) {
       const cid = r.last_updated_from_call_id;
       if (!cid || !recentIds.includes(cid)) continue;
@@ -100,8 +109,14 @@ export async function buildBriefingHistory(
       if (answer) list.push({ label: r.framework_field_key, answer });
       byCall.set(cid, list);
     }
-  } catch {
+  } catch (err) {
+    factsRead = false;
     byCall = new Map();
+    console.warn(
+      `[briefing-history] confirmed-facts read failed for deal ${dealId}, the briefing will not say what past calls established: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
 
   const lines: string[] = [];
@@ -111,7 +126,12 @@ export async function buildBriefingHistory(
     const title = (c.title ?? "call").slice(0, 70);
     const facts = byCall.get(c.id) ?? [];
     lines.push(`${when}, "${title}":`);
-    if (facts.length === 0) {
+    if (!factsRead) {
+      // Say what we do not know rather than asserting a negative. The model
+      // reads this block as fact, and "nothing was confirmed" is the sentence
+      // that turns a proposal follow-up back into a discovery call.
+      lines.push(`  (what this call confirmed could not be read, do not assume it established nothing)`);
+    } else if (facts.length === 0) {
       lines.push(`  (nothing was confirmed on this call)`);
     } else {
       // Cap it. The prompt needs the shape of the conversation, not a

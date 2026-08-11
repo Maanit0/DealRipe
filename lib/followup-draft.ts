@@ -142,12 +142,35 @@ export type ProposedSlot = { startsAt: Date; label: string };
  * first draft: "I thought I already agreed to a time with him." We have the
  * calendar, so there is no excuse for guessing.
  */
-export async function existingMeetingWith(
+export type ExistingMeeting = { label: string; subject: string | null };
+
+/**
+ * The same read, saying whether it ran.
+ *
+ * "The rep has nothing booked with this customer" and "we could not read the
+ * rep's calendar" produce the same null and the same draft, and only one of
+ * them is safe: the second is how a draft asks a customer to book a call they
+ * have already booked, which is the exact failure this function exists to
+ * prevent. The draft still goes out either way (a rep reviews it before it
+ * sends), but the log now says which case it was written under.
+ */
+export type ExistingMeetingRead =
+  | { status: "found"; meeting: ExistingMeeting }
+  /** The calendar was read and holds no meeting with this customer. */
+  | { status: "none"; meeting: null }
+  /** No domains to match on, so there was nothing to look for. */
+  | { status: "no_domains"; meeting: null }
+  /** This rep has no connected calendar, so there was nothing to read. */
+  | { status: "no_calendar"; meeting: null }
+  /** The calendar read threw. We do not know what the rep has booked. */
+  | { status: "unavailable"; meeting: null; error: string };
+
+export async function readExistingMeetingWith(
   connectionId: string,
   customerDomains: string[],
   timeZone = "America/New_York",
-): Promise<{ label: string; subject: string | null } | null> {
-  if (customerDomains.length === 0) return null;
+): Promise<ExistingMeetingRead> {
+  if (customerDomains.length === 0) return { status: "no_domains", meeting: null };
   const wanted = new Set(customerDomains.map((d) => d.toLowerCase()));
   try {
     const events = await listMeetingsBetween(
@@ -163,21 +186,41 @@ export async function existingMeetingWith(
       const at = new Date(Date.parse(iso));
       if (!Number.isFinite(at.getTime())) continue;
       return {
-        subject: e.subject,
-        label: at.toLocaleString("en-US", {
-          weekday: "long",
-          month: "long",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-          timeZone,
-        }),
+        status: "found",
+        meeting: {
+          subject: e.subject,
+          label: at.toLocaleString("en-US", {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+            timeZone,
+          }),
+        },
       };
     }
-  } catch {
-    return null;
+  } catch (err) {
+    return {
+      status: "unavailable",
+      meeting: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
-  return null;
+  return { status: "none", meeting: null };
+}
+
+/**
+ * Null means "nothing booked, or we could not tell". Kept for callers that
+ * cannot act on the difference; the draft path uses readExistingMeetingWith.
+ */
+export async function existingMeetingWith(
+  connectionId: string,
+  customerDomains: string[],
+  timeZone = "America/New_York",
+): Promise<ExistingMeeting | null> {
+  const read = await readExistingMeetingWith(connectionId, customerDomains, timeZone);
+  return read.status === "found" ? read.meeting : null;
 }
 
 /**
@@ -211,8 +254,16 @@ export async function freeSlots(
         end: Date.parse(e.end!.dateTime.endsWith("Z") ? e.end!.dateTime : `${e.end!.dateTime}Z`),
       }))
       .filter((b) => Number.isFinite(b.start) && Number.isFinite(b.end));
-  } catch {
+  } catch (err) {
     // No calendar is a reason to propose nothing, never a reason to guess.
+    // Still worth saying out loud: an empty slot list because the rep is
+    // genuinely booked solid and an empty slot list because Graph would not
+    // answer produce the same draft, and only the second is a fault.
+    console.warn(
+      `[followup-draft] calendar read failed for connection ${connectionId}, proposing no times: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return [];
   }
 
@@ -463,16 +514,34 @@ function parseJson(text: string): { subject: string; body: string; attachmentsTo
 export async function generateFollowUpDraft(
   input: FollowUpDraftInput,
 ): Promise<FollowUpDraft | null> {
-  const [thread, samples, slots, booked] = await Promise.all([
+  const [thread, samples, slots, bookedRead] = await Promise.all([
     findCustomerThread(input.mailbox, input.customerDomains),
     voiceSamples(input.mailbox).catch(() => [] as string[]),
     input.calendarConnectionId
       ? freeSlots(input.calendarConnectionId, { count: 3 }).catch(() => [] as ProposedSlot[])
       : Promise.resolve([] as ProposedSlot[]),
     input.calendarConnectionId
-      ? existingMeetingWith(input.calendarConnectionId, input.customerDomains).catch(() => null)
-      : Promise.resolve(null),
+      ? readExistingMeetingWith(input.calendarConnectionId, input.customerDomains).catch(
+          (err): ExistingMeetingRead => ({
+            status: "unavailable",
+            meeting: null,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      : Promise.resolve<ExistingMeetingRead>({ status: "no_calendar", meeting: null }),
   ]);
+
+  // The draft is composed the same way either way; a rep reviews it before it
+  // sends, and withholding a draft over a calendar blip helps nobody. But an
+  // unread calendar is the one condition under which this draft can ask a
+  // customer to book a call they already booked, so it does not pass silently.
+  if (bookedRead.status === "unavailable") {
+    console.warn(
+      `[followup-draft] could not read ${input.mailbox}'s calendar for ${input.account}, so this draft ` +
+        `does not know whether a meeting with them is already booked and may propose a time for one: ${bookedRead.error}`,
+    );
+  }
+  const booked = bookedRead.meeting;
 
   const resp = await getAnthropicClient().messages.create({
     model: getAnthropicModel(),
@@ -624,6 +693,15 @@ export async function autoDraftFollowUpForCall(args: {
     .select("id")
     .eq("user_principal_name", mailbox)
     .maybeSingle();
+  // Supabase reports failure in the result, so `conn.data?.id ?? null` turns a
+  // failed lookup into "this rep has no connected calendar", and the draft is
+  // then composed as though there were no calendar to check. Four of the six
+  // reps do have one. Say which case this is.
+  if (conn.error) {
+    console.warn(
+      `[followup-draft] calendar connection lookup failed for ${mailbox}, drafting as though they have no calendar: ${conn.error.message}`,
+    );
+  }
 
   const res = await createFollowUpDraft({
     mailbox,

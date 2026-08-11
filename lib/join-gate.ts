@@ -33,10 +33,38 @@ export type JoinReason =
   | "no_evidence" // nothing says this is a customer conversation
   | "invite_reads_internal"; // the invite is plainly not a sales call
 
+/**
+ * Whether the Salesforce evidence check actually ran.
+ *
+ * The gate's whole design is "join only on positive evidence", so an evidence
+ * source that could not be consulted is not the same as one that came back
+ * empty. Salesforce being unreachable and Salesforce having no account for the
+ * domain both drop through to the invite classifier and can both end as a
+ * decline, and until now the verdict recorded them identically: a real customer
+ * call skipped during a Salesforce outage looked exactly like an invite that
+ * genuinely reads internal. This says which happened.
+ *
+ * It is a label, not a gate. The join decision is unchanged either way, because
+ * joining on an unread evidence source is the mistake that reaches the CRO.
+ */
+export type CrmCheck =
+  /** An account matched the domain. */
+  | "account_found"
+  /** Salesforce answered and has no account for this domain. */
+  | "no_account"
+  /** The lookup threw. We do not know whether this company is in Salesforce. */
+  | "unavailable"
+  /** Not consulted: consumer mail, where a domain match is meaningless. */
+  | "skipped_free_mail"
+  /** Not reached: an earlier check already established this is commercial. */
+  | "not_reached";
+
 export type JoinVerdict = {
   join: boolean;
   reason: JoinReason;
   detail: string;
+  /** Which of "no account" and "could not look" the Salesforce step produced. */
+  crmCheck: CrmCheck;
 };
 
 /**
@@ -84,6 +112,7 @@ export async function shouldJoinAutoMeeting(args: {
       join: true,
       reason: "known_deal",
       detail: `Rolldog opportunity on "${existing.data?.account ?? dealExternalId}"`,
+      crmCheck: "not_reached",
     };
   }
 
@@ -109,6 +138,7 @@ export async function shouldJoinAutoMeeting(args: {
         join: true,
         reason: "known_deal",
         detail: `${real} prior customer call(s) on "${existing.data.account}"`,
+        crmCheck: "not_reached",
       };
     }
     // Otherwise keep going. The deal exists but has never been confirmed to be
@@ -118,27 +148,48 @@ export async function shouldJoinAutoMeeting(args: {
   // 2. A Salesforce account exists for the domain, which in Magaya's motion
   //    means a BDR qualified and recorded this company before the call was
   //    booked. Meaningless for consumer mail, so skip it there.
+  let crmCheck: CrmCheck = isFreeMail ? "skipped_free_mail" : "no_account";
   if (!isFreeMail) {
     try {
       const ctx = await getAccountContextByDomain(domain, [address]);
       if (ctx) {
-        return { join: true, reason: "salesforce_account", detail: `Salesforce account "${ctx.accountName}"` };
+        return {
+          join: true,
+          reason: "salesforce_account",
+          detail: `Salesforce account "${ctx.accountName}"`,
+          crmCheck: "account_found",
+        };
       }
-    } catch {
+    } catch (err) {
       // Salesforce being unreachable must not silently turn the gate into a
-      // blanket "no". Fall through to reading the invite.
+      // blanket "no". Fall through to reading the invite, but carry the fact
+      // that the strongest evidence source went unread: a decline that follows
+      // is "we could not check and the invite did not convince us", which is a
+      // different claim from "this company is not in Salesforce".
+      crmCheck = "unavailable";
+      console.warn(
+        `[join-gate] Salesforce lookup failed for ${domain}, deciding on the invite alone: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   // 3. No CRM record. Read the invite. A transcript is not needed to tell
   //    "Flexible Vacation time off" from "Magaya <> Z Transportation: Proposal
   //    Review", and a genuinely new inbound prospect deserves to be recorded.
-  return classifyInvite({
+  const verdict = await classifyInvite({
     subject,
     attendeeEmails: args.attendeeEmails,
     domain,
     sellerName: args.sellerName ?? "the rep's own company",
   });
+  return {
+    ...verdict,
+    crmCheck,
+    detail:
+      crmCheck === "unavailable"
+        ? `${verdict.detail}; Salesforce was unreachable, so the CRM evidence check did not run`
+        : verdict.detail,
+  };
 }
 
 /**
@@ -152,8 +203,26 @@ export async function classifyInvite(args: {
   sellerName: string;
 }): Promise<JoinVerdict> {
   const subject = (args.subject ?? "").trim();
-  if (!process.env.ANTHROPIC_API_KEY || subject.length < 3) {
-    return { join: false, reason: "no_evidence", detail: "no CRM record and no readable invite subject" };
+  // Two different declines. An invite with no subject is a genuine absence of
+  // evidence; a missing API key is us being unable to read a subject that may
+  // say "Magaya <> Z Transportation: Proposal Review" in full. Reporting the
+  // second as the first sends someone looking at the rep's calendar hygiene
+  // instead of at the environment.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return {
+      join: false,
+      reason: "no_evidence",
+      detail: "no CRM record and ANTHROPIC_API_KEY is unset, so the invite was never classified",
+      crmCheck: "not_reached",
+    };
+  }
+  if (subject.length < 3) {
+    return {
+      join: false,
+      reason: "no_evidence",
+      detail: "no CRM record and no readable invite subject",
+      crmCheck: "not_reached",
+    };
   }
 
   // Naming the seller is load-bearing. Without it "Magaya Software intro call"
@@ -185,10 +254,30 @@ Attendees: ${args.attendeeEmails.slice(0, 12).join(", ") || "(none listed)"}`;
       .join("")
       .toLowerCase();
     if (text.includes("commercial")) {
-      return { join: true, reason: "invite_reads_commercial", detail: `no CRM record; invite reads commercial ("${subject}")` };
+      return {
+        join: true,
+        reason: "invite_reads_commercial",
+        detail: `no CRM record; invite reads commercial ("${subject}")`,
+        crmCheck: "not_reached",
+      };
     }
-    return { join: false, reason: "invite_reads_internal", detail: `invite reads non-commercial ("${subject}")` };
-  } catch {
-    return { join: false, reason: "no_evidence", detail: "no CRM record and invite classification failed" };
+    return {
+      join: false,
+      reason: "invite_reads_internal",
+      detail: `invite reads non-commercial ("${subject}")`,
+      crmCheck: "not_reached",
+    };
+  } catch (err) {
+    // Distinct from invite_reads_internal on purpose: that is the classifier
+    // judging the invite, this is the classifier never having run.
+    console.warn(
+      `[join-gate] invite classification failed for "${subject}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return {
+      join: false,
+      reason: "no_evidence",
+      detail: "no CRM record and invite classification failed",
+      crmCheck: "not_reached",
+    };
   }
 }

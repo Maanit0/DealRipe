@@ -222,8 +222,22 @@ async function main(): Promise<void> {
             (ctx.stageGates.claimedNotConfirmed.length
               ? `, unverified: ${ctx.stageGates.claimedNotConfirmed.map((g) => g.name).join(", ")}`
               : "")
-          : "no checklist read";
+          : // "no checklist read" was one string for three different facts: the
+            // deal has no opportunity, the opportunity has no checklist, and the
+            // read failed. Only the last is a fault, and it looked identical to
+            // a deal the rep simply has not started.
+            ctx.stageGatesStatus === "unavailable"
+            ? "CHECKLIST READ FAILED (briefing cannot see the rep's ticks; this is not an empty checklist)"
+            : ctx.stageGatesStatus === "no_opportunity"
+              ? "no checklist (deal has no Rolldog opportunity)"
+              : "no checklist (Rolldog holds none for this opportunity)";
         console.log(`   checklist   ${gateState}`);
+        // Same distinction for the CRM stage. A deal briefed at its nominal
+        // stage because Rolldog would not answer is not the same as one with no
+        // opportunity, and the briefing reads identically in both cases.
+        if (ctx.crmStageStatus === "unavailable") {
+          console.log(`   crm stage   ROLLDOG STAGE READ FAILED (briefing falls back to the nominal stage)`);
+        }
         console.log(`   rep notes   ${ctx.rolldogNarrative ? `${ctx.rolldogNarrative.split("\n").length} lines from Rolldog tabs` : "none written"}`);
         console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${sfState}`);
         try {
