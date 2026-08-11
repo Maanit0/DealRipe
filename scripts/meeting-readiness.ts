@@ -201,8 +201,10 @@ async function main(): Promise<void> {
             ? "Salesforce BDR context PRESENT"
             : ctx.crmContextStatus === "unavailable"
               ? "SALESFORCE LOOKUP FAILED (briefing is thinner than it should be)"
-              : ctx.crmContextStatus === "absent"
+              : ctx.crmContextStatus === "empty"
                 ? "no Salesforce context (account matched, its BDR fields are empty)"
+                : ctx.crmContextStatus === "no_account"
+                  ? "no Salesforce context (no account matched this domain)"
                 : ctx.crmContextStatus === "have_own_calls"
                   ? "Salesforce skipped (we have our own calls, which beat a colleague's notes)"
                   : "Salesforce skipped (consumer mail address, no company domain to resolve)";

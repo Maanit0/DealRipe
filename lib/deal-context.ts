@@ -81,7 +81,10 @@ export type DealContext = {
    */
   crmContextStatus:
     | "present"
-    | "absent"
+    /** An account matched but its Sales Development fields are all empty. */
+    | "empty"
+    /** No Salesforce account matched this domain at all. */
+    | "no_account"
     | "unavailable"
     /** Skipped because the customer's own words already beat a colleague's notes. */
     | "have_own_calls"
@@ -243,10 +246,12 @@ export async function getDealContext(
           crmContext = rendered + bdrNotesAgeNote;
           crmContextStatus = "present";
         } else {
-          // Either no account matched, or the account matched but every Sales
-          // Development field on it is empty. Both are genuine absence, and
-          // both are common and fine.
-          crmContextStatus = "absent";
+          // Keep these apart. One "absent" bucket reported Milsped as "account
+          // matched, its BDR fields are empty" on the same screen as "no account
+          // found", which is a diagnostic contradicting itself. No account is a
+          // matching problem worth chasing; an empty account is Magaya's data
+          // and nothing for us to fix.
+          crmContextStatus = sf ? "empty" : "no_account";
         }
       } catch (err) {
         crmContextStatus = "unavailable";
