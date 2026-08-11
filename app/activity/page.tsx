@@ -325,20 +325,33 @@ function RawLog({
                           weeks later when the deal has moved on. */}
                       {e.values && e.values.length > 0 && (
                         <dl className="mt-3 space-y-2 border-t border-line pt-3">
+                          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">
+                            Exact content written
+                          </div>
                           {e.values.map((v) => (
                             <div key={v.label}>
                               <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">
                                 {v.label}
-                                {v.mode === "append" ? " (appended)" : ""}
+                                {v.mode === "append" ? " (appended)" : v.mode === "create" ? " (new record)" : ""}
                               </dt>
                               <dd className="whitespace-pre-wrap text-[13px] text-ink">{v.value}</dd>
                             </div>
                           ))}
                         </dl>
                       )}
-                      {e.dealId && (writesByDeal.get(e.dealId)?.length ?? 0) > 0 && (
+                      {/* Fallback for writes made before values were recorded.
+                          This is NOT the write: it re-runs the writer against the
+                          deal as it stands now, so it drifts as the deal moves and
+                          comes back empty when the deal no longer composes
+                          anything. Labelled as what it is, and suppressed entirely
+                          once a real record exists. */}
+                      {!(e.values && e.values.length > 0) &&
+                        e.dealId &&
+                        (writesByDeal.get(e.dealId)?.length ?? 0) > 0 && (
                         <div className="mt-2 space-y-2">
-                          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">Exact content written</div>
+                          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">
+                            Composed from the deal now (values were not recorded for this write)
+                          </div>
                           {writesByDeal.get(e.dealId)!.map((w) => (
                             <div key={w.subResource} className="rounded-md border border-line bg-white overflow-hidden">
                               <div className="px-3 py-1.5 border-b border-line bg-bg/60 flex items-center justify-between">

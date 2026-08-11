@@ -229,7 +229,23 @@ export type CrmAccessAuditEntry = {
    * Omitted for reads and refusals, which have no values.
    */
   fieldValues?: ReadonlyArray<{ label: string; value: string; mode?: string }>;
+  /**
+   * Resolves once the network write this entry describes has settled.
+   *
+   * The assert runs BEFORE the request, so without this the row records what
+   * was permitted, not what landed, and fieldValues would claim content that a
+   * 422 rejected. The default hook waits on this before inserting and records
+   * the failure instead. Absent for reads, refusals, and any write not wrapped
+   * in recordWrite, which behave exactly as they did before.
+   */
+  settled?: Promise<WriteOutcome>;
 };
+
+/** Whether the request an audit entry describes actually landed. */
+export type WriteOutcome = { ok: true } | { ok: false; error: string };
+
+/** A label/value pair as it was sent to the CRM. */
+export type WrittenValue = { label: string; value: string; mode?: string };
 
 /**
  * The current audit hook. The default writes to Supabase crm_access_log
@@ -263,6 +279,11 @@ export function resetAuditHook(): void {
  * not tracked here; they are the caller's responsibility.
  */
 const pendingWrites: Set<Promise<void>> = new Set();
+
+/** How long the audit waits to learn whether a write landed before recording
+ *  that it does not know. Comfortably longer than any Rolldog or Salesforce
+ *  request, short enough that flushAuditWrites cannot hang a cron. */
+const SETTLE_TIMEOUT_MS = 30_000;
 
 function defaultAuditHook(entry: CrmAccessAuditEntry): void {
   // Fire and forget at the call site. The assert is synchronous and
@@ -306,6 +327,17 @@ async function writeCrmAccessLogToSupabase(
   const { supabaseAdmin } = await import("./supabase");
   const { resolveTenantId } = await import("./tenant-deal-lookup");
 
+  // Wait for the request to settle, when the caller told us how. Until this
+  // existed the row was written before the response came back, so a 422 was
+  // recorded identically to a success. Bounded, because an audit row that never
+  // lands is worse than one that lands saying we did not observe the outcome.
+  const landed: WriteOutcome | "not_observed" | null = entry.settled
+    ? await Promise.race([
+        entry.settled,
+        new Promise<"not_observed">((r) => setTimeout(() => r("not_observed"), SETTLE_TIMEOUT_MS)),
+      ])
+    : null;
+
   // Resolve the caller-supplied tenant slug to the Supabase tenant uuid.
   // This used to hardcode "magaya"; now every assert names its tenant
   // explicitly so the audit row lands under the right tenant_id.
@@ -315,13 +347,27 @@ async function writeCrmAccessLogToSupabase(
   // store propagates across the deferred import + await above because the audit
   // promise was created synchronously inside the runWithCallContext scope.
   const callId = entry.callId ?? null;
+
+  // `allowed` keeps meaning "we permitted this", never "it worked". Widening it
+  // would quietly change what every existing consumer of this table is counting.
+  // A rejected write is recorded as permitted, with the rejection in
+  // violation_reason and NO field_values: nothing reached the CRM, so claiming
+  // values did is the same error as reading an unticked checkbox as a "no".
+  const rejected = landed && landed !== "not_observed" && !landed.ok ? landed.error : null;
+  const notObserved = landed === "not_observed";
+  const outcomeNote = rejected
+    ? `write permitted, but the CRM rejected it: ${rejected}`
+    : notObserved
+      ? `write permitted; it had not settled after ${SETTLE_TIMEOUT_MS / 1000}s, so whether it landed was never observed`
+      : null;
+
   const row = {
     tenant_id: tenantId,
     operation: entry.operation,
     opportunity_external_id: entry.opportunityId,
     fields: entry.fields as unknown as string[],
     allowed: entry.allowed,
-    violation_reason: entry.violationReason,
+    violation_reason: entry.violationReason ?? outcomeNote,
     call_id: callId,
     // Which CRM this row describes. Until Salesforce write-back existed the
     // answer was always Rolldog, so `system` was accepted by the type and never
@@ -329,7 +375,10 @@ async function writeCrmAccessLogToSupabase(
     // write "Wrote to Rolldog", which is not a cosmetic error but a false claim
     // about where a customer's data went.
     system: entry.system ?? "rolldog",
-    field_values: entry.fieldValues && entry.fieldValues.length > 0 ? entry.fieldValues : null,
+    field_values:
+      rejected === null && entry.fieldValues && entry.fieldValues.length > 0
+        ? entry.fieldValues
+        : null,
   };
   const { error } = await supabaseAdmin().from("crm_access_log").insert(row as never);
   if (!error) return;
@@ -506,6 +555,9 @@ export function assertScopedWrite(
     "rolldog",
     "write",
   );
+  // Values only on a permitted write. A refusal sent nothing, so attaching what
+  // it would have sent would read as content that reached the customer's CRM.
+  const pending = violation === null ? writeValuesStore.getStore() : undefined;
   emitAudit({
     tenantSlug,
     system: "rolldog",
@@ -515,6 +567,8 @@ export function assertScopedWrite(
     allowed: violation === null,
     violationReason: violation?.reason ?? null,
     at: new Date(),
+    fieldValues: pending?.values,
+    settled: pending?.settled,
   });
   if (violation !== null) {
     throw new ScopeViolationError({
@@ -562,6 +616,53 @@ const callContextStore = new AsyncLocalStorage<string>();
 export function runWithCallContext<T>(callId: string | null | undefined, fn: () => T): T {
   if (!callId) return fn();
   return callContextStore.run(callId, fn);
+}
+
+// A third non-security context, carrying the label/value pairs a write is about
+// to send. Same shape as the call context and for the same reason: the assert
+// sites in lib/rolldog.ts stay untouched, and the values land on the row the
+// assert already writes rather than a second row that would read as a second
+// write-back.
+//
+// crm-writer is the only producer. It composes every Rolldog payload in one
+// place, so it is the only code that knows what a write contains; rolldog.ts
+// sees an already-assembled payload and could only report attribute names.
+const writeValuesStore = new AsyncLocalStorage<{
+  values: ReadonlyArray<WrittenValue>;
+  settled: Promise<WriteOutcome>;
+}>();
+
+/**
+ * Record what a CRM write contained, on the audit row that write produces.
+ *
+ * Wrap the network call, not the composition:
+ *
+ *   await recordWrite(
+ *     [{ label: "Situation > Why looking", value: text }],
+ *     () => writeSituation(oppId, payload),
+ *   );
+ *
+ * The values are attached to the crm_access_log row assertScopedWrite emits at
+ * the top of writeSituation, and the row is held until the request settles so a
+ * rejected write is not recorded as content that landed. Rethrows whatever `fn`
+ * throws, unchanged, so caller error handling is unaffected.
+ */
+export async function recordWrite<T>(
+  values: ReadonlyArray<WrittenValue>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  let settle!: (o: WriteOutcome) => void;
+  const settled = new Promise<WriteOutcome>((resolve) => {
+    settle = resolve;
+  });
+  try {
+    const result = await writeValuesStore.run({ values, settled }, fn);
+    settle({ ok: true });
+    return result;
+  } catch (err) {
+    settle({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------

@@ -81,7 +81,9 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       .order("sent_at", { ascending: false }),
     db
       .from("crm_access_log")
-      .select("id, opportunity_external_id, fields, allowed, operation, call_id, created_at, system, field_values")
+      .select(
+        "id, opportunity_external_id, fields, allowed, operation, call_id, created_at, system, field_values, violation_reason",
+      )
       .eq("tenant_id", tenantId)
       .eq("operation", "write")
       .eq("allowed", true)
@@ -194,6 +196,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     created_at: string;
     system?: string | null;
     field_values?: Array<{ label: string; value: string; mode?: string }> | null;
+    violation_reason?: string | null;
   }>) {
     // Which CRM. Rows written before the `system` column existed are Rolldog by
     // architectural constraint, so the default is a fact rather than a guess.
@@ -217,6 +220,12 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     // nearest-in-time only for legacy rows written before call_id existed.
     const stored = c.call_id ? { id: c.call_id, date: callDateById.get(c.call_id) ?? c.created_at } : null;
     const call = stored ?? nearestCall(resolved?.id ?? null, c.created_at);
+    // Permitted and landed are different. These rows are already filtered to
+    // allowed=true, so a reason here is not a scope refusal: it is the CRM
+    // rejecting a write we were entitled to make, or the outcome never being
+    // observed. Either way the row must not read "Wrote to Rolldog".
+    const notLanded = c.violation_reason ?? null;
+    const system = isSalesforce ? "Salesforce" : "Rolldog";
     out.push({
       id: `crm-${c.id}`,
       at: c.created_at,
@@ -225,8 +234,8 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       account:
         resolved?.account ??
         (isSalesforce ? `Account ${c.opportunity_external_id}` : `Opp ${c.opportunity_external_id}`),
-      title: isSalesforce ? "Wrote to Salesforce" : "Wrote to Rolldog",
-      detail: fields ? `Updated ${fields}` : null,
+      title: notLanded ? `${system} write did not land` : `Wrote to ${system}`,
+      detail: notLanded ?? (fields ? `Updated ${fields}` : null),
       bodyHtml: null,
       fields: fields || null,
       values: written.length > 0 ? written : null,

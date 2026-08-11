@@ -44,7 +44,7 @@
  *   - decision_process_mapped
  */
 
-import { ScopeViolationError } from "./crm-scope";
+import { recordWrite, ScopeViolationError, type WrittenValue } from "./crm-scope";
 import {
   getFrameworkForDeal,
   loadFramework,
@@ -250,7 +250,9 @@ export async function syncDealToRolldog(
       results.push({ method: "writeBudget", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
     } else {
     try {
-      await writeBudget(opts.rolldogOpportunityId, { notes });
+      await recordWrite([{ label: "Budget", value: notes, mode: "overwrite" }], () =>
+        writeBudget(opts.rolldogOpportunityId, { notes }),
+      );
       results.push({ method: "writeBudget", status: "ok", fieldsWritten: fields });
     } catch (err) {
       if (err instanceof ScopeViolationError) throw err;
@@ -280,7 +282,16 @@ export async function syncDealToRolldog(
       results.push({ method: "writeTimeline", status: "preview", fieldsWritten: fields, payload: JSON.stringify(payload, null, 2) });
     } else {
     try {
-      await writeTimeline(opts.rolldogOpportunityId, payload);
+      const values: WrittenValue[] = [];
+      if (payload.notes) values.push({ label: "Timeline", value: payload.notes, mode: "overwrite" });
+      if (payload.isCloseDateValidated !== undefined) {
+        values.push({
+          label: "Timeline › Close date validated",
+          value: payload.isCloseDateValidated ? "Yes" : "No",
+          mode: "overwrite",
+        });
+      }
+      await recordWrite(values, () => writeTimeline(opts.rolldogOpportunityId, payload));
       results.push({ method: "writeTimeline", status: "ok", fieldsWritten: fields });
     } catch (err) {
       if (err instanceof ScopeViolationError) throw err;
@@ -302,7 +313,9 @@ export async function syncDealToRolldog(
       results.push({ method: "writeSituation", status: "preview", fieldsWritten: situationFields, payload: JSON.stringify(situationPayload, null, 2) });
     } else {
     try {
-      await writeSituation(opts.rolldogOpportunityId, situationPayload);
+      await recordWrite(situationValues(situationPayload), () =>
+        writeSituation(opts.rolldogOpportunityId, situationPayload),
+      );
       results.push({
         method: "writeSituation",
         status: "ok",
@@ -330,7 +343,9 @@ export async function syncDealToRolldog(
       results.push({ method: "writeCompetitionNotes", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
     } else {
     try {
-      await writeCompetitionNotes(opts.rolldogOpportunityId, notes);
+      await recordWrite([{ label: "Competition", value: notes, mode: "overwrite" }], () =>
+        writeCompetitionNotes(opts.rolldogOpportunityId, notes),
+      );
       results.push({
         method: "writeCompetitionNotes",
         status: "ok",
@@ -362,7 +377,9 @@ export async function syncDealToRolldog(
       results.push({ method: "writeParticipantNotes", status: "preview", fieldsWritten: fields, payload: `notes:\n${notes}` });
     } else {
     try {
-      await writeParticipantNotes(opts.rolldogOpportunityId, { notes });
+      await recordWrite([{ label: "People", value: notes, mode: "overwrite" }], () =>
+        writeParticipantNotes(opts.rolldogOpportunityId, { notes }),
+      );
       results.push({
         method: "writeParticipantNotes",
         status: "ok",
@@ -406,7 +423,13 @@ export async function syncDealToRolldog(
       });
     } else {
       try {
-        await createActivity(opts.rolldogOpportunityId, { title, notes });
+        await recordWrite(
+          [
+            { label: "Next step", value: title, mode: "create" },
+            { label: "Next step › Notes", value: notes, mode: "create" },
+          ],
+          () => createActivity(opts.rolldogOpportunityId, { title, notes }),
+        );
         results.push({ method: "writeNextStep", status: "ok", fieldsWritten: ["suggested_next_step"] });
       } catch (err) {
         if (err instanceof ScopeViolationError) throw err;
@@ -463,6 +486,33 @@ const MAX_NOTE = 280; // Rolldog note fields cap around 300; leave headroom.
 function capNote(s: string): string {
   const t = s.trim();
   return t.length <= MAX_NOTE ? t : `${t.slice(0, MAX_NOTE - 1).trimEnd()}…`;
+}
+
+// Labels for the audit record, named the way a Rolldog reader would navigate to
+// them rather than the way the API spells them. Someone reading the Activity log
+// is checking a value against what they can see in Rolldog, so "Situation › Why
+// looking now" is findable and "why-looking-now" is not.
+const SITUATION_LABELS: Record<keyof SituationWrite, string> = {
+  whyLooking: "Situation › Why looking",
+  whyLookingNow: "Situation › Why looking now",
+  existingSystems: "Situation › Existing systems",
+  businessStatus: "Situation › Business status",
+  notes: "Situation › Notes",
+};
+
+/** The situation payload as label/value pairs, for the write's audit record.
+ *  Derived from the payload itself, so a param added to SituationWrite that is
+ *  never given a label fails the type check here instead of silently writing
+ *  content the audit does not mention. */
+function situationValues(payload: SituationWrite): WrittenValue[] {
+  const out: WrittenValue[] = [];
+  for (const key of Object.keys(SITUATION_LABELS) as Array<keyof SituationWrite>) {
+    const v = payload[key];
+    if (typeof v === "string" && v.length > 0) {
+      out.push({ label: SITUATION_LABELS[key], value: v, mode: "overwrite" });
+    }
+  }
+  return out;
 }
 
 type SituationParam =
