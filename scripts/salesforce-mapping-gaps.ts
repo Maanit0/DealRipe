@@ -122,13 +122,22 @@ async function main(): Promise<void> {
     const meta = await accountFieldMeta();
     const usedLabels = new Set(MAPPED.map((m) => m.label.toLowerCase()));
     for (const [label, m] of meta) {
-      const info = m as unknown as { type?: string; length?: number; api?: string };
+      const info = m as unknown as { type?: string; length?: number; picklistValues?: string[] };
       const used = usedLabels.has(label.toLowerCase());
       console.log(
         `  ${used ? "USED " : "free "} ${label.padEnd(34)} ${(info.type ?? "?").padEnd(12)} ${
           info.length ? `max ${info.length}` : ""
         }`,
       );
+      // Show the allowed values for picklists. Without them you cannot tell
+      // whether a picklist mapping is fixable or hopeless: extracted prose can
+      // be matched against a list of real product names, and cannot be matched
+      // against internal codes. "Any Other Software" skipped on FM Global and
+      // there was no way to see which of those two situations it was.
+      const values = info.picklistValues ?? [];
+      if (values.length > 0) {
+        console.log(`         allowed: ${values.slice(0, 24).join(" | ")}${values.length > 24 ? ` ... +${values.length - 24} more` : ""}`);
+      }
     }
   } catch (e) {
     // Distinguishable from "Salesforce exposes nothing", which would be a very

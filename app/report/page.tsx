@@ -75,7 +75,13 @@ export default async function ReportPage({ searchParams }: { searchParams: { ten
       supabaseAdmin().from("calls").select("deal_id, scheduled_start, call_date, meeting_type, call_subtype").eq("tenant_id", tenantId),
     ]);
 
-    const writes = entries.filter((e) => e.kind === "rolldog_write" && e.dealId);
+    // Both CRMs count. The report answers "how much did DealRipe write into the
+    // customer's systems", and once Salesforce write-back is live, counting only
+    // Rolldog would under-report every deal that has no Rolldog opportunity,
+    // which is exactly the new-business set this pilot is trying to prove out.
+    const writes = entries.filter(
+      (e) => (e.kind === "rolldog_write" || e.kind === "salesforce_write") && e.dealId,
+    );
     const fieldPairs = new Set<string>();
     const callSet = new Set<string>();
     for (const e of writes) {

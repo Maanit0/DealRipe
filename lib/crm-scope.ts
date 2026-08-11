@@ -302,7 +302,7 @@ async function writeCrmAccessLogToSupabase(
   // store propagates across the deferred import + await above because the audit
   // promise was created synchronously inside the runWithCallContext scope.
   const callId = entry.callId ?? null;
-  const { error } = await supabaseAdmin().from("crm_access_log").insert({
+  const row = {
     tenant_id: tenantId,
     operation: entry.operation,
     opportunity_external_id: entry.opportunityId,
@@ -310,10 +310,35 @@ async function writeCrmAccessLogToSupabase(
     allowed: entry.allowed,
     violation_reason: entry.violationReason,
     call_id: callId,
-  });
-  if (error) {
-    throw new Error(`crm_access_log insert failed: ${error.message}`);
+    // Which CRM this row describes. Until Salesforce write-back existed the
+    // answer was always Rolldog, so `system` was accepted by the type and never
+    // stored. Now it matters: without it the Activity view labels a Salesforce
+    // write "Wrote to Rolldog", which is not a cosmetic error but a false claim
+    // about where a customer's data went.
+    system: entry.system ?? "rolldog",
+  };
+  const { error } = await supabaseAdmin().from("crm_access_log").insert(row as never);
+  if (!error) return;
+
+  // The column arrives in supabase/add-crm-access-log-system.sql, which is
+  // applied by hand. Between deploying this code and running that migration the
+  // insert would fail on an unknown column and take the audit down with it, and
+  // an audit that stops recording is worse than one that records less. So fall
+  // back once, without the column, and say so.
+  if (/system/i.test(error.message) && /column|schema/i.test(error.message)) {
+    const { system: _dropped, ...legacy } = row;
+    const retry = await supabaseAdmin().from("crm_access_log").insert(legacy as never);
+    if (!retry.error) {
+      console.warn(
+        "[crm-scope] crm_access_log has no `system` column yet, so this write was" +
+          " logged without one and will display as Rolldog." +
+          " Run supabase/add-crm-access-log-system.sql.",
+      );
+      return;
+    }
+    throw new Error(`crm_access_log insert failed: ${retry.error.message}`);
   }
+  throw new Error(`crm_access_log insert failed: ${error.message}`);
 }
 
 // ---------------------------------------------------------------------

@@ -19,6 +19,10 @@ const KIND_META: Record<ActivityKind, { label: string; cls: string }> = {
   followup_draft: { label: "Follow-up draft", cls: "bg-warn/10 text-warn" },
   digest: { label: "Digest", cls: "bg-ink/[0.06] text-muted" },
   rolldog_write: { label: "Rolldog", cls: "bg-accent/10 text-accent" },
+  // Distinct colour on purpose. The whole point of this row is to say which
+  // customer system the data went into, and two identically styled chips would
+  // make that the one thing you cannot see at a glance.
+  salesforce_write: { label: "Salesforce", cls: "bg-sky-500/10 text-sky-600" },
 };
 
 const TZ = "America/Chicago";
@@ -196,6 +200,7 @@ function RawLog({
     ["briefing", "Briefings"],
     ["recap", "Recaps"],
     ["rolldog_write", "Rolldog"],
+    ["salesforce_write", "Salesforce"],
     ["followup_draft", "Follow-up drafts"],
     ["no_show_draft", "No-show"],
     ["digest", "Digests"],
@@ -300,7 +305,8 @@ function RawLog({
                   ) : (
                     <div className="rounded-lg border border-line bg-bg px-4 py-3 text-[13px] text-ink">
                       <div>
-                        Updated in Rolldog: <span className="font-medium">{e.fields ?? "fields"}</span>.
+                        Updated in {e.kind === "salesforce_write" ? "Salesforce" : "Rolldog"}:{" "}
+                        <span className="font-medium">{e.fields ?? "fields"}</span>.
                         {e.dealId && (
                           <>
                             {" "}

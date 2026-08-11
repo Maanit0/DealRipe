@@ -15,7 +15,8 @@ export type ActivityKind =
   | "no_show_draft"
   | "followup_draft"
   | "digest"
-  | "rolldog_write";
+  | "rolldog_write"
+  | "salesforce_write";
 
 export type ActivityEntry = {
   id: string;
@@ -35,7 +36,7 @@ export type ActivityEntry = {
   callDate: string | null;
 };
 
-const KIND_TITLE: Record<Exclude<ActivityKind, "rolldog_write">, string> = {
+const KIND_TITLE: Record<Exclude<ActivityKind, "rolldog_write" | "salesforce_write">, string> = {
   briefing: "Pre-call briefing sent",
   recap: "Post-call recap sent",
   no_show_draft: "No-show follow-up drafted",
@@ -61,7 +62,10 @@ function pretty(a: string): string {
 export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]> {
   const db = supabaseAdmin();
   const [dealsRes, sentRes, crmRes, callsRes] = await Promise.all([
-    db.from("deals").select("id, account, external_id, rolldog_opportunity_id").eq("tenant_id", tenantId),
+    db
+      .from("deals")
+      .select("id, account, external_id, rolldog_opportunity_id, salesforce_account_id")
+      .eq("tenant_id", tenantId),
     db
       .from("sent_messages")
       .select("id, deal_id, call_id, kind, subject, to_email, sent_at, body_html")
@@ -69,7 +73,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
       .order("sent_at", { ascending: false }),
     db
       .from("crm_access_log")
-      .select("id, opportunity_external_id, fields, allowed, operation, call_id, created_at")
+      .select("id, opportunity_external_id, fields, allowed, operation, call_id, created_at, system")
       .eq("tenant_id", tenantId)
       .eq("operation", "write")
       .eq("allowed", true)
@@ -120,13 +124,21 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     account: string;
     external_id: string | null;
     rolldog_opportunity_id: string | null;
+    salesforce_account_id?: string | null;
   }>;
   const dealById = new Map(deals.map((d) => [d.id, pretty(d.account)] as const));
   // opportunity id -> deal (account, id), for resolving write-backs.
   const oppToDeal = new Map<string, { account: string; id: string }>();
+  // Salesforce Account id -> deal. Separate map, because an Account id and a
+  // Rolldog opportunity id are different namespaces and collapsing them would
+  // attribute a write to whichever happened to collide.
+  const sfAccountToDeal = new Map<string, { account: string; id: string }>();
   for (const d of deals) {
     const opp = (d.external_id ? rolldogOppIdForDeal(d.external_id) : null) ?? d.rolldog_opportunity_id;
     if (opp) oppToDeal.set(String(opp), { account: pretty(d.account), id: d.id });
+    if (d.salesforce_account_id) {
+      sfAccountToDeal.set(String(d.salesforce_account_id), { account: pretty(d.account), id: d.id });
+    }
   }
 
   const out: ActivityEntry[] = [];
@@ -144,7 +156,7 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     // Unknown kinds fall back to "recap", so any new kind MUST be listed here
     // or it silently shows up in the log as a recap, which is worse than not
     // showing at all: the operator inspects the wrong thing and trusts it.
-    const kind = (["briefing", "recap", "no_show_draft", "followup_draft", "digest"].includes(m.kind) ? m.kind : "recap") as Exclude<ActivityKind, "rolldog_write">;
+    const kind = (["briefing", "recap", "no_show_draft", "followup_draft", "digest"].includes(m.kind) ? m.kind : "recap") as Exclude<ActivityKind, "rolldog_write" | "salesforce_write">;
     // Prefer the call_id stored on the message (hard link, set on every recap /
     // briefing / no-show draft going forward). Fall back to nearest-in-time only
     // for legacy rows written before call_id was stored.
@@ -165,14 +177,23 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     });
   }
 
-  for (const c of (crmRes.data ?? []) as Array<{
+  for (const c of (crmRes.data ?? []) as unknown as Array<{
     id: string;
     opportunity_external_id: string;
     fields: unknown;
     call_id: string | null;
     created_at: string;
+    system?: string | null;
   }>) {
-    const resolved = oppToDeal.get(String(c.opportunity_external_id));
+    // Which CRM. Rows written before the `system` column existed are Rolldog by
+    // architectural constraint, so the default is a fact rather than a guess.
+    const isSalesforce = String(c.system ?? "rolldog") === "salesforce";
+    // A Salesforce row carries an Account id, not a Rolldog opportunity id, so
+    // resolving it through oppToDeal would silently attribute the write to the
+    // wrong deal or to none.
+    const resolved = isSalesforce
+      ? sfAccountToDeal.get(String(c.opportunity_external_id))
+      : oppToDeal.get(String(c.opportunity_external_id));
     const fields = Array.isArray(c.fields) ? (c.fields as string[]).join(", ") : "";
     // Prefer the call_id stamped on the write (bulletproof); fall back to
     // nearest-in-time only for legacy rows written before call_id existed.
@@ -181,10 +202,12 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     out.push({
       id: `crm-${c.id}`,
       at: c.created_at,
-      kind: "rolldog_write",
+      kind: isSalesforce ? "salesforce_write" : "rolldog_write",
       dealId: resolved?.id ?? null,
-      account: resolved?.account ?? `Opp ${c.opportunity_external_id}`,
-      title: "Wrote to Rolldog",
+      account:
+        resolved?.account ??
+        (isSalesforce ? `Account ${c.opportunity_external_id}` : `Opp ${c.opportunity_external_id}`),
+      title: isSalesforce ? "Wrote to Salesforce" : "Wrote to Rolldog",
       detail: fields ? `Updated ${fields}` : null,
       bodyHtml: null,
       fields: fields || null,
