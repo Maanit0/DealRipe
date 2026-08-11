@@ -17,6 +17,7 @@ import { loadFramework } from "./framework";
 import { classifyMeetingType, generateGeneralRecap, type MeetingType } from "./meeting-classify";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
+import { recipientsForCall } from "./call-recipients";
 import { repEmailForDeal } from "./pilot-config";
 import { generatePostCallSummary, type PostCallSummary } from "./post-call-summary";
 import { recordSentMessage } from "./sent-messages";
@@ -73,7 +74,14 @@ export async function sendPostCallSummary(args: {
 
   // Route to the mapped pilot rep, or fall back to the deal's rep_email (set
   // on auto-created deals). No recipient means nothing to send.
-  const to = repEmailForDeal(args.dealExternalId) ?? dealRow.data.rep_email ?? undefined;
+  // Everyone who was actually on the call, not just whoever owns the deal row.
+  // A co-sold meeting has one bot and one deal, so the second rep used to sit
+  // through the call and hear nothing afterwards.
+  const owner = repEmailForDeal(args.dealExternalId) ?? dealRow.data.rep_email ?? null;
+  const recipients = await recipientsForCall(args.tenantId, args.callId ?? null, owner);
+  // `to` stays the single owner for reporting and idempotency, so callers and
+  // logs read as before. `recipients.all` is who the mail actually goes to.
+  const to = recipients.all[0];
   if (!to) {
     return { sent: false, reason: `no rep email for deal '${args.dealExternalId}'` };
   }
@@ -234,7 +242,7 @@ export async function sendPostCallSummary(args: {
 
   try {
     const res = await sendEmail({
-      to,
+      to: recipients.all,
       subject: email.subject,
       html: email.html,
       text: email.text,
