@@ -116,7 +116,13 @@ export function subResourceLabel(s: string): string {
 // Calls DealRipe never surfaces at all: a lost capture (billing/media failure,
 // hidden from every view) or an empty placeholder. No-shows ARE surfaced now,
 // with their own two steps, so they are deliberately not excluded here.
-const EXCLUDE_OUTCOMES = new Set(["capture_failed", "placeholder"]);
+// 'duplicate' is a second call row for a meeting already recorded on another
+// row, marked by scripts/merge-duplicate-calls.ts. Without it here, a merged
+// pair still renders as two meetings: one ALL CLEAR with everything "not
+// applicable", and one carrying the real work. That is the exact confusion the
+// merge was meant to remove, and it inflates the meeting count at the top of
+// this page.
+const EXCLUDE_OUTCOMES = new Set(["capture_failed", "placeholder", "duplicate", "discarded"]);
 const NOSHOW_OUTCOMES = new Set(["no_show", "no_conversation"]);
 
 const MINUTE = 60000;

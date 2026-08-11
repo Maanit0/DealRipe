@@ -198,13 +198,54 @@ async function processEvent(
   const dealId = dealRow.data.id;
 
   // Find the calls row (created by calendar-sync) and the dedupe marker.
-  const callRow = await db
+  //
+  // Look up by BOTH keys. calendar-sync keys rows on iCalUId, which is stable
+  // across mailboxes, while this only ever asked for ev.eventId, which is per
+  // mailbox. So the lookup missed a row that existed, fell through to the
+  // self-heal insert below, and the upsert's onConflict on
+  // (deal_id, external_id) could not catch it either because the external_id
+  // genuinely differed. That created a second row for the meeting at the exact
+  // moment the briefing fired, which is why five duplicates on August 11 each
+  // carry a created_at identical to their briefing_sent_at: Custom Goods and
+  // All Square at 1:25, TW Customs at 1:55, GHY at 2:25, Speed International at
+  // 12:25.
+  const callKey = ev.iCalUId ?? ev.eventId;
+  const keys = callKey === ev.eventId ? [ev.eventId] : [callKey, ev.eventId];
+  const byKey = await db
     .from("calls")
     .select("id, briefing_sent_at")
     .eq("deal_id", dealId)
-    .eq("external_id", ev.eventId)
+    .in("external_id", keys)
+    .limit(1)
     .maybeSingle();
-  if (callRow.error) throw new Error(`calls lookup failed: ${callRow.error.message}`);
+  if (byKey.error) throw new Error(`calls lookup failed: ${byKey.error.message}`);
+
+  // Still nothing. Before creating one, check for a row on this deal at this
+  // exact start. A rep cannot be in two customer meetings on one deal at the
+  // same instant, so such a row is this meeting under a re-issued invite key.
+  // Adopting it keeps the bot that is already dispatched against it; inserting
+  // would orphan that bot's work on a row nobody reads.
+  let callRow = byKey;
+  if (!callRow.data) {
+    const sameSlot = await db
+      .from("calls")
+      .select("id, briefing_sent_at")
+      .eq("deal_id", dealId)
+      .eq("scheduled_start", new Date(startMs).toISOString())
+      .limit(2);
+    if (sameSlot.error) {
+      // Say what we could not check rather than silently creating the duplicate
+      // this branch exists to prevent.
+      console.warn(
+        `[briefing-sync] same-slot lookup failed for deal ${dealId}; a duplicate call row may be created: ${sameSlot.error.message}`,
+      );
+    } else if ((sameSlot.data ?? []).length === 1) {
+      callRow = { ...sameSlot, data: sameSlot.data![0] } as typeof byKey;
+      console.log(
+        `[briefing-sync] adopted existing call ${sameSlot.data![0].id} for deal ${dealId} rather than creating a duplicate for a re-issued invite`,
+      );
+    }
+  }
 
   // Self-heal the race with calendar-sync. Both crons run every 5 minutes, so
   // when an event reaches the calendar late, calendar-sync may not have created
