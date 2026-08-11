@@ -19,6 +19,7 @@ import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
 import { attendeeLineFromMeeting } from "./attendees";
+import { graphIso } from "./graph-time";
 import { briefingStateFromContext, getDealContext } from "./deal-context";
 import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-config";
 import { prewarmRolldogToken } from "./rolldog";
@@ -290,6 +291,8 @@ async function processEvent(
     // this is before it happens. Without it every briefing for an account with
     // no captured history reads as a first discovery call.
     meetingSubject: ev.subject,
+    // So a commitment never lands on the day of the call being briefed.
+    meetingDate: ev.start?.dateTime ? graphIso(ev.start.dateTime)?.slice(0, 10) ?? null : null,
   });
   if (!briefing) throw new Error("briefing generation returned null");
 

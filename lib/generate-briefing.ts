@@ -81,6 +81,8 @@ export type BriefingState = {
   stageGates?: string | null;
   /** What the last calls established and what is still owed. */
   history?: string;
+  /** When this call happens (YYYY-MM-DD), so commitments land after it. */
+  meetingDate?: string | null;
 };
 
 /**
@@ -118,6 +120,7 @@ export async function generateBriefingFromState(
     nextGaps,
     crmContext: state.crmContext,
     meetingSubject: state.meetingSubject,
+    meetingDate: state.meetingDate,
     stageGates: state.stageGates,
     history: state.history,
     today: new Date().toISOString().slice(0, 10),

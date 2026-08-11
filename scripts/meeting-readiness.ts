@@ -229,6 +229,7 @@ async function main(): Promise<void> {
           const b = await generateBriefingFromState({
             ...briefingStateFromContext(ctx),
             meetingSubject: m.subject ?? null,
+            meetingDate: graphIso(m.start?.dateTime)?.slice(0, 10) ?? null,
             // Who is actually on the invite, which is the point of the rule
             // telling the prompt to target each question to its audience.
             attendees:
