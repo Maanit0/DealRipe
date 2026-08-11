@@ -2,6 +2,13 @@ node_modules
 .next
 .env.local
 .env*.local
+# Any local copy of environment variables, whatever it is called. `vercel env
+# pull` writes real production secrets to whatever filename you give it, and
+# ".env.production.check" matched none of the patterns above. It sat untracked
+# in the working tree, one `git add -A` from being committed.
+.env
+.env.*
+!.env.example
 .DS_Store
 next-env.d.ts
 .vercel
