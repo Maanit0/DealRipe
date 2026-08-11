@@ -25,6 +25,49 @@ import { createActivity } from "./rolldog";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
+/**
+ * Can this deal write to Rolldog, and to which opportunity?
+ *
+ * Extracted because it was written out three times and a diagnostic script
+ * reimplemented a fourth, wrong version that reported four healthy deals as
+ * blocked. Anything that wants to answer "will write-back work for this deal"
+ * calls THIS, so a checker can never disagree with the code it checks.
+ *
+ * Two authorization routes, matching the design in crm-scope:
+ *   static   a hand-seeded pilot deal, authorized by PILOT_OPPORTUNITY_IDS.
+ *   runtime  an auto-linked deal, authorized for the duration of one write by
+ *            runWithAuthorizedOpportunities using its own confirmed/high match.
+ * A 'review' or null link never writes. That is deliberate: an unverified link
+ * would put one customer's call notes on another customer's deal.
+ */
+export type WriteTarget =
+  | { authorized: true; opportunityId: string; route: "static" | "runtime"; runtimeAuth: readonly string[] }
+  | { authorized: false; reason: string; opportunityId: string | null };
+
+export function resolveWriteTarget(deal: {
+  external_id?: string | null;
+  rolldog_opportunity_id?: string | null;
+  rolldog_link_confidence?: string | null;
+}): WriteTarget {
+  const staticOpp = rolldogOppIdForDeal(deal.external_id ?? "");
+  if (staticOpp) {
+    return { authorized: true, opportunityId: staticOpp, route: "static", runtimeAuth: [] };
+  }
+  const linked = deal.rolldog_opportunity_id ?? null;
+  const conf = deal.rolldog_link_confidence ?? null;
+  if (linked && (conf === "confirmed" || conf === "high")) {
+    return { authorized: true, opportunityId: linked, route: "runtime", runtimeAuth: [linked] };
+  }
+  if (!linked) {
+    return { authorized: false, opportunityId: null, reason: "no Rolldog opportunity on this deal" };
+  }
+  return {
+    authorized: false,
+    opportunityId: linked,
+    reason: `link confidence is '${conf ?? "none"}', which fails closed`,
+  };
+}
+
 export type WriteBackResult = {
   written: boolean;
   opportunityId?: string;
@@ -71,19 +114,12 @@ export async function logNoShowToRolldog(
   }
   const dealExternalId = dealRow.data.external_id ?? "";
 
-  const conf = dealRow.data.rolldog_link_confidence;
-  const staticOpp = rolldogOppIdForDeal(dealExternalId);
-  let opp: string | null = null;
-  let runtimeAuth: readonly string[] = [];
-  if (staticOpp) {
-    opp = staticOpp;
-  } else if (dealRow.data.rolldog_opportunity_id && (conf === "confirmed" || conf === "high")) {
-    opp = dealRow.data.rolldog_opportunity_id;
-    runtimeAuth = [opp];
+  const target = resolveWriteTarget(dealRow.data);
+  if (!target.authorized) {
+    return { written: false, reason: `${dealExternalId}: ${target.reason}` };
   }
-  if (!opp) {
-    return { written: false, reason: `no confirmed Rolldog opportunity for '${dealExternalId}' (link: ${conf ?? "none"})` };
-  }
+  const opp = target.opportunityId;
+  const runtimeAuth = target.runtimeAuth;
 
   // Idempotency: skip if an activity was already written for this call. A
   // no-show call has no other activity write, so any prior one is this no-show.
@@ -229,25 +265,12 @@ export async function writeBackDealToRolldog(
   //     we authorize for this one write via runWithAuthorizedOpportunities.
   //     'review' / null links never write (fail-closed).
   const dealId = dealRow.data.id;
-  const conf = dealRow.data.rolldog_link_confidence;
-  const staticOpp = rolldogOppIdForDeal(dealExternalId);
-  let opp: string | null = null;
-  let runtimeAuth: readonly string[] = [];
-  if (staticOpp) {
-    opp = staticOpp;
-  } else if (
-    dealRow.data.rolldog_opportunity_id &&
-    (conf === "confirmed" || conf === "high")
-  ) {
-    opp = dealRow.data.rolldog_opportunity_id;
-    runtimeAuth = [opp];
+  const target = resolveWriteTarget(dealRow.data);
+  if (!target.authorized) {
+    return { written: false, reason: `${dealExternalId}: ${target.reason}` };
   }
-  if (!opp) {
-    return {
-      written: false,
-      reason: `no confirmed Rolldog opportunity for '${dealExternalId}' (link: ${conf ?? "none"})`,
-    };
-  }
+  const opp = target.opportunityId;
+  const runtimeAuth = target.runtimeAuth;
 
   // Change detection: compose (dry-run) to see what WOULD be written, hash the
   // notes payloads, and compare against the last write. This keeps Rolldog always
