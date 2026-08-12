@@ -31,12 +31,21 @@
  */
 
 import { accountFromSubject, isFreeMailDomain } from "./pilot-config";
-import { searchOpportunities, type OppSummary } from "./rolldog";
+import {
+  opportunitiesForAccount,
+  searchAccounts,
+  searchOpportunities,
+  type AccountSummary,
+  type OppSummary,
+} from "./rolldog";
 
 export type MatchResult =
   | { status: "confirmed"; opp: OppSummary; queries: string[] }
   | { status: "review"; candidates: OppSummary[]; reason: string; queries: string[] }
-  | { status: "none"; queries: string[] }
+  /** Rolldog answered and has no opportunity. `accountOnly` means the customer
+   *  IS there as an account with no opportunity yet, which before a discovery
+   *  call is Magaya's normal state rather than a miss. */
+  | { status: "none"; queries: string[]; accountOnly?: { ids: string[]; names: string } }
   /** We never got an answer. NOT evidence that the customer is absent. */
   | { status: "unavailable"; reason: string; queries: string[] };
 
@@ -127,6 +136,99 @@ export function searchVariants(args: {
   return out;
 }
 
+/**
+ * The one opportunity that is unambiguously the live deal, or null.
+ *
+ * Owned by the rep on the call, sitting in a real stage, and the newest of
+ * those. All three must agree and the winner must be alone. Shared by the
+ * domain path and the name path so they cannot drift apart.
+ */
+function pickCurrent(candidates: OppSummary[], repOwnerId?: string | number | null): OppSummary | null {
+  if (!repOwnerId) return null;
+  const owned = candidates.filter((c) => String(c.owner ?? "") === String(repOwnerId));
+  const active = owned.filter((c) => (c.stageName ?? "").trim().length > 0);
+  if (active.length !== 1) return null;
+  const winner = active[0];
+  const newer = owned.filter(
+    (c) => c.id !== winner.id && Date.parse(c.createdAt ?? "") > Date.parse(winner.createdAt ?? ""),
+  );
+  return newer.length === 0 ? winner : null;
+}
+
+/** Most likely first, so a human reading the list starts at the right end. */
+function rankCandidates(candidates: OppSummary[], repOwnerId?: string | number | null): OppSummary[] {
+  return [...candidates].sort((a, b) => {
+    const own = (c: OppSummary) => (repOwnerId && String(c.owner ?? "") === String(repOwnerId) ? 1 : 0);
+    const act = (c: OppSummary) => ((c.stageName ?? "").trim() ? 1 : 0);
+    return (
+      own(b) - own(a) ||
+      act(b) - act(a) ||
+      (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0)
+    );
+  });
+}
+
+/** Bare domain from a website field, which Rolldog stores inconsistently:
+ *  "miraclegroups.com", "http://www.logisticsplus.com", "https://logisticspl.us". */
+export function websiteDomain(raw: string | null | undefined): string | null {
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return null;
+  const stripped = s
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split(/[/?#]/)[0];
+  return stripped.includes(".") ? stripped : null;
+}
+
+/**
+ * Find the opportunity via the customer's ACCOUNT, matched on domain.
+ *
+ * Rolldog's filter[search] is name-only: searching "miraclegroups.com" returns
+ * nothing even though an account carries exactly that website. So domain cannot
+ * drive the search. It can drive the CHOICE, which is where the difficulty
+ * actually is.
+ *
+ * "Miracle" returns seven accounts and exactly two carry miraclegroups.com.
+ * "Logistics Plus" returns twelve and three carry a website worth testing. Name
+ * matching was never going to separate those, and a domain equality test does it
+ * outright. Once the account is known, its opportunities are listed directly and
+ * no name is compared again.
+ *
+ * Returns null when the domain is absent, free mail, or no account's website
+ * matches, so the caller falls through to the existing name search rather than
+ * losing anything that used to work.
+ */
+async function matchViaAccountDomain(args: {
+  domain: string;
+  queries: string[];
+  repOwnerId?: string | number | null;
+}): Promise<{ accounts: AccountSummary[]; opps: OppSummary[] } | null> {
+  const target = websiteDomain(args.domain);
+  if (!target || isFreeMailDomain(target)) return null;
+
+  const byId = new Map<string, AccountSummary>();
+  for (const q of args.queries) {
+    try {
+      for (const a of await searchAccounts(q)) if (!byId.has(a.id)) byId.set(a.id, a);
+    } catch {
+      // One failed query is survivable here: this is an enrichment path and the
+      // name search still runs behind it.
+    }
+  }
+  const hits = [...byId.values()].filter((a) => websiteDomain(a.website) === target);
+  if (hits.length === 0) return null;
+
+  const opps: OppSummary[] = [];
+  for (const a of hits) {
+    try {
+      opps.push(...(await opportunitiesForAccount(a.id)));
+    } catch {
+      /* keep whatever else resolved */
+    }
+  }
+  return { accounts: hits, opps: opps.filter((o) => !o.archived) };
+}
+
 export async function matchDealToOpportunity(args: {
   account: string;
   externalId?: string | null;
@@ -156,6 +258,33 @@ export async function matchDealToOpportunity(args: {
   });
   if (queries.length === 0) return { status: "none", queries };
 
+  // Domain first, but as EVIDENCE rather than as a shortcut.
+  //
+  // The first version returned as soon as a domain-matched account held a single
+  // live opportunity, and the benchmark caught it immediately: Cargo Services
+  // Group has six opportunities on that name, and the domain path confirmed a
+  // 2023 record while the correct link is the 2025 one that is actually in a
+  // stage. One opportunity on AN account is not the same as the current
+  // opportunity for THIS deal.
+  //
+  // It also returned early when the account had no opportunities at all, which
+  // skipped the name search entirely and turned working matches into "no
+  // candidates". So the domain path now only contributes candidates, and the
+  // same currency rules decide, once, over everything found.
+  let domainOpps: OppSummary[] = [];
+  let domainAccounts: AccountSummary[] = [];
+  if (args.domain) {
+    const viaDomain = await matchViaAccountDomain({
+      domain: args.domain,
+      queries,
+      repOwnerId: args.repOwnerId,
+    });
+    if (viaDomain) {
+      domainOpps = viaDomain.opps;
+      domainAccounts = viaDomain.accounts;
+    }
+  }
+
   // Collect across every variant, deduped by opportunity id. One query failing
   // is tolerable; every query failing means we learned nothing and must say so.
   const byId = new Map<string, OppSummary>();
@@ -178,12 +307,35 @@ export async function matchDealToOpportunity(args: {
     };
   }
 
+  // Fold in anything the domain-matched accounts hold. Those are reached by
+  // account id rather than by name, so they can include opportunities no name
+  // search would ever return.
+  for (const o of domainOpps) if (!byId.has(o.id)) byId.set(o.id, o);
+
   const live = [...byId.values()].filter((c) => !c.archived);
   if (live.length === 0) {
     // Rolldog answered for at least one query and had nothing. A partial
     // failure still muddies that, so say which it was.
-    return failures.length > 0
-      ? { status: "unavailable", reason: `${failures.length} of ${queries.length} searches failed, so "no match" is not trustworthy`, queries }
+    if (failures.length > 0) {
+      return {
+        status: "unavailable",
+        reason: `${failures.length} of ${queries.length} searches failed, so "no match" is not trustworthy`,
+        queries,
+      };
+    }
+    // The customer IS in Rolldog as an account with no opportunity on it, which
+    // before a discovery call is Magaya's normal state. Saying only "no
+    // candidates" would send someone hunting for a record that should not exist
+    // yet, and would have someone email the rep about it.
+    return domainAccounts.length > 0
+      ? {
+          status: "none",
+          queries,
+          accountOnly: {
+            ids: domainAccounts.map((a) => a.id),
+            names: domainAccounts.map((a) => a.name).join(", "),
+          },
+        }
       : { status: "none", queries };
   }
 
@@ -214,31 +366,11 @@ export async function matchDealToOpportunity(args: {
     // human's decision. Netalogistics is the case this is for: two candidates
     // owned by the rep, one created the morning of the call and sitting in
     // SQL 0, the other a year old with no stage.
-    const owned = args.repOwnerId
-      ? exact.filter((c) => String(c.owner ?? "") === String(args.repOwnerId))
-      : [];
-    const active = owned.filter((c) => (c.stageName ?? "").trim().length > 0);
-    if (active.length === 1) {
-      const winner = active[0];
-      const newer = owned.filter(
-        (c) => c.id !== winner.id && Date.parse(c.createdAt ?? "") > Date.parse(winner.createdAt ?? ""),
-      );
-      if (newer.length === 0) return { status: "confirmed", opp: winner, queries };
-    }
-    // Rank what a human sees, so the likely answer is first rather than
-    // whichever row Rolldog happened to return first.
-    const ranked = [...exact].sort((a, b) => {
-      const own = (c: OppSummary) => (args.repOwnerId && String(c.owner ?? "") === String(args.repOwnerId) ? 1 : 0);
-      const act = (c: OppSummary) => ((c.stageName ?? "").trim() ? 1 : 0);
-      return (
-        own(b) - own(a) ||
-        act(b) - act(a) ||
-        (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0)
-      );
-    });
+    const picked = pickCurrent(exact, args.repOwnerId);
+    if (picked) return { status: "confirmed", opp: picked, queries };
     return {
       status: "review",
-      candidates: ranked.slice(0, 8),
+      candidates: rankCandidates(exact, args.repOwnerId).slice(0, 8),
       reason: `${exact.length} opportunities on this account, none uniquely current`,
       queries,
     };

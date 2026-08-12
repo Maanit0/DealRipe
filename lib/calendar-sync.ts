@@ -184,12 +184,23 @@ export async function runCalendarSync(
     const autoJoin = isAutoJoinRep(repEmail);
     for (const ev of events) {
       counts.eventsSeen += 1;
-      // Record BOTH keys. Rows are keyed on iCalUId now, but rows written
-      // before that change still carry the per-mailbox id, and the vanished
-      // reconciler prunes any future row whose key it did not see. Recording
-      // only one would delete every upcoming call on the next run.
+      // Record EVERY key shape a row on this meeting could carry, because the
+      // vanished reconciler deletes any future row whose key it did not see.
+      //
+      //   eventId          rows from before the iCalUId change
+      //   iCalUId          rows from before the occurrence date was added
+      //   iCalUId:date     what processEvent writes now
+      //
+      // Missing the third would have pruned every upcoming call created under
+      // the current scheme, on the first run after deploying it. The key is
+      // built the same way here and in processEvent, and if that ever stops
+      // being true this is where the damage lands.
       seenEventIds.add(ev.eventId);
-      if (ev.iCalUId) seenEventIds.add(ev.iCalUId);
+      if (ev.iCalUId) {
+        seenEventIds.add(ev.iCalUId);
+        const day = eventStartToIso(ev.start).slice(0, 10);
+        if (day) seenEventIds.add(`${ev.iCalUId}:${day}`);
+      }
       try {
         await processEvent(ev, tenantId, counts, emit, { repEmail, autoJoin });
       } catch (err) {
