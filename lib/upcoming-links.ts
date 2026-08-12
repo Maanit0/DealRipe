@@ -39,6 +39,7 @@
 import { resolveAccountForDeal } from "./salesforce-link";
 import { resolveSalesforceWriteTarget } from "./salesforce-scope";
 import { matchDealToOpportunity } from "./rolldog-match";
+import { REP_UID } from "./rolldog-reconcile";
 import { resolveWriteTarget } from "./rolldog-writeback";
 import { prewarmRolldogToken } from "./rolldog";
 import { supabaseAdmin } from "./supabase";
@@ -343,6 +344,10 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
       domain,
       meetingSubject,
       knownNames: [sfName],
+      // Breaks ties between identically named opportunities. A rep's own live
+      // deal is the one this call belongs to; the other nineteen SEABOARD
+      // MARINE LTD records are somebody else's history.
+      repOwnerId: REP_UID[(repEmail ?? "").trim().toLowerCase()] ?? null,
     });
     let rd: DealLinkOutcome["rolldog"];
     if (m.status === "confirmed") {

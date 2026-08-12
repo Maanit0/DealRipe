@@ -144,6 +144,9 @@ export async function matchDealToOpportunity(args: {
    * stronger evidence of who this is than anything we can derive ourselves.
    */
   knownNames?: ReadonlyArray<string | null | undefined>;
+  /** The Rolldog user id of the rep on this call, from REP_UID. Used only to
+   *  break ties between identically named opportunities. */
+  repOwnerId?: string | number | null;
 }): Promise<MatchResult> {
   const queries = searchVariants({
     account: args.account,
@@ -198,7 +201,47 @@ export async function matchDealToOpportunity(args: {
 
   if (exact.length === 1) return { status: "confirmed", opp: exact[0], queries };
   if (exact.length > 1) {
-    return { status: "review", candidates: exact, reason: `${exact.length} exact-name matches`, queries };
+    // Magaya carries many opportunities per account: 20 named SEABOARD MARINE
+    // LTD, 16 CBX Global JAX, 10 Leschaco. Name matching cannot resolve that
+    // and never will, so the tie is broken on the three things that actually
+    // distinguish a live deal from years of history:
+    //
+    //   owner    the rep who is on this call owns it
+    //   stage    it sits in a real SQL stage rather than blank or archived
+    //   recency  it is the newest of those
+    //
+    // All three must agree, and the winner must be alone, or this stays a
+    // human's decision. Netalogistics is the case this is for: two candidates
+    // owned by the rep, one created the morning of the call and sitting in
+    // SQL 0, the other a year old with no stage.
+    const owned = args.repOwnerId
+      ? exact.filter((c) => String(c.owner ?? "") === String(args.repOwnerId))
+      : [];
+    const active = owned.filter((c) => (c.stageName ?? "").trim().length > 0);
+    if (active.length === 1) {
+      const winner = active[0];
+      const newer = owned.filter(
+        (c) => c.id !== winner.id && Date.parse(c.createdAt ?? "") > Date.parse(winner.createdAt ?? ""),
+      );
+      if (newer.length === 0) return { status: "confirmed", opp: winner, queries };
+    }
+    // Rank what a human sees, so the likely answer is first rather than
+    // whichever row Rolldog happened to return first.
+    const ranked = [...exact].sort((a, b) => {
+      const own = (c: OppSummary) => (args.repOwnerId && String(c.owner ?? "") === String(args.repOwnerId) ? 1 : 0);
+      const act = (c: OppSummary) => ((c.stageName ?? "").trim() ? 1 : 0);
+      return (
+        own(b) - own(a) ||
+        act(b) - act(a) ||
+        (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0)
+      );
+    });
+    return {
+      status: "review",
+      candidates: ranked.slice(0, 8),
+      reason: `${exact.length} opportunities on this account, none uniquely current`,
+      queries,
+    };
   }
   return {
     status: "review",
