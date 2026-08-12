@@ -48,10 +48,18 @@ async function get(tok: string, path: string): Promise<any> {
 async function main(): Promise<void> {
   const dealExternalId = arg("--deal");
   const opp = arg("--opp");
+  // A Salesforce account confirmed by a human, for the case the matcher cannot
+  // reach: Lumistar and MLX Trading Group were both in Salesforce and invisible
+  // to it, because the deals are named "Korea" and "Mollaxpanama" after a
+  // calendar subject and an email domain. Verify with sf-find-account.ts first,
+  // this stores whatever id it is given.
+  const sfAccount = arg("--sf-account");
   const confidence = arg("--confidence") ?? "confirmed";
   const apply = process.argv.includes("--apply");
-  if (!dealExternalId || !opp) {
-    console.error("Usage: --deal <external_id> --opp <rolldog_opp_id> [--confidence confirmed|high] [--apply]");
+  if (!dealExternalId || (!opp && !sfAccount)) {
+    console.error(
+      "Usage: --deal <external_id|account name> [--opp <rolldog_opp_id>] [--sf-account <salesforce_account_id>] [--confidence confirmed|high] [--apply]",
+    );
     process.exit(1);
   }
   if (confidence !== "confirmed" && confidence !== "high") {
@@ -67,20 +75,44 @@ async function main(): Promise<void> {
 
   const tenantId = await resolveTenantId("magaya");
   const db = supabaseAdmin();
-  const deal = await db
+  // Accepts the external_id or the account name. The external_id for a
+  // free-mail customer is the full address, which nobody types from memory:
+  // "Nat Forwarding" is the name in every report and was rejected here.
+  const all = await db
     .from("deals")
-    .select("id, account")
-    .eq("tenant_id", tenantId)
-    .eq("external_id", dealExternalId)
-    .maybeSingle();
-  if (deal.error || !deal.data) {
-    console.error(`Deal '${dealExternalId}' not found.`);
+    .select("id, account, external_id")
+    .eq("tenant_id", tenantId);
+  if (all.error) {
+    console.error(`deals lookup failed: ${all.error.message}`);
     process.exit(1);
   }
+  const rows = (all.data ?? []) as Array<{ id: string; account: string; external_id: string | null }>;
+  const needle = dealExternalId.trim().toLowerCase();
+  const exact = rows.filter((d) => String(d.external_id ?? "").toLowerCase() === needle);
+  const byName = rows.filter((d) => (d.account ?? "").toLowerCase().includes(needle));
+  const hits = exact.length > 0 ? exact : byName;
+
+  if (hits.length === 0) {
+    console.error(`Deal '${dealExternalId}' not found by external_id or account name.`);
+    process.exit(1);
+  }
+  if (hits.length > 1) {
+    // Linking the wrong deal writes one customer's qualification onto another
+    // customer's opportunity, so an ambiguous name stops here.
+    console.error(`'${dealExternalId}' matches ${hits.length} deals. Use the external_id:`);
+    for (const h of hits) console.error(`  ${h.account}  ${h.external_id}`);
+    process.exit(1);
+  }
+  const deal = { data: hits[0], error: null as null };
 
   console.log("");
   console.log(`DealRipe deal:  ${dealExternalId}  (account "${deal.data.account}")`);
-  console.log(`Rolldog opp:    ${opp}  account "${core["account-name"] ?? "?"}"  website ${website ?? "(none)"}`);
+  if (opp) {
+    console.log(`Rolldog opp:    ${opp}  account "${core["account-name"] ?? "?"}"  website ${website ?? "(none)"}`);
+  }
+  if (sfAccount) {
+    console.log(`Salesforce:     ${sfAccount}  (verify with sf-find-account.ts; this stores it as given)`);
+  }
   console.log(`Confidence:     ${confidence}`);
   console.log("");
 
@@ -89,15 +121,30 @@ async function main(): Promise<void> {
     return;
   }
 
-  const upd = await db
-    .from("deals")
-    .update({ rolldog_opportunity_id: opp, rolldog_link_confidence: confidence })
-    .eq("id", deal.data.id);
+  // Only the fields actually supplied. A deal can be confirmed against one CRM
+  // without touching what is stored for the other.
+  const patch: Record<string, unknown> = {};
+  if (opp) {
+    patch.rolldog_opportunity_id = opp;
+    patch.rolldog_link_confidence = confidence;
+  }
+  if (sfAccount) {
+    patch.salesforce_account_id = sfAccount;
+    patch.salesforce_link_confidence = confidence;
+  }
+
+  const upd = await db.from("deals").update(patch as never).eq("id", deal.data.id);
   if (upd.error) {
     console.error(`Link failed: ${upd.error.message}`);
     process.exit(1);
   }
   console.log("LINKED. Write-back will fire for this deal after its next captured call.");
+  if (sfAccount && !opp) {
+    console.log("");
+    console.log("Salesforce only, which is correct before a discovery call: Magaya does not");
+    console.log("create the Rolldog opportunity until after it. Once one exists, the link");
+    console.log("resolver picks it up and Rolldog becomes the system of record from then on.");
+  }
 }
 
 main().catch((e) => {

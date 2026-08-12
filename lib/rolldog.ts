@@ -690,6 +690,57 @@ export async function searchOpportunities(query: string, opts: { pageSize?: numb
   return listOpportunities(`filter[search]=${encodeURIComponent(query)}&page[size]=${opts.pageSize ?? 20}`);
 }
 
+export type AccountSummary = {
+  id: string;
+  name: string;
+  website: string | null;
+  createdAt: string | null;
+};
+
+/**
+ * Search Rolldog ACCOUNTS, which exist independently of opportunities.
+ *
+ * Magaya does not create the opportunity until after the discovery call, so a
+ * prospect can sit in Rolldog as an account for weeks with nothing to match
+ * against. Searching only opportunities reported those customers as absent from
+ * Rolldog entirely, which is a different and much stronger claim than the truth:
+ * they are there, they are just not yet a deal.
+ *
+ * An account is not a write target. Qualification goes to an opportunity. What
+ * this buys is knowing the customer exists, and the account id, which is the
+ * reliable way to find their opportunity later: list the account's own
+ * opportunities instead of guessing at names. "Nat Forwarding" is the account
+ * "NAT" in Rolldog, and no name search was ever going to bridge that.
+ *
+ * Discovery, so deliberately not scoped to PILOT_OPPORTUNITY_IDS, exactly as
+ * listOpportunities is not. It returns summary metadata and reads no deal
+ * content.
+ */
+export async function searchAccounts(query: string, opts: { pageSize?: number } = {}): Promise<AccountSummary[]> {
+  const config = readRolldogConfig();
+  ensureCredentials(config, "(list)", "read");
+  const path = `/accounts?filter[search]=${encodeURIComponent(query)}&page[size]=${opts.pageSize ?? 20}`;
+  const res = await rolldogFetch(config, path, { method: "GET" });
+  if (!res.ok) throw new RolldogApiError(res.status, path, await safeBody(res));
+  const json = (await res.json()) as { data?: Array<{ id: string; attributes?: Record<string, unknown> }> };
+  return (json.data ?? []).map((r) => {
+    const a = r.attributes ?? {};
+    const s = (k: string): string | null => (a[k] != null ? String(a[k]) : null);
+    return {
+      id: r.id,
+      name: s("name") ?? s("account-name") ?? "",
+      website: s("website"),
+      createdAt: s("created-at"),
+    };
+  });
+}
+
+/** Every opportunity on one account. The reliable route once the account is
+ *  known, because it needs no name matching at all. */
+export async function opportunitiesForAccount(accountId: string): Promise<OppSummary[]> {
+  return listOpportunities(`filter[account-id]=${encodeURIComponent(accountId)}&page[size]=50`);
+}
+
 async function getOpportunityCore(
   config: RolldogConfig,
   opportunityId: string,
