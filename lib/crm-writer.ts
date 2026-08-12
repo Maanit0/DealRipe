@@ -142,10 +142,24 @@ export async function syncDealToRolldog(
   );
 
   // Latest captured call date, for the write's [DealRipe · call date] stamp.
+  //
+  // "Captured" is load-bearing and used not to be. This ordered by
+  // scheduled_start across ALL calls, so a deal with an upcoming meeting got
+  // stamped with that meeting's date: on 2026-08-11 the IFF Inc opportunity in
+  // Rolldog read "[DealRipe · Aug 13 call]" for content extracted from an
+  // earlier call, dated from a meeting that had not happened. A rep reading the
+  // opportunity would reasonably believe it came from Thursday.
+  //
+  // Only a call that actually produced a conversation can be the source of a
+  // note, so future and uncaptured rows are excluded here rather than being
+  // filtered by the caller.
+  const nowIso = new Date().toISOString();
   const callRow = await db
     .from("calls")
     .select("scheduled_start, call_date")
     .eq("deal_id", opts.dealId)
+    .lte("scheduled_start", nowIso)
+    .eq("has_been_extracted", true)
     .order("scheduled_start", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -482,10 +496,43 @@ function buildDealRipeStamp(callDate: string | null): string {
   return d ? `[DealRipe · ${d} call]` : "[DealRipe]";
 }
 
-const MAX_NOTE = 280; // Rolldog note fields cap around 300; leave headroom.
+/**
+ * Longest note we will send to Rolldog.
+ *
+ * This was 280 for the whole pilot, taken from a comment asserting "Rolldog note
+ * fields cap around 300". Nobody had verified it. On 2026-08-11 the probe wrote
+ * 316 characters to Custom Goods and Rolldog stored all 316, then 373 to Bee
+ * Imagine and stored all 373. The cap was our own invention, and it had been
+ * cutting qualification notes mid-sentence inside the customer's CRM. Bee
+ * Imagine lost "They need to get a filer code, ABI rep, and range of inbound
+ * numbers before going live", which is a go-live dependency, not a detail.
+ *
+ * 1000 because the longest note this pilot has ever composed is 373, across
+ * every deal, so this is roughly 2.7x the observed requirement. The combined
+ * note fields (timeline, budget, competition, people) join several confirmed
+ * answers, so they are the ones with room to grow.
+ *
+ * The real Rolldog ceiling is still unknown, only bounded below at 373. If a
+ * note ever exceeds what Rolldog accepts, the write fails rather than silently
+ * truncating, and since 2026-08-11 a failed write records violation_reason and
+ * renders in Activity as "Rolldog write did not land". It will be visible.
+ *
+ * ROLLDOG_MAX_NOTE overrides, and exists to lower this quickly without a deploy
+ * if Rolldog ever objects. It is deliberately not required: a correct value
+ * that depends on an env var being set in production is a value that will be
+ * wrong in production.
+ */
+const DEFAULT_MAX_NOTE = 1000;
+
+function maxNote(): number {
+  const raw = Number(process.env.ROLLDOG_MAX_NOTE);
+  return Number.isFinite(raw) && raw >= 80 ? Math.floor(raw) : DEFAULT_MAX_NOTE;
+}
+
 function capNote(s: string): string {
   const t = s.trim();
-  return t.length <= MAX_NOTE ? t : `${t.slice(0, MAX_NOTE - 1).trimEnd()}…`;
+  const max = maxNote();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
 }
 
 // Labels for the audit record, named the way a Rolldog reader would navigate to
