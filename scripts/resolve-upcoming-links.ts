@@ -40,11 +40,20 @@ function line(o: DealLinkOutcome): string {
 async function main(): Promise<void> {
   const days = Number(arg("--days") ?? 7);
   const apply = process.argv.includes("--apply");
+  // --backlog also takes deals whose calls have all happened and that still
+  // have nowhere to write. Those are covered by no other job.
+  const includeBacklog = process.argv.includes("--backlog");
+  // --force re-searches deals settled recently, for when the matcher itself has
+  // changed and a previous "no candidates" was produced by weaker queries.
+  const ignoreBackoff = process.argv.includes("--force");
 
   console.log("");
-  console.log(`Resolving deals with a meeting in the next ${days} day(s). ${apply ? "APPLYING confident matches." : "Report only."}`);
+  console.log(
+    `Resolving deals with a meeting in the next ${days} day(s)${includeBacklog ? ", plus the backlog of past calls with no write target" : ""}.` +
+      ` ${apply ? "APPLYING confident matches." : "Report only."}${ignoreBackoff ? " Ignoring backoff." : ""}`,
+  );
 
-  const out = await resolveUpcomingLinks({ tenantSlug: "magaya", days, apply });
+  const out = await resolveUpcomingLinks({ tenantSlug: "magaya", days, apply, includeBacklog, ignoreBackoff });
   if (out.length === 0) {
     console.log("\nNo upcoming meetings in that window.\n");
     return;

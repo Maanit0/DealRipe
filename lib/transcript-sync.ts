@@ -551,6 +551,40 @@ async function processRow(
       counts.extracted += 1;
       emit({ kind: "extracted", callId, recallBotId });
 
+      // ----- Yield guard. -----
+      //
+      // Until 2026-08-11, "extraction succeeded" meant "ingestTranscript did not
+      // throw". It is not the same thing. A model that answers one field out of
+      // twenty-seven throws nothing, so the call was marked captured,
+      // ingest_error stayed null, and retryFailedExtractions (which finds work
+      // by looking for a non-null ingest_error) could never see it. Three of
+      // thirty-seven calls in 45 days were lost this way, including a 54,860
+      // character conversation that returned a single field.
+      //
+      // A real run returns a status for every field in the framework, including
+      // the ones it rejects: the healthy comparison case returned 24 of 27. So a
+      // handful or fewer means the model did not evaluate the transcript,
+      // whatever the reason. Recording it as an ingest_error hands it to the
+      // retry path that already exists, capped at MAX_INGEST_RETRIES.
+      //
+      // Deliberately not keyed on transcript length. A short call still gets
+      // every field evaluated and returned as "No"; length tells you how much
+      // was said, not whether we looked.
+      const MIN_FIELDS_RETURNED = 5;
+      const fieldsReturned = Object.keys(
+        (ingestResult.extraction ?? {}) as Record<string, unknown>,
+      ).length;
+      if (fieldsReturned < MIN_FIELDS_RETURNED) {
+        console.warn(
+          `[transcript-sync] call ${callId}: extraction returned ${fieldsReturned} field(s) from ` +
+            `${transcript.trim().length} chars. Flagging for retry.`,
+        );
+        await writeIngestError(
+          callId,
+          `low extraction yield: ${fieldsReturned} field(s) returned from a ${transcript.trim().length} char transcript`,
+        );
+      }
+
       // Record the positive outcome so the UI shows "Extracted" deterministically.
       const outc = await db.from("calls").update({ outcome: "captured" }).eq("id", callId);
       if (outc.error) {

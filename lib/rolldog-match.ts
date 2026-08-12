@@ -84,8 +84,20 @@ export function searchVariants(args: {
     push(domain.split(".")[0]);
   }
 
-  // Progressively shorter prefixes of the account. Stops at MIN_QUERY so we
-  // never send a two-letter query that matches everything.
+  // Individual words, longest first.
+  //
+  // Prefixes of the whole string are useless for a multi-word name, because
+  // they keep the space: "Nat Forwarding" yields "Nat Forwar", "Nat Forw",
+  // "Nat Fo", none of which is a substring of "National Forwarding Co". This
+  // was reported as "both CRMs answered and had nothing" on 2026-08-11 when
+  // what had actually happened was four queries that could not have matched.
+  const words = [...account.split(/[^A-Za-z0-9]+/), ...(accountFromSubject(args.meetingSubject) ?? "").split(/[^A-Za-z0-9]+/)]
+    .filter((w) => w.length >= MIN_QUERY)
+    .sort((a, b) => b.length - a.length);
+  for (const w of words) push(w);
+
+  // Progressively shorter prefixes, which are what works for a single-token
+  // slug like "Mollaxpanama" where there are no word boundaries to split on.
   for (const len of [10, 8, 6]) {
     if (account.length > len) push(account.slice(0, len));
   }

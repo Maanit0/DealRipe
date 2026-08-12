@@ -66,6 +66,18 @@ export type ResolveOpts = {
   /** Search every candidate deal regardless of when it was last searched.
    *  Off by default so the cron is cheap; on for a one-off script run. */
   ignoreBackoff?: boolean;
+  /**
+   * Also take deals whose calls are all in the PAST and that still have no
+   * write target.
+   *
+   * Without this the sweep is meeting-triggered, and a deal whose call happened
+   * with no follow-up booked is covered by nothing: this resolver skips it for
+   * having no upcoming meeting, and rolldog-relink only matches against
+   * opportunities the rep already owns by exact name. On 2026-08-11 that was 12
+   * of 31 active deals, most of them carrying confirmed SQL2+ qualification
+   * that had reached neither CRM.
+   */
+  includeBacklog?: boolean;
 };
 
 /**
@@ -160,6 +172,32 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
       });
     }
   }
+  // Deals whose calls have all happened. Taken only when asked for, and only
+  // where the deal is not already queued from an upcoming meeting, so the
+  // regular cron stays cheap and a backlog sweep is an explicit act.
+  if (opts.includeBacklog) {
+    const past = await db
+      .from("calls")
+      .select("deal_id, scheduled_start, outcome, title, participants, has_been_extracted")
+      .eq("tenant_id", tenantId)
+      .lt("scheduled_start", now.toISOString())
+      .order("scheduled_start", { ascending: false });
+    if (past.error) throw new Error(`past calls lookup failed: ${past.error.message}`);
+    for (const c of past.data ?? []) {
+      if (!c.deal_id || !c.scheduled_start) continue;
+      if (c.outcome && DEAD.has(String(c.outcome))) continue;
+      // A call that captured nothing tells us nothing about who the customer
+      // is, so it is not worth a pair of CRM searches.
+      if (!c.has_been_extracted && c.outcome !== "captured") continue;
+      if (soonest.has(c.deal_id)) continue;
+      soonest.set(c.deal_id, {
+        at: c.scheduled_start,
+        subject: (c.title as string | null) ?? null,
+        addresses: customerAddresses(c.participants),
+      });
+    }
+  }
+
   if (soonest.size === 0) return [];
 
   const dealsRes = await db
