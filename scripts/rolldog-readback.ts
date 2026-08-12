@@ -172,18 +172,19 @@ async function main(): Promise<void> {
   console.log("LONGEST VALUE SEEN IN EACH FIELD");
   console.log(`${"=".repeat(78)}`);
   console.log("");
-  const effectiveCap = Number(process.env.ROLLDOG_MAX_NOTE) || 1000;
+  // One definition, mirroring the DEFAULT_MAX_NOTE in lib/crm-writer. This had
+  // two, defaulting to 280 in the summary line and 1000 in the flag, which is
+  // how a diagnostic starts quietly reporting a number the code stopped using.
+  const cap = Number(process.env.ROLLDOG_MAX_NOTE) || 1000;
+
   const rows = [...longest.entries()].sort((a, b) => b[1].len - a[1].len);
   for (const [field, info] of rows) {
-    // Compare against the cap in force, not the old 280. Flagging every value
-    // over a number we no longer use trains you to ignore the flag.
-    const flag = info.len > effectiveCap * 0.8 ? "  <- approaching the cap" : "";
+    const flag = info.len > cap * 0.8 ? "  <- approaching the cap" : "";
     console.log(`  ${String(info.len).padStart(6)}  ${field.padEnd(38)} ${info.account}${flag}`);
   }
-  // Truncation detected directly, rather than inferred from a cap this script
-  // would otherwise have to guess at. capNote is the only thing that appends
-  // this character, so a stored value ending in it was cut short by us.
-  const cap = Number(process.env.ROLLDOG_MAX_NOTE) || 280;
+  // Truncation detected directly rather than inferred from the cap: capNote is
+  // the only thing that appends this character, so a stored value ending in it
+  // was cut short by us.
   console.log("");
   console.log(`Effective cap for this run: ${cap} (ROLLDOG_MAX_NOTE${process.env.ROLLDOG_MAX_NOTE ? "" : " unset, default"}).`);
   if (truncated.length > 0) {

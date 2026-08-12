@@ -63,6 +63,33 @@ export type ResolveOpts = {
   days?: number;
   /** Store confident matches. Default false: report only. */
   apply?: boolean;
+  /** Search every candidate deal regardless of when it was last searched.
+   *  Off by default so the cron is cheap; on for a one-off script run. */
+  ignoreBackoff?: boolean;
+};
+
+/**
+ * How long before a previous outcome is worth re-testing.
+ *
+ * A blanket sweep of every unlinked deal against both CRMs on every run is
+ * mostly wasted requests against state that rarely changes, and Rolldog asked
+ * us to reduce API load on 2026-08-11. So each outcome earns its own cadence:
+ *
+ *   no_candidates   both CRMs answered and had nothing. That can become false
+ *                   when someone creates the opportunity, but not within the
+ *                   hour, so once a day is plenty.
+ *   needs_decision  candidates exist and none is unambiguous. Searching again
+ *                   returns the same ambiguity. Only a human moves this, so
+ *                   never re-search it: surface it instead.
+ *   unavailable     we failed to ask. Retry soon, because this is the one state
+ *                   that says nothing about the customer.
+ *   linked          settled.
+ */
+const RECHECK_MS: Record<AttemptStatus, number> = {
+  no_candidates: 24 * 3600_000,
+  needs_decision: Number.POSITIVE_INFINITY,
+  unavailable: 30 * 60_000,
+  linked: Number.POSITIVE_INFINITY,
 };
 
 /** Candidate shape kept small on purpose: enough for a human to choose from,
@@ -143,6 +170,39 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
     .in("id", [...soonest.keys()]);
   if (dealsRes.error) throw new Error(`deals lookup failed: ${dealsRes.error.message}`);
 
+  // What we already tried, so a scheduled run does not re-ask both CRMs about
+  // state that cannot have changed since this morning.
+  const recent = new Map<string, { status: AttemptStatus; at: number }>();
+  if (!opts.ignoreBackoff) {
+    try {
+      const att = await (supabaseAdmin() as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            in: (col: string, vals: string[]) => Promise<{
+              data: Array<{ deal_id: string; status: string; searched_at: string }> | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      })
+        .from("deal_link_attempts")
+        .select("deal_id, status, searched_at")
+        .in("deal_id", [...soonest.keys()]);
+      for (const r of att.data ?? []) {
+        const at = Date.parse(r.searched_at);
+        const prev = recent.get(r.deal_id);
+        // Keep the WEAKEST outcome across the two systems: if Rolldog is settled
+        // but Salesforce could not be reached, the deal still deserves a retry.
+        if (!prev || RECHECK_MS[r.status as AttemptStatus] < RECHECK_MS[prev.status]) {
+          recent.set(r.deal_id, { status: r.status as AttemptStatus, at });
+        }
+      }
+    } catch {
+      // A missing table or an unreadable one must not stop the sweep. Searching
+      // more often than necessary is a cost; not searching is a lost deal.
+    }
+  }
+
   // One token for the whole sweep rather than one per deal.
   await prewarmRolldogToken().catch(() => {});
 
@@ -176,6 +236,21 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
         alreadyWritable: true,
         rolldog: { status: "linked", note: rdTarget.authorized ? `opp ${rdTarget.opportunityId}` : "not needed", candidates: [], queries: [] },
         salesforce: { status: "linked", note: sfTarget.authorized ? `account ${sfTarget.accountId}` : "not needed" },
+      });
+      continue;
+    }
+
+    // Settled or searched too recently to be worth asking again.
+    const prior = recent.get(dealId);
+    if (prior && Date.now() - prior.at < RECHECK_MS[prior.status]) {
+      out.push({
+        dealId,
+        account,
+        repEmail,
+        meetingAt,
+        alreadyWritable: false,
+        rolldog: { status: prior.status, note: `not re-searched: ${prior.status} at ${new Date(prior.at).toISOString()}`, candidates: [], queries: [] },
+        salesforce: { status: prior.status, note: "not re-searched" },
       });
       continue;
     }
