@@ -98,6 +98,10 @@ async function main(): Promise<void> {
   console.log("");
   if (collapsed.length === 0) {
     console.log("No collapsed rows. Every call holding a recording is dated when it happened.\n");
+    // Not a return. The key tidy-up below is independent of whether any row is
+    // collapsed, and an early return here meant it never ran once the dates were
+    // already correct, which is exactly when it is needed.
+    await normalizeKeys(apply);
     return;
   }
   console.log(`${collapsed.length} row(s) are dated more than 36h from their own recording.`);
@@ -153,6 +157,69 @@ async function main(): Promise<void> {
     console.log("its real date and once under Upcoming on the next one.");
     console.log("");
   }
+
+  await normalizeKeys(apply);
+}
+
+/**
+ * Collapse stacked date suffixes on a call key.
+ *
+ * A row repaired before this script stripped the old suffix came out as
+ * "<iCalUId>:2026-08-14:2026-08-06": calendar-sync had re-keyed it to the wrong
+ * date it was already carrying, and the repair appended the right one on top.
+ * Harmless, since the only requirement is that it stops matching the upcoming
+ * occurrence, but a key that reads as two dates invites someone to trust the
+ * first one.
+ *
+ * Normalizes to a single suffix, the row's own date, and refuses where another
+ * row on the same deal already holds that key, since merging two rows is
+ * scripts/merge-duplicate-calls.ts and not this.
+ */
+async function normalizeKeys(apply: boolean): Promise<void> {
+  const tenantId = await resolveTenantId("magaya");
+  const db = supabaseAdmin();
+
+  const res = await db
+    .from("calls")
+    .select("id, deal_id, title, external_id, scheduled_start, call_date")
+    .eq("tenant_id", tenantId);
+  if (res.error) throw new Error(res.error.message);
+  const rows = res.data ?? [];
+
+  const STACKED = /(:\d{4}-\d{2}-\d{2}){2,}$/;
+  const messy = rows.filter((c) => STACKED.test(String(c.external_id ?? "")));
+  if (messy.length === 0) {
+    console.log("Keys are clean: no row carries more than one date suffix.\n");
+    return;
+  }
+
+  console.log(`${messy.length} row(s) carry stacked date suffixes.`);
+  console.log("");
+  for (const c of messy) {
+    const raw = String(c.external_id);
+    const own = String(c.scheduled_start ?? c.call_date ?? "").slice(0, 10);
+    if (!own) {
+      console.log(`  ${c.id}: no date on the row, leaving the key alone.`);
+      continue;
+    }
+    const clean = `${raw.replace(/(:\d{4}-\d{2}-\d{2})+$/, "")}:${own}`;
+    const clash = rows.find(
+      (o) => o.id !== c.id && o.deal_id === c.deal_id && String(o.external_id ?? "") === clean,
+    );
+    console.log(`  ${String(c.title ?? "").slice(0, 44)}`);
+    console.log(`    ${raw}`);
+    console.log(`    ${clean}`);
+    if (clash) {
+      console.log(`    REFUSING: row ${clash.id} on this deal already holds that key.`);
+      console.log(`    Two rows for one occurrence is a merge, see merge-duplicate-calls.ts.`);
+      continue;
+    }
+    if (!apply) continue;
+    const upd = await db.from("calls").update({ external_id: clean } as never).eq("id", c.id);
+    console.log(upd.error ? `    FAILED: ${upd.error.message}` : `    normalized`);
+  }
+  console.log("");
+  if (!apply) console.log("Re-run with --apply to normalize.\n");
 }
 
 main().catch((e) => {
