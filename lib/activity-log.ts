@@ -110,19 +110,45 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     list.push({ id: c.id, date });
     callsByDeal.set(c.deal_id, list);
   }
-  const nearestCall = (dealId: string | null, at: string): { id: string; date: string } | null => {
+  /**
+   * The call an activity relates to, when the row does not carry a call_id.
+   *
+   * Direction matters and used not to be considered. Picking the nearest call
+   * in either direction attributed a CRM write made on August 10 to meetings on
+   * the 12th, 13th and 14th, so the Activity view showed content as coming from
+   * calls that had not happened yet. A recap or a write-back can only describe a
+   * call that already occurred; a briefing can only precede one.
+   *
+   *   "before"  the most recent call at or before this moment
+   *   "after"   the next call at or after it
+   *
+   * Returns null rather than reaching across the boundary. An unattributed row
+   * is honest; one pointing at a future meeting is not.
+   */
+  const nearestCall = (
+    dealId: string | null,
+    at: string,
+    direction: "before" | "after",
+  ): { id: string; date: string } | null => {
     if (!dealId) return null;
     const calls = callsByDeal.get(dealId);
     if (!calls || calls.length === 0) return null;
     const t = Date.parse(at);
+    if (!Number.isFinite(t)) return null;
+    // A briefing goes out shortly before its call, and a recap shortly after,
+    // so a little slack stops a few minutes of clock drift throwing the match
+    // to the previous or next meeting entirely.
+    const SLACK_MS = 60 * 60 * 1000;
     let best: { id: string; date: string } | null = null;
     let bestDiff = Infinity;
     for (const c of calls) {
       const ct = Date.parse(c.date);
       if (!Number.isFinite(ct)) continue;
-      const d = Math.abs(ct - t);
-      if (d < bestDiff) {
-        bestDiff = d;
+      const d = direction === "before" ? t - ct : ct - t;
+      if (d < -SLACK_MS) continue; // on the wrong side of this moment
+      const mag = Math.abs(d);
+      if (mag < bestDiff) {
+        bestDiff = mag;
         best = c;
       }
     }
@@ -171,7 +197,12 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     // briefing / no-show draft going forward). Fall back to nearest-in-time only
     // for legacy rows written before call_id was stored.
     const stored = m.call_id ? { id: m.call_id, date: callDateById.get(m.call_id) ?? m.sent_at } : null;
-    const call = kind === "digest" ? null : stored ?? nearestCall(m.deal_id, m.sent_at);
+    // A briefing is sent before its call; a recap, no-show note and follow-up
+    // draft all describe one that already happened.
+    const call =
+      kind === "digest"
+        ? null
+        : stored ?? nearestCall(m.deal_id, m.sent_at, kind === "briefing" ? "after" : "before");
     out.push({
       id: `sm-${m.id}`,
       at: m.sent_at,
@@ -219,7 +250,9 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     // Prefer the call_id stamped on the write (bulletproof); fall back to
     // nearest-in-time only for legacy rows written before call_id existed.
     const stored = c.call_id ? { id: c.call_id, date: callDateById.get(c.call_id) ?? c.created_at } : null;
-    const call = stored ?? nearestCall(resolved?.id ?? null, c.created_at);
+    // A write-back carries qualification out of a call that has happened, so it
+    // can never belong to a future one.
+    const call = stored ?? nearestCall(resolved?.id ?? null, c.created_at, "before");
     // Permitted and landed are different. These rows are already filtered to
     // allowed=true, so a reason here is not a scope refusal: it is the CRM
     // rejecting a write we were entitled to make, or the outcome never being

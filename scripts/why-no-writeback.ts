@@ -112,10 +112,22 @@ async function main(): Promise<void> {
   const byStatus = new Map<string, number>();
   for (const f of fx) byStatus.set(f.status, (byStatus.get(f.status) ?? 0) + 1);
 
+  // A deal whose only meetings are still ahead of it has nothing to extract, and
+  // saying "the extractor produced nothing" about it invents a problem. Three
+  // deals read that way on 2026-08-11 when their first calls were days away.
+  const anyCaptured = calls.some(
+    (c) => trByCall.has(String(c.id)) || c.has_been_extracted || c.outcome === "captured",
+  );
+
   console.log(`\nEXTRACTED FIELDS  (${fx.length} rows)`);
-  if (fx.length === 0) {
-    console.log(`  NONE. The extractor produced nothing for this deal, which is a different`);
-    console.log(`  problem from "the call had no qualification in it". Check has_been_extracted.`);
+  if (fx.length === 0 && !anyCaptured) {
+    console.log(`  None, and none expected: no call on this deal has been captured yet.`);
+    console.log(`  Nothing here is wrong. Come back after the first call.`);
+  } else if (fx.length === 0) {
+    console.log(`  NONE, despite a captured call. The extractor produced nothing, which is a`);
+    console.log(`  different problem from "the call had no qualification in it".`);
+    console.log(`  Check meeting_type: extraction is gated on new_opportunity (transcript-sync`);
+    console.log(`  step 5), so an internal or post-signing call is skipped on purpose.`);
   } else {
     for (const [s, n] of [...byStatus.entries()].sort((a, b) => b[1] - a[1])) {
       console.log(`  ${s.padEnd(10)} ${n}`);
@@ -149,12 +161,14 @@ async function main(): Promise<void> {
   if (!target.authorized) {
     console.log(`  cannot write: ${target.reason}`);
   } else {
+    // No nextAction. Passing a fake one made writeNextStep report a composable
+    // activity on deals that have never had a call, which is the diagnostic
+    // inventing the thing it was asked to look for.
     const results = await syncDealToRolldog({
       tenantSlug: "magaya",
       dealId,
       rolldogOpportunityId: target.opportunityId,
       dryRun: true,
-      nextAction: "(probe)",
     });
     for (const r of results) {
       const detail =

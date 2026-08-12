@@ -108,6 +108,18 @@ export async function detectPromotions(tenantSlug: string): Promise<Promotion[]>
     const carried = answers.get(dealId) ?? 0;
     if (carried === 0) continue; // promoted, but nothing learned yet to carry
 
+    // Confirmed answers are not the same as sendable content. Several framework
+    // fields are briefing-only and reach no CRM by design, so a deal can have
+    // answers and compose nothing. United CHB has two, both briefing-only, and
+    // without this it reported as an unmigrated promotion on every run forever.
+    const preview = await syncDealToRolldog({
+      tenantSlug,
+      dealId,
+      rolldogOpportunityId: target.opportunityId,
+      dryRun: true,
+    });
+    if (!preview.some((r) => r.status === "preview")) continue;
+
     out.push({
       dealId,
       account: String(d.account ?? "?"),
