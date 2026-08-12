@@ -190,6 +190,51 @@ export async function writeOpportunity(
  * non-2xx (the body carries the JSON:API errors, e.g. a 422 naming a missing
  * required attribute, which is how we iterate the payload safely).
  */
+/** One activity as Rolldog serializes it, trimmed to what a human needs to
+ *  judge whether it should be there. */
+export type RolldogActivity = {
+  id: string;
+  title: string;
+  notes: string;
+  createdAt: string | null;
+  isComplete: boolean | null;
+  /** True when the title carries our marker, so ours can be told from a rep's. */
+  fromDealRipe: boolean;
+};
+
+/**
+ * Read the interactions tab.
+ *
+ * getDealRoom covers the five PATCHable sub-resources and not this one, so an
+ * opportunity whose only write was a next-step activity read back as completely
+ * empty. That is how three activities written on 2026-08-10 to deals with no
+ * captured calls went unexplained: the audit row said "activities" and there was
+ * no way to see what it said.
+ */
+export async function listActivities(opportunityId: string): Promise<RolldogActivity[]> {
+  assertScopedRead(PILOT_TENANT_SLUG, opportunityId, ["interactions"]);
+  const config = readRolldogConfig();
+  ensureCredentials(config, opportunityId, "read");
+
+  const path = `/opportunities/${encodeURIComponent(opportunityId)}/activities`;
+  const res = await rolldogFetch(config, path, { method: "GET" });
+  if (!res.ok) throw new RolldogApiError(res.status, path, await safeBody(res));
+
+  const json = (await res.json()) as { data?: Array<{ id?: unknown; attributes?: Record<string, unknown> }> };
+  return (json.data ?? []).map((row) => {
+    const a = row.attributes ?? {};
+    const title = String(a["title"] ?? a["name"] ?? "");
+    return {
+      id: String(row.id ?? ""),
+      title,
+      notes: String(a["notes"] ?? a["description"] ?? ""),
+      createdAt: typeof a["created-at"] === "string" ? (a["created-at"] as string) : null,
+      isComplete: typeof a["is-complete"] === "boolean" ? (a["is-complete"] as boolean) : null,
+      fromDealRipe: /\[DealRipe/i.test(title) || /\[DealRipe/i.test(String(a["notes"] ?? "")),
+    };
+  });
+}
+
 export async function createActivity(
   opportunityId: string,
   args: { title: string; notes?: string },

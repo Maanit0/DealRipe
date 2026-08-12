@@ -438,19 +438,46 @@ async function processEvent(
   // meeting each copy looked like a separate call: two rows, two bots joining
   // the customer's session, two transcripts, two recaps and a doubled
   // write-back. Alexandra and Daniel are both on Thursday's ILS demo.
-  const callKey = ev.iCalUId ?? ev.eventId;
+  //
+  // The occurrence date is part of the key, because iCalUId is stable across
+  // OCCURRENCES too, not just mailboxes. A recurring meeting therefore produced
+  // one row for the whole series: the first occurrence was captured, then every
+  // later occurrence matched that same row and pushed its date forward. The
+  // Luke Rousselle row on 2026-08-11 held a no-show transcript from an earlier
+  // week while showing a date three days in the future, so it appeared in both
+  // Recorded and Upcoming at once.
+  //
+  // Adding the date keeps the co-sold dedup intact, since two reps on the same
+  // occurrence share both the iCalUId and the day.
+  const seriesKey = ev.iCalUId ?? null;
+  const callKey = seriesKey ? `${seriesKey}:${eventDate}` : ev.eventId;
 
-  // Match either key so rows created before this change are found and updated
-  // rather than duplicated by the switch itself.
-  const existing = await db
+  // Match the new key, the per-mailbox id, and the bare iCalUId for rows
+  // written before the date was part of the key.
+  const candidates = seriesKey ? [callKey, ev.eventId, seriesKey] : [ev.eventId];
+  const found = await db
     .from("calls")
-    .select("id, recall_bot_id, call_date, external_id")
+    .select("id, recall_bot_id, call_date, scheduled_start, external_id")
     .eq("deal_id", dealId)
-    .in("external_id", callKey === ev.eventId ? [ev.eventId] : [callKey, ev.eventId])
-    .maybeSingle();
-  if (existing.error) {
-    throw new Error(`calls lookup failed: ${existing.error.message}`);
+    .in("external_id", candidates)
+    .limit(3);
+  if (found.error) {
+    throw new Error(`calls lookup failed: ${found.error.message}`);
   }
+
+  // A legacy row keyed on the bare iCalUId belongs to whichever occurrence it
+  // actually captured. Adopt it only if its date is this occurrence; otherwise
+  // this is a different week and needs its own row, which is the entire point.
+  const rows = found.data ?? [];
+  const match =
+    rows.find((r) => r.external_id === callKey || r.external_id === ev.eventId) ??
+    rows.find(
+      (r) =>
+        r.external_id === seriesKey &&
+        String(r.scheduled_start ?? r.call_date ?? "").slice(0, 10) === eventDate,
+    ) ??
+    null;
+  const existing = { data: match, error: null as null };
 
   // Neither key matched. That does NOT mean this meeting is new.
   //
