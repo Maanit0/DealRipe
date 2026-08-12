@@ -39,7 +39,7 @@
 import { resolveAccountForDeal } from "./salesforce-link";
 import { resolveSalesforceWriteTarget } from "./salesforce-scope";
 import { matchDealToOpportunity } from "./rolldog-match";
-import { REP_UID } from "./rolldog-reconcile";
+import { REP_UID, applyConfirmedLinks } from "./rolldog-reconcile";
 import { resolveWriteTarget } from "./rolldog-writeback";
 import { prewarmRolldogToken } from "./rolldog";
 import { supabaseAdmin } from "./supabase";
@@ -353,11 +353,32 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
     if (m.status === "confirmed") {
       rd = { status: "linked", note: `opp ${m.opp.id} (${m.opp.accountName})`, candidates: [{ id: m.opp.id, label: label(m.opp) }], queries: m.queries };
       if (opts.apply) {
-        const up = await db
-          .from("deals")
-          .update({ rolldog_opportunity_id: m.opp.id, rolldog_link_confidence: "confirmed" } as never)
-          .eq("id", dealId);
-        if (up.error) rd = { ...rd, status: "needs_decision", note: `match found but store failed: ${up.error.message}` };
+        // Deliberately NOT a direct update of rolldog_opportunity_id.
+        //
+        // applyConfirmedLinks does two things: it stores the link, and it
+        // replays every captured call on the deal into the newly linked
+        // opportunity, oldest first, so months of qualification collected while
+        // the deal was Salesforce-only finally reaches Rolldog. Writing the
+        // column here would skip that, and worse, it would be unrecoverable:
+        // findLinkMatches skips any deal that already carries an opportunity id
+        // (rolldog-reconcile.ts:141), so the relink cron would never look at it
+        // again and the backfill would never run.
+        const res = await applyConfirmedLinks("magaya", [
+          {
+            dealId,
+            account,
+            externalId: (deal.external_id as string | null) ?? null,
+            rep: (repEmail ?? "").trim().toLowerCase(),
+            status: "confirmed",
+            opp: m.opp,
+          },
+        ]);
+        const r = res[0];
+        if (!r?.linked) {
+          rd = { ...rd, status: "needs_decision", note: `match found but link failed: ${r?.error ?? "unknown"}` };
+        } else {
+          rd = { ...rd, note: `${rd.note}, ${r.callsReplayed ?? 0} call(s) replayed` };
+        }
       } else {
         rd = { ...rd, note: `${rd.note} (dry run, not stored)` };
       }
