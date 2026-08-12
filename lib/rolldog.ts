@@ -235,6 +235,33 @@ export async function listActivities(opportunityId: string): Promise<RolldogActi
   });
 }
 
+/**
+ * Remove an activity from the interactions tab.
+ *
+ * Exists for one narrow purpose: undoing something DealRipe wrote that is
+ * factually wrong. On 2026-08-10 three opportunities received a history note
+ * claiming a call had been captured on a date that had not yet arrived, and that
+ * qualification fields had been filled when none had. Leaving a false statement
+ * in a customer's CRM is worse than an empty tab.
+ *
+ * Scope-gated like any write. Callers are expected to have read the activity
+ * first and confirmed it carries the DealRipe marker: this function will delete
+ * whatever id it is given, including a rep's own note, and there is no undo.
+ */
+export async function deleteActivity(opportunityId: string, activityId: string): Promise<void> {
+  assertScopedWrite(PILOT_TENANT_SLUG, opportunityId, ["activities"]);
+
+  const config = readRolldogConfig();
+  ensureCredentials(config, opportunityId, "write");
+
+  const path = `/activities/${encodeURIComponent(activityId)}`;
+  const res = await rolldogFetch(config, path, { method: "DELETE" });
+  // 404 counts as done: the row is not there, which is the outcome we wanted.
+  if (!res.ok && res.status !== 404) {
+    throw new RolldogApiError(res.status, path, await safeBody(res));
+  }
+}
+
 export async function createActivity(
   opportunityId: string,
   args: { title: string; notes?: string },
@@ -560,7 +587,7 @@ function ensureCredentials(
 async function rolldogFetch(
   config: RolldogConfig,
   path: string,
-  init: { method: "GET" | "POST" | "PATCH"; body?: string },
+  init: { method: "GET" | "POST" | "PATCH" | "DELETE"; body?: string },
 ): Promise<Response> {
   const url = `${config.baseUrl}${path}`;
   let token = await getAccessToken(config, false);

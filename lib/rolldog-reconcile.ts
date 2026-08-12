@@ -131,8 +131,27 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
   const deals = (dealData ?? []) as Array<{
     id: string; account: string; external_id: string | null; rolldog_opportunity_id: string | null; rep_email: string | null;
   }>;
-  const { data: callData } = await db.from("calls").select("deal_id").eq("tenant_id", tenantId);
-  const withCall = new Set((callData ?? []).map((c: { deal_id: string | null }) => c.deal_id).filter(Boolean) as string[]);
+  // CAPTURED calls, not merely scheduled ones. This used to select every calls
+  // row, so a deal whose only meeting was still in the future satisfied a check
+  // whose own comment said "no captured call". On 2026-08-10 that linked three
+  // deals with zero conversations and wrote each an interaction claiming
+  // DealRipe "had already captured a call on it (Aug 14)", a date three days in
+  // the future, and that "the qualification fields on this record were filled
+  // from that call" when no field had been filled at all. Two false statements
+  // in a customer's CRM, from one missing filter.
+  const { data: callData } = await db
+    .from("calls")
+    .select("deal_id, outcome, has_been_extracted")
+    .eq("tenant_id", tenantId);
+  const withCall = new Set(
+    (callData ?? [])
+      .filter(
+        (c: { outcome: string | null; has_been_extracted: boolean | null }) =>
+          c.has_been_extracted === true || c.outcome === "captured",
+      )
+      .map((c: { deal_id: string | null }) => c.deal_id)
+      .filter(Boolean) as string[],
+  );
 
   const out: LinkMatch[] = [];
   const unmapped = new Set<string>();
@@ -237,13 +256,20 @@ export async function applyConfirmedLinks(
       // Every captured call on the deal, OLDEST FIRST. A discovery deal can
       // accumulate several calls while it is still a Salesforce lead; the link
       // is the first moment any of them can reach Rolldog.
+      //
+      // "Captured" is enforced here rather than assumed. Unfiltered, this list
+      // included meetings that have not happened, so `newest` below resolved to
+      // a future one and the backfill note announced a call date days ahead of
+      // today. A meeting on the calendar is not history.
       const callRows = await db
         .from("calls")
-        .select("id, external_id, call_date, scheduled_start")
+        .select("id, external_id, call_date, scheduled_start, outcome, has_been_extracted")
         .eq("tenant_id", tenantId)
         .eq("deal_id", m.dealId)
         .order("call_date", { ascending: true });
-      const calls = callRows.data ?? [];
+      const calls = (callRows.data ?? []).filter(
+        (c) => c.has_been_extracted === true || c.outcome === "captured",
+      );
 
       // Re-extract the FULL history, oldest first, so the merged extraction
       // reflects every call rather than only the newest one. Order matters:
