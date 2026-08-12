@@ -739,24 +739,59 @@ export async function createFollowUpDraft(
   const draft = await generateFollowUpDraft(input);
   if (!draft) return { created: false, draft: null, reason: "generation returned nothing" };
 
+  const fresh = () =>
+    createDraft({
+      tenantIdOrDomain: GRAPH_TENANT,
+      mailbox: input.mailbox,
+      subject: draft.subject,
+      body: draft.body,
+      to: draft.to.map((email) => ({ email })),
+    });
+
+  if (!draft.replyToMessageId) {
+    try {
+      const res = await fresh();
+      return { created: true, draft, webLink: res.webLink };
+    } catch (e) {
+      return { created: false, draft, reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // Reply first, because threading the follow-up onto the existing conversation
+  // is what makes it feel like the rep wrote it. But a reply is a nicety and the
+  // draft is the point, so a reply that cannot be made falls back to a fresh
+  // email rather than losing the whole thing.
+  //
+  // The case that forced this: findCustomerThread picks the liveliest thread
+  // with the customer over 120 days, and for a newly onboarded rep the only mail
+  // they have with that customer is often the calendar invite for the meeting
+  // itself. Graph refuses to reply to a meeting request with
+  // ErrorInvalidReferenceItem, and on 2026-08-11 that silently cost Custom Goods
+  // and Z Transportation their follow-ups after a 104 minute demo and a proposal
+  // review. Both reps' Activity cards read "never sent" with no reason anywhere.
   try {
-    const res = draft.replyToMessageId
-      ? await createReplyDraft({
-          tenantIdOrDomain: GRAPH_TENANT,
-          mailbox: input.mailbox,
-          messageId: draft.replyToMessageId,
-          body: draft.body,
-        })
-      : await createDraft({
-          tenantIdOrDomain: GRAPH_TENANT,
-          mailbox: input.mailbox,
-          subject: draft.subject,
-          body: draft.body,
-          to: draft.to.map((email) => ({ email })),
-        });
+    const res = await createReplyDraft({
+      tenantIdOrDomain: GRAPH_TENANT,
+      mailbox: input.mailbox,
+      messageId: draft.replyToMessageId,
+      body: draft.body,
+    });
     return { created: true, draft, webLink: res.webLink };
-  } catch (e) {
-    return { created: false, draft, reason: e instanceof Error ? e.message : String(e) };
+  } catch (replyErr) {
+    const msg = replyErr instanceof Error ? replyErr.message : String(replyErr);
+    console.warn(
+      `[followup-draft] reply draft failed for ${input.mailbox}, falling back to a new message: ${msg}`,
+    );
+    try {
+      const res = await fresh();
+      return { created: true, draft, webLink: res.webLink };
+    } catch (e) {
+      return {
+        created: false,
+        draft,
+        reason: `reply failed (${msg}); new message also failed (${e instanceof Error ? e.message : String(e)})`,
+      };
+    }
   }
 }
 

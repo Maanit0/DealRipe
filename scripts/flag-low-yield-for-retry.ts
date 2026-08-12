@@ -43,6 +43,29 @@ async function main(): Promise<void> {
   const tenantId = await resolveTenantId("magaya");
   const db = supabaseAdmin();
 
+  // --clear removes a low-yield flag this script set. Speed International was
+  // flagged on 2026-08-11 and turned out not to be a failure at all: the model
+  // evaluated all 27 fields and answered Unknown to 26 of them, because the call
+  // is a post-sale implementation session. Leaving the flag would burn three
+  // retries re-asking a question already correctly answered.
+  if (process.argv.includes("--clear")) {
+    const res = await db
+      .from("calls")
+      .select("id, ingest_error")
+      .eq("tenant_id", tenantId)
+      .not("ingest_error", "is", null);
+    const mine = (res.data ?? []).filter((c) => /low extraction yield/i.test(String(c.ingest_error ?? "")));
+    console.log(`\n${mine.length} call(s) carry a low-yield flag.`);
+    for (const c of mine) {
+      console.log(`  ${c.id}: ${c.ingest_error}`);
+      if (!apply) continue;
+      const upd = await db.from("calls").update({ ingest_error: null } as never).eq("id", c.id);
+      console.log(upd.error ? `    FAILED: ${upd.error.message}` : `    cleared`);
+    }
+    console.log(apply ? "" : "\nRe-run with --apply to clear.\n");
+    return;
+  }
+
   const callsRes = await db
     .from("calls")
     .select("id, deal_id, title, scheduled_start, outcome, meeting_type, has_been_extracted, ingest_error")

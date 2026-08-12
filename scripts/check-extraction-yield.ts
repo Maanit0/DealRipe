@@ -30,9 +30,16 @@ import { formatMeetingTime } from "../lib/graph-time";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
-/** Below this a transcript is too short to expect qualification from. Chosen
- *  well under TW Customs' 1,198, so nothing real is excused by it. */
-const TRIVIAL_TRANSCRIPT = 800;
+/**
+ * Below this a transcript is too short to expect qualification from.
+ *
+ * Matches SUBSTANTIAL_TRANSCRIPT in the transcript-sync yield guard on purpose.
+ * This was 800, which reported TW Customs as a lost extraction: 1,198 characters
+ * from a one-minute kickoff call that production would never have retried. A
+ * checker that flags what the code deliberately ignores trains you to ignore the
+ * checker.
+ */
+const TRIVIAL_TRANSCRIPT = 5000;
 
 /** A real extraction records rejections too, so a healthy run produces rows in
  *  the tens. One or two on a substantial call means it did not evaluate. */
@@ -74,6 +81,27 @@ async function main(): Promise<void> {
     rowsByDeal.set(k, (rowsByDeal.get(k) ?? 0) + 1);
   }
 
+  // Whether the model was actually asked, and answered.
+  //
+  // field_extractions only stores Yes and No. A call the model evaluated
+  // properly and could answer nothing about returns 27 "Unknown" statuses and
+  // persists one row, which looked identical here to a call that was never
+  // extracted at all. Speed International was reported as a lost extraction on
+  // that basis and was nothing of the sort: it is a post-sale implementation
+  // session with no qualification in it, and the model said so 26 times.
+  //
+  // extraction_runs is the honest signal. A run with real output tokens means
+  // the transcript was evaluated, whatever the row count came out as.
+  const runsRes = await db
+    .from("extraction_runs")
+    .select("call_id, token_output")
+    .eq("tenant_id", tenantId);
+  const runByCall = new Map<string, number>();
+  for (const r of (runsRes.data ?? []) as Array<{ call_id: string | null; token_output: number | null }>) {
+    if (!r.call_id) continue;
+    runByCall.set(r.call_id, Math.max(runByCall.get(r.call_id) ?? 0, r.token_output ?? 0));
+  }
+
   const deals = await db.from("deals").select("id, account").eq("tenant_id", tenantId);
   const nameById = new Map((deals.data ?? []).map((d) => [d.id, d.account ?? "?"]));
 
@@ -103,6 +131,15 @@ async function main(): Promise<void> {
       trivial += 1;
       continue;
     }
+
+    // The model was asked and answered. Whatever it concluded is a fact about
+    // the conversation, not a failure of ours.
+    const outTokens = runByCall.get(String(c.id)) ?? 0;
+    if (outTokens >= 200) {
+      healthy += 1;
+      continue;
+    }
+
     if (rows < SUSPICIOUS_ROWS) {
       bad.push({
         when: formatMeetingTime(c.scheduled_start),
@@ -129,7 +166,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log("LOST EXTRACTIONS. Transcript captured, nothing evaluated:");
+  console.log("NOT EVALUATED. A substantial transcript the model was never asked about,");
+  console.log("or answered with almost nothing. Not the same as a call with no qualification");
+  console.log("in it, which returns 27 Unknowns and shows as healthy above.");
   console.log("");
   console.log(`  ${"When".padEnd(26)} ${"Deal".padEnd(22)} ${"Transcript".padStart(11)}  Rows`);
   for (const b of bad.sort((x, y) => y.chars - x.chars)) {
