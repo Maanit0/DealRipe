@@ -115,7 +115,15 @@ async function main(): Promise<void> {
     // created_at is the closest thing we have to the occurrence that was
     // actually recorded. The row's own date has been overwritten and cannot be
     // trusted; that is the bug.
-    const trueStart = t.at;
+    // The transcript's created_at is when the recording was PERSISTED, which is
+    // after the meeting started, so this puts the row on the right day at the
+    // wrong time: Luke Rousselle came out at 13:16 for a 12:30 meeting, 46
+    // minutes adrift, which was enough to stop it matching its own twin on the
+    // shell deal. Keep the calendar time of day where the original row had one
+    // and only correct the date.
+    const originalTime = String(c.scheduled_start ?? c.call_date ?? "");
+    const timePart = originalTime.includes("T") ? originalTime.slice(originalTime.indexOf("T")) : null;
+    const trueStart = timePart ? `${t.at.slice(0, 10)}${timePart}` : t.at;
     // Strip any date suffix already on the key before adding the right one.
     // calendar-sync may have re-keyed this row to the wrong date it was already
     // carrying, and appending on top produced "...:2026-08-14:2026-08-06".
