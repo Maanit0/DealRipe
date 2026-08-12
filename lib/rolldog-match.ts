@@ -44,6 +44,22 @@ export function normalizeName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * Normalized, with the corporate suffix removed.
+ *
+ * "NETA Logistics Ltd." and "Neta Logistics" are the same company, and the
+ * plain normalizer calls them different because one ends in "ltd". That alone
+ * pushed several deals into manual review on 2026-08-11 while the correct
+ * opportunity sat in the candidate list.
+ */
+const SUFFIXES = /(inc|llc|ltd|limited|corp|corporation|co|sa|sas|spa|srl|bv|gmbh|ag|plc|lp|llp|pte|pty)$/;
+function normalizeCompany(s: string): string {
+  let n = normalizeName(s);
+  // Twice, because "Something Logistics Inc. LLC" and similar do occur.
+  for (let i = 0; i < 2; i++) n = n.replace(SUFFIXES, "");
+  return n;
+}
+
 /** Shortest query worth sending. Below this the search returns half of Rolldog. */
 const MIN_QUERY = 5;
 
@@ -61,6 +77,9 @@ export function searchVariants(args: {
    *  on gmail has no domain worth searching and the deal slug is then derived
    *  from a person rather than a company. */
   meetingSubject?: string | null;
+  /** Names from another system, searched early because they are usually the
+   *  company's real name rather than something derived from an address. */
+  knownNames?: ReadonlyArray<string | null | undefined>;
 }): string[] {
   const out: string[] = [];
   const push = (s: string | null | undefined) => {
@@ -70,6 +89,9 @@ export function searchVariants(args: {
 
   const account = (args.account ?? "").trim();
   push(account);
+
+  // A name another system already verified, which outranks anything we derive.
+  for (const n of args.knownNames ?? []) push(n);
 
   // The company name a rep typed into the invite. Tried early because it is
   // written by a human who knows who they are meeting, which beats a slug
@@ -110,11 +132,24 @@ export async function matchDealToOpportunity(args: {
   externalId?: string | null;
   domain?: string | null;
   meetingSubject?: string | null;
+  /**
+   * Other names we have good reason to believe identify this customer, above
+   * all the Salesforce account name once it has been resolved by domain.
+   *
+   * The deal slug is derived from an email address, so it is frequently not the
+   * company's name at all: "Netalogistics" against "NETA Logistics Ltd.",
+   * "Successchb" against "Success System Services INC.". Searching found those
+   * opportunities and the exactness test then discarded them, because it only
+   * compared candidates to the slug. A domain-verified Salesforce name is
+   * stronger evidence of who this is than anything we can derive ourselves.
+   */
+  knownNames?: ReadonlyArray<string | null | undefined>;
 }): Promise<MatchResult> {
   const queries = searchVariants({
     account: args.account,
     domain: args.domain,
     meetingSubject: args.meetingSubject,
+    knownNames: args.knownNames,
   });
   if (queries.length === 0) return { status: "none", queries };
 
@@ -149,9 +184,16 @@ export async function matchDealToOpportunity(args: {
       : { status: "none", queries };
   }
 
-  const target = normalizeName(args.account);
+  // Exact against every name we believe identifies this customer, with the
+  // corporate suffix ignored. One target used to mean the deal slug only.
+  const targets = new Set(
+    [args.account, accountFromSubject(args.meetingSubject), ...(args.knownNames ?? [])]
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map(normalizeCompany)
+      .filter((s) => s.length >= 4),
+  );
   const exact = live.filter(
-    (c) => normalizeName(c.accountName) === target || normalizeName(c.name) === target,
+    (c) => targets.has(normalizeCompany(c.accountName)) || targets.has(normalizeCompany(c.name)),
   );
 
   if (exact.length === 1) return { status: "confirmed", opp: exact[0], queries };

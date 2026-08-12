@@ -296,12 +296,53 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
     const addresses = meeting?.addresses ?? [];
     const domain = addresses.map((a) => a.split("@")[1]).find(Boolean) ?? null;
 
+    // ---- Salesforce FIRST ----
+    //
+    // Order matters. A domain-verified Salesforce account gives us the
+    // customer's real name, and the deal slug usually does not: "Netalogistics"
+    // for "NETA Logistics Ltd.", "Successchb" for "Success System Services
+    // INC.". Resolving Salesforce first turns that name into a Rolldog search
+    // term and, more importantly, into something the exactness test can match
+    // on. Run the other way round, both of those deals found the right
+    // opportunity and then discarded it.
+    let sf: DealLinkOutcome["salesforce"];
+    let sfName: string | null = null;
+    try {
+      const r = await resolveAccountForDeal({
+        tenantId,
+        dealId,
+        dealAccountName: account,
+        domain,
+        addresses,
+        // The identifier that survives free mail. resolveAccount tries domain,
+        // then exact address, then the deal name, then this.
+        meetingSubject,
+        force: true,
+      });
+      const res = r.resolution;
+      if (res.status === "resolved_by_domain") {
+        sf = { status: "linked", note: `${res.accountName} (${res.accountId})` };
+        sfName = res.accountName;
+      } else if (res.status === "resolved_by_name") {
+        // Good enough to search Rolldog with, not good enough to write to.
+        sf = { status: "needs_decision", note: `name match only: ${res.accountName} (${res.accountId})` };
+        sfName = res.accountName;
+      } else if (res.status === "no_account") {
+        sf = { status: "no_candidates", note: `searched ${res.searchedNames.join(", ") || "domain only"}` };
+      } else {
+        sf = { status: "unavailable", note: `Salesforce returned ${res.status}` };
+      }
+    } catch (err) {
+      sf = { status: "unavailable", note: err instanceof Error ? err.message : String(err) };
+    }
+
     // ---- Rolldog ----
     const m = await matchDealToOpportunity({
       account,
       externalId: deal.external_id,
       domain,
       meetingSubject,
+      knownNames: [sfName],
     });
     let rd: DealLinkOutcome["rolldog"];
     if (m.status === "confirmed") {
@@ -321,31 +362,6 @@ export async function resolveUpcomingLinks(opts: ResolveOpts): Promise<DealLinkO
       rd = { status: "unavailable", note: m.reason, candidates: [], queries: m.queries };
     } else {
       rd = { status: "no_candidates", note: "Rolldog answered and had no match", candidates: [], queries: m.queries };
-    }
-
-    // ---- Salesforce ----
-    // resolveAccountForDeal already distinguishes domain, address, name and
-    // outright failure, and stores only what it is entitled to store.
-    let sf: DealLinkOutcome["salesforce"];
-    try {
-      const r = await resolveAccountForDeal({
-        tenantId,
-        dealId,
-        dealAccountName: account,
-        domain,
-        addresses,
-        // The identifier that survives free mail. resolveAccount tries domain,
-        // then exact address, then the deal name, then this.
-        meetingSubject,
-        force: true,
-      });
-      const res = r.resolution;
-      if (res.status === "resolved_by_domain") sf = { status: "linked", note: `${res.accountName} (${res.accountId})` };
-      else if (res.status === "resolved_by_name") sf = { status: "needs_decision", note: `name match only: ${res.accountName} (${res.accountId})` };
-      else if (res.status === "no_account") sf = { status: "no_candidates", note: `searched ${res.searchedNames.join(", ") || "domain only"}` };
-      else sf = { status: "unavailable", note: `Salesforce returned ${res.status}` };
-    } catch (err) {
-      sf = { status: "unavailable", note: err instanceof Error ? err.message : String(err) };
     }
 
     await recordAttempt(dealId, "rolldog", rd.status, rd.candidates, rd.queries, rd.note);
