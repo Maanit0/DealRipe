@@ -39,6 +39,15 @@ import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
 async function main(): Promise<void> {
   const apply = process.argv.includes("--apply");
+  // --all re-sends every writable deal, not just the ones never written to.
+  //
+  // Writes before 2026-08-11 15:00 predate value recording, so their audit rows
+  // carry field names only and the Activity view falls back to re-composing the
+  // content at page load. Re-sending is idempotent for the note fields, which
+  // are PATCHed rather than appended, and it produces a row that DOES carry its
+  // values. The old rows stay as they are: what was written months ago cannot be
+  // reconstructed, only what is there now.
+  const all = process.argv.includes("--all");
   const tenantId = await resolveTenantId("magaya");
   const db = supabaseAdmin();
 
@@ -75,9 +84,22 @@ async function main(): Promise<void> {
   for (const d of (dealsRes.data ?? []) as Array<Record<string, unknown>>) {
     const t = resolveWriteTarget(d as never);
     if (!t.authorized) continue;
-    if (written.has(String(t.opportunityId))) continue;
+    if (!all && written.has(String(t.opportunityId))) continue;
     const answers = yesCount.get(String(d.id)) ?? 0;
     if (answers === 0) continue; // nothing confirmed, nothing to send
+
+    // Confirmed answers are not the same as sendable content. Some framework
+    // fields are briefing-only and reach no CRM by design, so a deal can have
+    // answers and compose nothing. United CHB has two, both briefing-only, and
+    // without this check it reported as unwritten on every single run forever.
+    const preview = await syncDealToRolldog({
+      tenantSlug: "magaya",
+      dealId: String(d.id),
+      rolldogOpportunityId: t.opportunityId,
+      dryRun: true,
+    });
+    if (!preview.some((r) => r.status === "preview")) continue;
+
     todo.push({
       id: String(d.id),
       account: String(d.account ?? "?"),
@@ -89,12 +111,13 @@ async function main(): Promise<void> {
 
   console.log("");
   if (todo.length === 0) {
-    console.log("Every writable deal with confirmed answers has already been written to.\n");
+    console.log("Nothing to send. Every writable deal with sendable content has been written to.\n");
     return;
   }
   console.log(
-    `${todo.length} linked deal(s) have confirmed qualification and no Rolldog write on record. ` +
-      `${apply ? "APPLYING." : "Dry run."}`,
+    all
+      ? `${todo.length} writable deal(s) will be re-sent so their audit rows carry values. ${apply ? "APPLYING." : "Dry run."}`
+      : `${todo.length} linked deal(s) have qualification and no Rolldog write on record. ${apply ? "APPLYING." : "Dry run."}`,
   );
   console.log("");
 

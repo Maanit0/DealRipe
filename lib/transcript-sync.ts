@@ -570,11 +570,16 @@ async function processRow(
       // Deliberately not keyed on transcript length. A short call still gets
       // every field evaluated and returned as "No"; length tells you how much
       // was said, not whether we looked.
+      // The length condition matters. A short call genuinely can contain no
+      // qualification, and retrying it three times only burns tokens before
+      // giving up. A 54,860 character conversation returning one field cannot
+      // be explained that way.
       const MIN_FIELDS_RETURNED = 5;
+      const SUBSTANTIAL_TRANSCRIPT = 5000;
       const fieldsReturned = Object.keys(
         (ingestResult.extraction ?? {}) as Record<string, unknown>,
       ).length;
-      if (fieldsReturned < MIN_FIELDS_RETURNED) {
+      if (fieldsReturned < MIN_FIELDS_RETURNED && transcript.trim().length >= SUBSTANTIAL_TRANSCRIPT) {
         console.warn(
           `[transcript-sync] call ${callId}: extraction returned ${fieldsReturned} field(s) from ` +
             `${transcript.trim().length} chars. Flagging for retry.`,

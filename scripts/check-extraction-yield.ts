@@ -51,7 +51,7 @@ async function main(): Promise<void> {
 
   const calls = await db
     .from("calls")
-    .select("id, deal_id, title, scheduled_start, outcome, has_been_extracted")
+    .select("id, deal_id, title, scheduled_start, outcome, has_been_extracted, meeting_type")
     .eq("tenant_id", tenantId)
     .gte("scheduled_start", since)
     .lte("scheduled_start", new Date().toISOString())
@@ -80,11 +80,25 @@ async function main(): Promise<void> {
   const bad: Array<{ when: string; account: string; chars: number; rows: number }> = [];
   let healthy = 0;
   let trivial = 0;
+  let notExtracted = 0;
 
   for (const c of live) {
     const chars = lenByCall.get(c.id) ?? 0;
     if (chars === 0) continue; // nothing captured; a different problem
     const rows = c.deal_id ? rowsByDeal.get(c.deal_id) ?? 0 : 0;
+
+    // Extraction is gated on classification (transcript-sync step 5): only a
+    // new_opportunity call is extracted, because deal truth must come from a
+    // customer sales call and not from an internal prep meeting or a
+    // post-signing kickoff. Those calls correctly produce zero rows.
+    //
+    // Not knowing this, an earlier version of this script reported Diamond
+    // Forwarding's kickoff as a lost extraction. It was a working gate.
+    if (c.meeting_type && String(c.meeting_type) !== "new_opportunity") {
+      notExtracted += 1;
+      continue;
+    }
+
     if (chars < TRIVIAL_TRANSCRIPT) {
       trivial += 1;
       continue;
@@ -104,6 +118,7 @@ async function main(): Promise<void> {
   console.log("");
   console.log(`Last ${days} days: ${live.length} captured call(s) with a transcript.`);
   console.log(`  ${healthy} produced a normal number of extraction rows`);
+  console.log(`  ${notExtracted} were not sales calls, so extraction was correctly skipped`);
   console.log(`  ${trivial} had a transcript under ${TRIVIAL_TRANSCRIPT} chars, too short to judge`);
   console.log(`  ${bad.length} produced almost nothing despite a substantial transcript`);
   console.log("");
