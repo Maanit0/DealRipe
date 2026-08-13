@@ -208,6 +208,157 @@ async function existingCallLog(
  * Create the activity. Never throws: this runs inside transcript-sync and must
  * not be able to break the pipeline that produced the recap.
  */
+/**
+ * Days from the call to the next step's due date, when the commitment does not
+ * carry one of its own.
+ *
+ * A task with no date sits at the bottom of a list forever. Three working days
+ * is short enough to still be about this call and long enough not to be
+ * overdue before the rep reads it. It is a default, not a judgement, and the
+ * description says so.
+ */
+const NEXT_STEP_DUE_DAYS = 3;
+
+/**
+ * Which Status a Task should carry to appear as open work.
+ *
+ * Task.Status is a picklist and the values are org-configurable. Guessing
+ * "Open" would 400 in an org whose first value is "Not Started", and guessing
+ * "Not Started" fails just as easily somewhere else. So this asks Salesforce.
+ * Returns null when the picklist cannot be read, and the caller writes nothing
+ * rather than inventing a value.
+ */
+async function openTaskStatus(instanceUrl: string, token: string): Promise<string | null> {
+  const res = await sf(instanceUrl, token, `/services/data/${API}/sobjects/Task/describe`);
+  if (!res.ok) return null;
+  const desc = (await res.json()) as {
+    fields?: Array<{ name: string; picklistValues?: Array<{ value: string; active: boolean; defaultValue?: boolean }> }>;
+  };
+  const status = (desc.fields ?? []).find((f) => f.name === "Status");
+  const values = (status?.picklistValues ?? []).filter((p) => p.active).map((p) => p.value);
+  if (values.length === 0) return null;
+  const preferred = ["Not Started", "Open", "In Progress"];
+  for (const p of preferred) {
+    const hit = values.find((v) => v.toLowerCase() === p.toLowerCase());
+    if (hit) return hit;
+  }
+  // Anything that is not a terminal state is better than refusing outright.
+  const nonTerminal = values.find((v) => !/complete|closed|deferred/i.test(v));
+  return nonTerminal ?? null;
+}
+
+export type NextStepResult =
+  | { created: true; taskId: string; dueDate: string; ownerResolved: boolean }
+  | { created: false; reason: string };
+
+/**
+ * Create the agreed next step as an open Task on the account.
+ *
+ * Eduardo asked for this directly on 2026-07-21, looking at the to-do list in
+ * his CRM: "you might put like a task, hey you need to set up a call", and
+ * "there's never too much reminders, I'd rather ignore it than forget
+ * something".
+ *
+ * Two rules this follows, and they are the whole design:
+ *
+ * ONLY AN EXPLICIT COMMITMENT. A completed call log is a record of something
+ * that happened, and being slightly wrong in one is harmless. An open task
+ * appears in a rep's work queue and a wrong one has to be cleared by hand.
+ * So this takes the commitment the call actually made and never a suggestion
+ * DealRipe inferred. No commitment, no task.
+ *
+ * NEVER TWICE. Idempotency asks Salesforce, and a failed check refuses the
+ * write rather than assuming nothing is there.
+ */
+export async function logNextStepToSalesforce(args: {
+  tenantSlug: string;
+  accountId: string;
+  accountName: string;
+  /** The commitment made on the call. Not a suggestion, not an inference. */
+  commitment: string | null;
+  callDate: Date | string | null;
+  repEmail?: string | null;
+  apply: boolean;
+}): Promise<NextStepResult> {
+  const commitment = (args.commitment ?? "").trim();
+  if (commitment.length < 10) {
+    return { created: false, reason: "no explicit next step was committed to on this call" };
+  }
+
+  try {
+    const { token, instanceUrl } = await getSalesforceClient();
+
+    const status = await openTaskStatus(instanceUrl, token);
+    if (!status) {
+      return { created: false, reason: "could not read Task.Status picklist, so no status was guessed" };
+    }
+
+    const callOn = activityDate(args.callDate);
+    const due = new Date(`${callOn}T00:00:00Z`);
+    due.setUTCDate(due.getUTCDate() + NEXT_STEP_DUE_DAYS);
+    const dueDate = due.toISOString().slice(0, 10);
+
+    // Idempotency: one open next step per account per call date.
+    const soql =
+      `SELECT Id FROM Task WHERE WhatId = '${args.accountId}' AND Status != 'Completed' ` +
+      `AND Subject LIKE 'Next step:%' AND ActivityDate = ${dueDate} LIMIT 1`;
+    const check = await sf(instanceUrl, token, `/services/data/${API}/query?q=${encodeURIComponent(soql)}`);
+    if (!check.ok) {
+      return { created: false, reason: `could not check for an existing next step: ${check.status}` };
+    }
+    const found = ((await check.json()) as { records?: Array<{ Id: string }> }).records ?? [];
+    if (found.length > 0) {
+      return { created: false, reason: `a next step is already open on this account (${found[0].Id})` };
+    }
+
+    const oneLine = commitment.replace(/\s+/g, " ").trim();
+    const subjectBase = `Next step: ${oneLine}`;
+    const subject =
+      subjectBase.length > SUBJECT_MAX ? `${subjectBase.slice(0, SUBJECT_MAX - 3)}...` : subjectBase;
+
+    const description =
+      `${oneLine}\n\n` +
+      `Agreed on the call of ${callOn}. Due date is ${NEXT_STEP_DUE_DAYS} working days out, ` +
+      `set by DealRipe rather than agreed on the call, so move it if the call implied something else.\n` +
+      `Captured by DealRipe from the ${args.accountName} call.`;
+
+    const ownerId = await resolveOwnerId(instanceUrl, token, args.repEmail ?? null);
+    const body: Record<string, unknown> = {
+      Subject: subject,
+      Description: description.slice(0, DESCRIPTION_MAX),
+      Status: status,
+      ActivityDate: dueDate,
+      WhatId: args.accountId,
+    };
+    if (ownerId) body.OwnerId = ownerId;
+
+    if (!args.apply) {
+      return { created: false, reason: `dry run: would create "${subject}" due ${dueDate}` };
+    }
+
+    const created = await runWithAuthorizedAccounts([args.accountId], async () =>
+      recordWrite(
+        [{ label: "Next step task", value: `${subject} (due ${dueDate})`, mode: "create" }],
+        async () => {
+          assertScopedAccountWrite(args.tenantSlug, args.accountId, ["sales_development"]);
+          const res = await sf(instanceUrl, token, `/services/data/${API}/sobjects/Task`, {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            throw new Error(`POST Task ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+          }
+          return (await res.json()) as { id: string };
+        },
+      ),
+    );
+
+    return { created: true, taskId: created.id, dueDate, ownerResolved: Boolean(ownerId) };
+  } catch (err) {
+    return { created: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function logCallToSalesforce(args: {
   tenantSlug: string;
   accountId: string;

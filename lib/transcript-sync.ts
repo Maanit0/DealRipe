@@ -820,6 +820,65 @@ async function processRow(
           } else {
             console.warn(`[transcript-sync] salesforce call activity skipped for call ${callId}: ${logged.reason}`);
           }
+
+          // The agreed next step as an open task, which is what Eduardo asked
+          // for on 2026-07-21. nextStepCommitment ONLY: suggestedNextStep is
+          // DealRipe's inference and does not belong in a rep's work queue.
+          // Null when the call agreed nothing, and that is a real answer.
+          const { logNextStepToSalesforce } = await import("./salesforce-activity");
+          const nextStep = await logNextStepToSalesforce({
+            tenantSlug: "magaya",
+            accountId: sf.accountId,
+            accountName: m?.deals.account ?? ingestResult.dealExternalId,
+            commitment: notifySummary.nextStepCommitment ?? null,
+            callDate: sfCall.data?.scheduled_start ?? sfCall.data?.call_date ?? null,
+            repEmail: m?.deals.rep_email ?? null,
+            apply: true,
+          });
+          if (nextStep.created) {
+            console.log(
+              `[transcript-sync] salesforce next step ${nextStep.taskId} created for call ${callId}, due ${nextStep.dueDate}`,
+            );
+          } else {
+            console.log(`[transcript-sync] salesforce next step not created for call ${callId}: ${nextStep.reason}`);
+          }
+
+          // Contacts: fill blank Titles and create people who have no record.
+          // Separate from the activity write on purpose, so a contact problem
+          // cannot cost the call log.
+          try {
+            const { syncContactsToSalesforce } = await import("./salesforce-contacts");
+            // Reuse the people the pipeline already extracted into the deal's
+            // contacts table rather than paying for a second pass over the same
+            // transcript. Empty is fine: identity comes from the invite, and the
+            // extraction only supplies the job title.
+            const known = await db
+              .from("contacts")
+              .select("name, role, deals!inner(external_id)")
+              .eq("deals.external_id", ingestResult.dealExternalId);
+            const contacts = await syncContactsToSalesforce({
+              tenantSlug: "magaya",
+              accountId: sf.accountId,
+              participants: m?.participants ?? null,
+              extracted: ((known.data ?? []) as Array<{ name: string; role: string | null }>).map((k) => ({
+                name: k.name,
+                role: k.role,
+              })),
+              apply: true,
+            });
+            console.log(
+              `[transcript-sync] salesforce contacts for call ${callId}: ` +
+                `${contacts.created} created, ${contacts.titlesFilled} titles filled, ` +
+                `${contacts.titleAlreadySet} already titled, ${contacts.noTitleAvailable} blank with no title found, ` +
+                `${contacts.skipped} skipped` +
+                (contacts.notes.length > 0 ? ` (${contacts.notes.slice(0, 3).join("; ")})` : ""),
+            );
+          } catch (cErr) {
+            console.error(
+              `[transcript-sync] salesforce contact sync threw for call ${callId}:`,
+              cErr instanceof Error ? cErr.message : cErr,
+            );
+          }
         }
       } catch (sfErr) {
         console.error(

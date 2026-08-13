@@ -27,7 +27,8 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import { logCallToSalesforce, cleanMeetingTitle } from "../lib/salesforce-activity";
+import { logCallToSalesforce, logNextStepToSalesforce, cleanMeetingTitle } from "../lib/salesforce-activity";
+import { syncContactsToSalesforce } from "../lib/salesforce-contacts";
 import { resolveWriteTarget } from "../lib/rolldog-writeback";
 import { resolveSalesforceWriteTarget } from "../lib/salesforce-scope";
 import { generatePostCallSummary } from "../lib/post-call-summary";
@@ -156,7 +157,11 @@ async function main(): Promise<void> {
       const label = `${formatMeetingTime(when)}  ${subject}`;
 
       if (!apply) {
-        console.log(`  would log  ${label}`);
+        // Honest about what it does not know. Idempotency lives inside
+        // logCallToSalesforce and asks Salesforce, which dry run never does, so
+        // "would log" here includes calls that are already logged. Saying so
+        // beats a count that looks like new work and is not.
+        console.log(`  would log  ${label}  (unless already logged; dry run does not ask Salesforce)`);
         continue;
       }
 
@@ -220,6 +225,45 @@ async function main(): Promise<void> {
         skipped++;
         console.log(`  skip       ${label}  (${res.reason})`);
       }
+
+      // Next step and contacts run on the NEWEST call only. Calls are ordered
+      // newest first, so this is calls[0]. An open task generated from a
+      // three-week-old call is noise in a rep's queue, and the people on the
+      // most recent call are the current buying group.
+      if (c.id !== calls[0].id) continue;
+
+      const next = await logNextStepToSalesforce({
+        tenantSlug: "magaya",
+        accountId: target.accountId,
+        accountName: d.account,
+        commitment: summary.nextStepCommitment ?? null,
+        callDate: when,
+        repEmail: d.rep_email,
+        apply: true,
+      });
+      console.log(
+        next.created
+          ? `  NEXT STEP  -> Task ${next.taskId}, due ${next.dueDate}`
+          : `  next step  not created (${next.reason})`,
+      );
+
+      const known = await db.from("contacts").select("name, role").eq("deal_id", d.id);
+      const cs = await syncContactsToSalesforce({
+        tenantSlug: "magaya",
+        accountId: target.accountId,
+        participants: c.participants,
+        extracted: ((known.data ?? []) as Array<{ name: string; role: string | null }>).map((k) => ({
+          name: k.name,
+          role: k.role,
+        })),
+        apply: true,
+      });
+      console.log(
+        `  CONTACTS   ${cs.created} created, ${cs.titlesFilled} title(s) filled, ` +
+          `${cs.titleAlreadySet} already titled, ${cs.noTitleAvailable} blank with no title found, ` +
+          `${cs.skipped} skipped`,
+      );
+      for (const n of cs.notes.slice(0, 4)) console.log(`             ${n}`);
     }
   }
 

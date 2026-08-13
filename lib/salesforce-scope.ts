@@ -71,7 +71,19 @@ export function salesforceWritebackEnabled(): boolean {
 
 /** The fields we are willing to touch: the Sales Development section only. */
 export const SALESFORCE_WRITE_FIELDS: readonly string[] = Object.freeze([
+  /** The Sales Development section on Account. The eight fields in FIELD_SOURCES. */
   "sales_development",
+  /**
+   * Contact records on a linked account: creating a person who appeared on a
+   * call, and filling a Title that is blank.
+   *
+   * Deliberately its own token rather than reusing sales_development. A Contact
+   * is a different object with a different blast radius, and an audit row that
+   * called it a Sales Development field write would be inaccurate about what
+   * was touched. Added 2026-08-13 by hand, which is the only way this list
+   * changes.
+   */
+  "contacts",
 ]);
 
 export class SalesforceScopeViolationError extends Error {
