@@ -186,6 +186,7 @@ export type Database = {
           meeting_type: string | null;
           title: string | null;
           call_subtype: string | null;
+          organizer_email: string | null;
           created_at: string;
         };
         Insert: {
@@ -207,6 +208,7 @@ export type Database = {
           meeting_type?: string | null;
           title?: string | null;
           call_subtype?: string | null;
+          organizer_email?: string | null;
           created_at?: string;
         };
         Update: {
@@ -228,6 +230,7 @@ export type Database = {
           meeting_type?: string | null;
           title?: string | null;
           call_subtype?: string | null;
+          organizer_email?: string | null;
           created_at?: string;
         };
         Relationships: [];

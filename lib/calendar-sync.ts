@@ -13,8 +13,10 @@
  *   - State machine on the (existing calls row x event state) cross product:
  *       new row, not cancelled        -> createBot, persist recall_bot_id
  *       existing row, no bot, !cancel -> createBot
- *       existing row, bot, date OK    -> participants refresh only
- *       existing row, bot, date moved -> deleteBot(old), createBot(new)
+ *       existing row, bot, start OK   -> participants refresh only
+ *       existing row, bot, start moved-> deleteBot(old), createBot(new)
+ *         (compared on the start INSTANT: a meeting moved within the same
+ *          day must move its bot, and once did not. See the comment there.)
  *       cancelled, bot                -> deleteBot, null recall_bot_id
  *       cancelled, no bot             -> no-op
  *
@@ -35,7 +37,7 @@ import {
   resolveMeetingDeal,
 } from "./pilot-config";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
-import { createBot, deleteBot } from "./recall";
+import { createBot, deleteBot, getBot } from "./recall";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
@@ -622,6 +624,10 @@ async function processEvent(
         participants: ev.attendees as unknown as Json,
         source: "recall_ai",
         title: ev.subject,
+        // Whose waiting room the bot will land in. See
+        // supabase/add-call-organizer.sql for why this is the field that
+        // decides what to do about a call nobody admitted the bot to.
+        organizer_email: ev.organizerEmail,
       })
       .select("id")
       .single();
@@ -673,9 +679,64 @@ async function processEvent(
   // Existing row.
   const callRow = existing.data;
   const currentBotId = callRow.recall_bot_id;
-  const dateChanged = callRow.call_date !== eventDate;
 
-  if (currentBotId && dateChanged) {
+  // Compare the START INSTANT, not the calendar day.
+  //
+  // This used to read `callRow.call_date !== eventDate`, which only noticed a
+  // meeting moving to a different DAY. A meeting moved within the same day left
+  // its bot on the old time, and the branch below at "Same date, bot dispatched"
+  // then wrote the NEW scheduled_start onto the row and emitted no-change. So
+  // the row said one time, the bot held another, and nothing anywhere reported a
+  // disagreement.
+  //
+  // That cost a real call. Green Java on 2026-08-13 moved to 17:30Z; its bot was
+  // still booked for 15:00Z, arrived 150 minutes early, sat in a waiting room
+  // for a meeting nobody had joined yet, and Recall closed it out with
+  // timeout_exceeded_waiting_room. The transcript is unrecoverable.
+  //
+  // A null scheduled_start is a legacy row we cannot compare instants on, so it
+  // falls back to the day check rather than pretending the times match.
+  const startChanged =
+    callRow.scheduled_start === null
+      ? callRow.call_date !== eventDate
+      : Date.parse(callRow.scheduled_start) !== Date.parse(eventIso);
+
+  if (currentBotId && startChanged) {
+    // Never destroy a bot that already has a recording. Rescheduling assumes
+    // the old bot has nothing worth keeping, which is true for a future meeting
+    // and false for one already captured, and deleting the bot would take its
+    // media with it. If we cannot tell, do not delete: a duplicate bot costs
+    // money, a deleted recording costs the call.
+    let oldBotHasWork: boolean | null = null;
+    try {
+      const oldBot = await getBot(currentBotId);
+      oldBotHasWork = oldBot.hasMedia || oldBot.recordingId !== null;
+    } catch (err) {
+      console.error(
+        `[calendar-sync] could not inspect bot ${currentBotId} before reschedule, so leaving it in place: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      oldBotHasWork = null;
+    }
+    if (oldBotHasWork !== false) {
+      console.warn(
+        `[calendar-sync] call ${callRow.id} moved to ${eventIso} but its bot ${currentBotId} ` +
+          `${oldBotHasWork === null ? "could not be inspected" : "already holds a recording"}; ` +
+          `not replacing it. This needs a human.`,
+      );
+      emit({
+        kind: "error",
+        eventId: ev.eventId,
+        subject: ev.subject,
+        phase: "reschedule-guard",
+        message:
+          oldBotHasWork === null
+            ? `bot ${currentBotId} could not be inspected before reschedule`
+            : `bot ${currentBotId} already recorded; refusing to delete it`,
+      });
+      return;
+    }
+
     // Reschedule: kill the old bot, dispatch a new one.
     try {
       await deleteBot(currentBotId);
@@ -716,6 +777,7 @@ async function processEvent(
         call_date: eventDate,
         scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
+        organizer_email: ev.organizerEmail,
       })
       .eq("id", callRow.id);
     if (upd.error) {
@@ -765,6 +827,7 @@ async function processEvent(
         call_date: eventDate,
         scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
+        organizer_email: ev.organizerEmail,
       })
       .eq("id", callRow.id);
     if (upd.error) {
@@ -790,12 +853,17 @@ async function processEvent(
     return;
   }
 
-  // Same date, bot dispatched. Refresh participants in case attendees changed.
+  // Same start instant, bot dispatched. Refresh participants in case attendees
+  // changed. Reaching here with a moved start is the bug described above: this
+  // update would write the new time onto the row while the bot kept the old one.
   const upd = await db
     .from("calls")
     .update({
       scheduled_start: eventIso,
       participants: ev.attendees as unknown as Json,
+      // Refreshed on every pass so rows created before this column existed
+      // fill in on their next sync, rather than only new meetings having it.
+      organizer_email: ev.organizerEmail,
     })
     .eq("id", callRow.id);
   if (upd.error) {

@@ -59,6 +59,36 @@ export const REP_UID: Record<string, string> = {
   // scripts/rolldog-owner-from-opp.ts <id> --name "<account>".
 };
 
+/**
+ * Did this call actually produce a conversation we hold?
+ *
+ * has_been_extracted alone does not answer that. transcript-sync sets it to
+ * true alongside outcome capture_failed on a bot that never recorded, where it
+ * means "stop retrying", not "we have this call". Both call sites below used to
+ * test the flag on its own, so a deal whose only meeting was a bot nobody
+ * admitted counted as having a captured call: it became eligible for
+ * auto-linking, and the backfill note pushed into the customer's opportunity
+ * announced a call we have no record of.
+ *
+ * That is the same class of error as the incident described above the first
+ * call site. The filter added then covered meetings that had not happened yet
+ * and did not cover meetings that happened without us.
+ */
+function producedContent(c: { outcome: string | null; has_been_extracted: boolean | null }): boolean {
+  if (c.outcome !== null && NO_CONTENT.has(c.outcome)) return false;
+  return c.has_been_extracted === true || c.outcome === "captured";
+}
+
+const NO_CONTENT = new Set([
+  "capture_failed",
+  "no_conversation",
+  "no_show",
+  "rescheduled",
+  "placeholder",
+  "duplicate",
+  "discarded",
+]);
+
 const RECENT_DAYS = 90;
 const MIN_SLUG = 5;
 const MAX_PAGES = 3;
@@ -145,9 +175,8 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
     .eq("tenant_id", tenantId);
   const withCall = new Set(
     (callData ?? [])
-      .filter(
-        (c: { outcome: string | null; has_been_extracted: boolean | null }) =>
-          c.has_been_extracted === true || c.outcome === "captured",
+      .filter((c: { outcome: string | null; has_been_extracted: boolean | null }) =>
+        producedContent(c),
       )
       .map((c: { deal_id: string | null }) => c.deal_id)
       .filter(Boolean) as string[],
@@ -267,9 +296,7 @@ export async function applyConfirmedLinks(
         .eq("tenant_id", tenantId)
         .eq("deal_id", m.dealId)
         .order("call_date", { ascending: true });
-      const calls = (callRows.data ?? []).filter(
-        (c) => c.has_been_extracted === true || c.outcome === "captured",
-      );
+      const calls = (callRows.data ?? []).filter((c) => producedContent(c));
 
       // Re-extract the FULL history, oldest first, so the merged extraction
       // reflects every call rather than only the newest one. Order matters:

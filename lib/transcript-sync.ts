@@ -47,7 +47,14 @@ import { sendPostCallSummary } from "./post-call-notify";
 import { sendNoShowFollowup } from "./no-show-followup";
 import { logNoShowToRolldog, writeBackDealToRolldog } from "./rolldog-writeback";
 import { writeBackDealToSalesforce } from "./salesforce-writeback-run";
-import { getBot, getTranscript, recordingDurationMinutes, type BotStatus } from "./recall";
+import {
+  getBot,
+  getTranscript,
+  latestStatusAt,
+  recordingDurationMinutes,
+  type BotResource,
+  type BotStatus,
+} from "./recall";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
 import { customerParticipation } from "./attendance";
 import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
@@ -162,6 +169,32 @@ export async function runTranscriptSync(
 }
 
 const MAX_INGEST_RETRIES = 3;
+
+/**
+ * How long a finished bot may go without attached media before we treat the
+ * recording as lost. Recall uploads after the call ends and a long meeting can
+ * take several minutes, so anything shorter than this turns a slow upload into
+ * a permanently lost conversation. The cost of waiting is a delayed recap; the
+ * cost of not waiting is a call nobody can ever recover.
+ */
+const MEDIA_GRACE_MS = 45 * 60_000;
+
+/**
+ * Recall's own reason for a failure, in one line.
+ *
+ * The status code on a failed bot is always the word "fatal". The sub_code is
+ * where the actionable part lives, and the fix differs completely by value:
+ * permission_denied means a human never admitted the bot, meeting_link_expired
+ * means the invite carried a stale link, insufficient_credits means the account
+ * ran dry and every future call will fail the same way. Recording only "fatal"
+ * throws away the difference between a one-off and an outage.
+ */
+function describeBotFailure(bot: BotResource): string {
+  const parts = [`status=${bot.rawStatusCode}`];
+  parts.push(bot.statusSubCode === null ? "sub_code=(none given)" : `sub_code=${bot.statusSubCode}`);
+  if (bot.statusMessage !== null) parts.push(`"${bot.statusMessage}"`);
+  return parts.join(" ");
+}
 
 function parseRetryCount(err: string | null): number {
   const m = (err ?? "").match(/\[retry (\d+)\/\d+\]/);
@@ -319,20 +352,51 @@ async function processRow(
       .eq("id", callId);
     await writeIngestError(
       callId,
-      `bot terminated fatal (status=${bot.rawStatusCode}); marked capture_failed`,
+      `bot terminated fatal; ${describeBotFailure(bot)}; marked capture_failed`,
     );
     emit({ kind: "fatal", callId, recallBotId, rawStatus: bot.rawStatusCode });
     return;
   }
 
-  // Bot finished but its media is gone (expired / never uploaded): same as a
-  // fatal capture failure for our purposes, we have no recording to work from.
+  // Bot finished but no media is attached yet. This is the dangerous branch:
+  // "the recording is gone" and "the recording has not finished uploading"
+  // are indistinguishable in a single poll, and we used to declare the first
+  // immediately. Because capture_failed sets has_been_extracted, that verdict
+  // was final: a bot polled during its upload window lost a real conversation
+  // permanently, and the row then said the capture failed rather than that we
+  // stopped waiting. Absence of media is not absence of a recording.
+  //
+  // So wait MEDIA_GRACE_MS from the bot's last status change before concluding
+  // anything. The cron runs every 5 minutes and will look again.
   if (bot.status === "done" && !bot.hasMedia) {
+    const lastChange = latestStatusAt(bot);
+    const waitedMs = lastChange === null ? null : Date.now() - lastChange;
+
+    if (waitedMs !== null && waitedMs < MEDIA_GRACE_MS) {
+      counts.inProgress += 1;
+      emit({
+        kind: "in-progress",
+        callId,
+        recallBotId,
+        status: bot.status,
+        rawStatus: `${bot.rawStatusCode} (awaiting media upload, ${Math.round(waitedMs / 60_000)} min so far)`,
+      });
+      return;
+    }
+
+    // Past the grace period, or Recall gave us no timestamp to measure from.
+    // Record which of those two it was, and record Recall's own reason, since
+    // "fatal" on its own names no cause and every fix depends on the cause.
+    const why = describeBotFailure(bot);
+    const waited =
+      waitedMs === null
+        ? "no status timestamp to measure the wait from"
+        : `waited ${Math.round(waitedMs / 60_000)} min`;
     await db
       .from("calls")
       .update({ outcome: "capture_failed", has_been_extracted: true })
       .eq("id", callId);
-    await writeIngestError(callId, "bot done but media unavailable; marked capture_failed");
+    await writeIngestError(callId, `bot done but media unavailable (${waited}); ${why}; marked capture_failed`);
     emit({ kind: "fatal", callId, recallBotId, rawStatus: bot.rawStatusCode });
     return;
   }
@@ -714,6 +778,48 @@ async function processRow(
           console.log(
             `[transcript-sync] salesforce write-back wrote ${sf.plan?.writes.length ?? 0} field(s) to account ${sf.accountId} for call ${callId}`,
           );
+        }
+
+        // Log the call itself, whether or not any field changed.
+        //
+        // These are the deals whose only CRM record is a Salesforce account, so
+        // without this the account shows a few silently altered fields and no
+        // sign a call happened. The activity is what makes the field write
+        // legible to the rep who opens it later. Deliberately outside the
+        // `sf.written` branch: a call with nothing new to write is still a call
+        // that took place, and the recap is the point.
+        // notifySummary is what carries the recap. Without it there is nothing
+        // worth logging, and an activity whose body is empty is worse than none.
+        if (sf.accountId && notifySummary) {
+          const { logCallToSalesforce } = await import("./salesforce-activity");
+          const meta = await db
+            .from("calls")
+            .select("title, participants, deals!inner(account, rep_email)")
+            .eq("id", callId)
+            .maybeSingle();
+          const m = meta.data as
+            | { title: string | null; participants: unknown; deals: { account: string; rep_email: string | null } }
+            | null;
+          const people = Array.isArray(m?.participants)
+            ? (m?.participants as Array<{ name?: string | null; email?: string | null }>)
+            : [];
+          const attendees = people.map((p) => (p?.name ?? p?.email ?? "").trim()).filter(Boolean).join(", ");
+          const logged = await logCallToSalesforce({
+            tenantSlug: "magaya",
+            accountId: sf.accountId,
+            accountName: m?.deals.account ?? ingestResult.dealExternalId,
+            summary: notifySummary,
+            callDate: sfCall.data?.scheduled_start ?? sfCall.data?.call_date ?? null,
+            meetingTitle: m?.title ?? null,
+            repEmail: m?.deals.rep_email ?? null,
+            attendees: attendees || null,
+            apply: true,
+          });
+          if (logged.logged) {
+            console.log(`[transcript-sync] salesforce call activity ${logged.taskId} created for call ${callId}`);
+          } else {
+            console.warn(`[transcript-sync] salesforce call activity skipped for call ${callId}: ${logged.reason}`);
+          }
         }
       } catch (sfErr) {
         console.error(

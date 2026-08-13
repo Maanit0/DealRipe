@@ -60,6 +60,24 @@ const BOT_NAME = "DealRipe Notetaker";
  */
 const RETENTION_HOURS = 24;
 
+/**
+ * How long the bot will sit in a waiting room before Recall gives up, in
+ * seconds. Recall's default is 1200 (20 minutes).
+ *
+ * Between 2026-08-07 and 08-13, nine of ten lost calls were bots that reached
+ * the waiting room and were never admitted, seven of them with
+ * timeout_exceeded_waiting_room. Green Java's history shows the default exactly:
+ * in_waiting_room at 15:00:03, call_ended at 15:20:04.
+ *
+ * This does not fix a meeting nobody ever admits the bot to. It covers the host
+ * who joins twenty five minutes late, and half a transcript is worth
+ * considerably more than none. Past roughly forty minutes the meeting is mostly
+ * over and a bot idling in a lobby for a call that was quietly cancelled starts
+ * costing more than it returns, so this is a deliberate middle rather than a
+ * maximum.
+ */
+const WAITING_ROOM_TIMEOUT_SECONDS = 40 * 60;
+
 /** How long getTranscript() will poll before giving up. */
 const TRANSCRIPT_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const TRANSCRIPT_POLL_INTERVAL_MS = 5_000;
@@ -126,12 +144,18 @@ export async function createBot(
     recording_config: {
       retention: { type: "timed"; hours: number };
     };
+    automatic_leave: {
+      waiting_room_timeout: number;
+    };
   };
   const body: Body = {
     bot_name: BOT_NAME,
     meeting_url: args.meetingUrl,
     recording_config: {
       retention: { type: "timed", hours: RETENTION_HOURS },
+    },
+    automatic_leave: {
+      waiting_room_timeout: WAITING_ROOM_TIMEOUT_SECONDS,
     },
   };
   if (args.joinAt) body.join_at = args.joinAt;
@@ -172,6 +196,15 @@ export type BotResource = {
   id: string;
   status: BotStatus;
   rawStatusCode: string;
+  /**
+   * Recall's reason for the latest status. On a fatal bot the code is always
+   * the word "fatal" and every distinction that matters lives here:
+   * meeting_link_expired, bot_kicked_from_call, permission_denied,
+   * insufficient_credits and so on. Logging the code alone records that a
+   * capture failed while discarding the only part that says what to fix.
+   */
+  statusSubCode: string | null;
+  statusMessage: string | null;
   /** First recording id, if any. Async transcription kicks off on this. */
   recordingId: string | null;
   /** Convenience: true if the bot resource shows any media artifact. */
@@ -199,6 +232,7 @@ export async function getBot(botId: string): Promise<BotResource> {
   const json = (await res.json()) as Record<string, unknown>;
 
   const rawStatusCode = extractLatestStatusCode(json);
+  const { subCode, message } = extractLatestStatusDetail(json);
   const recordingId = extractFirstRecordingId(json);
   const hasMedia = recordingId !== null && !looksDeleted(json);
 
@@ -206,6 +240,8 @@ export async function getBot(botId: string): Promise<BotResource> {
     id: String(json.id ?? botId),
     status: normalizeStatus(rawStatusCode),
     rawStatusCode,
+    statusSubCode: subCode,
+    statusMessage: message,
     recordingId,
     hasMedia,
     raw: json,
@@ -242,6 +278,31 @@ export function recordingDurationMinutes(bot: BotResource): number | null {
   const end = tsOf("recording_done") ?? tsOf("call_ended");
   if (start === null || end === null || end <= start) return null;
   return Math.max(1, Math.round((end - start) / 60_000));
+}
+
+/**
+ * When Recall last changed this bot's status, in epoch ms, or null if no entry
+ * carried a parseable timestamp.
+ *
+ * Used to decide whether a finished bot with no media has genuinely lost the
+ * recording or has simply not finished uploading it yet. Those two look
+ * identical in a single poll and are opposite conclusions.
+ */
+export function latestStatusAt(bot: BotResource): number | null {
+  const raw = bot.raw;
+  if (!isRecord(raw)) return null;
+  const changes = raw.status_changes;
+  if (!Array.isArray(changes) || changes.length === 0) return null;
+  for (let i = changes.length - 1; i >= 0; i--) {
+    const c = changes[i];
+    if (!isRecord(c)) continue;
+    const t = c.created_at ?? c.ts ?? c.timestamp;
+    if (typeof t === "string") {
+      const ms = Date.parse(t);
+      if (!Number.isNaN(ms)) return ms;
+    }
+  }
+  return null;
 }
 
 /**
@@ -486,6 +547,32 @@ export function normalizeTranscript(raw: unknown): string {
 }
 
 // ----- Response field extraction. Defensive on the documented shape. -----
+
+/**
+ * The sub_code and message on the same status entry the code came from. Both
+ * are optional in Recall's payload, and a missing sub_code is not the same as
+ * a bot that failed for no reason: it means Recall did not say. Null carries
+ * that, an empty string would not.
+ */
+function extractLatestStatusDetail(bot: Record<string, unknown>): {
+  subCode: string | null;
+  message: string | null;
+} {
+  const read = (entry: unknown) => {
+    if (!isRecord(entry)) return null;
+    const subCode = typeof entry.sub_code === "string" && entry.sub_code.length > 0 ? entry.sub_code : null;
+    const message = typeof entry.message === "string" && entry.message.length > 0 ? entry.message : null;
+    return subCode === null && message === null ? null : { subCode, message };
+  };
+
+  const changes = bot.status_changes;
+  if (Array.isArray(changes) && changes.length > 0) {
+    const found = read(changes[changes.length - 1]);
+    if (found) return found;
+  }
+  const found = read(bot.status);
+  return found ?? { subCode: null, message: null };
+}
 
 function extractLatestStatusCode(bot: Record<string, unknown>): string {
   const changes = bot.status_changes;
