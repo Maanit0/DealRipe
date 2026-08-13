@@ -153,11 +153,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // --diagnose continues past this so the original failure can be seen. The rep
+  // having covered for us answers "is the customer waiting", not "why did the
+  // draft not appear", and those are different questions.
+  const diagnose = process.argv.includes("--diagnose");
   if (repEmailed) {
     console.log(`\n  ${rep} already emailed the customer after this call:`);
     console.log(`    ${repEmailed.at ? formatMeetingTime(repEmailed.at) : "(no timestamp)"}  ${repEmailed.subject}`);
-    console.log(`\n  No draft needed. The follow-up happened, DealRipe just did not write it.\n`);
-    return;
+    if (!diagnose) {
+      console.log(`\n  No draft needed. The follow-up happened, DealRipe just did not write it.`);
+      console.log(`  Re-run with --diagnose to find out why the draft failed anyway.\n`);
+      return;
+    }
+    console.log(`\n  --diagnose: continuing to find the original failure. A draft WILL be`);
+    console.log(`  created if it succeeds, so only do this when a near-duplicate is acceptable.`);
   }
 
   console.log(`\n  No outbound mail from ${rep} to ${domains.join(", ")} since the call.`);

@@ -647,6 +647,22 @@ const writeValuesStore = new AsyncLocalStorage<{
  * rejected write is not recorded as content that landed. Rethrows whatever `fn`
  * throws, unchanged, so caller error handling is unaffected.
  */
+/**
+ * The values and settlement of the write currently in flight, if any.
+ *
+ * assertScopedWrite reads the store directly because it lives in this file.
+ * The Salesforce assert does not, and passing values into it as an argument
+ * gave it no way to learn whether the write it had just described actually
+ * landed. It emitted the row before the PATCH, the PATCH came back as a
+ * returned error rather than a throw, and the audit claimed two fields written
+ * to Black Gold Logistics that Salesforce had rejected outright.
+ */
+export function pendingWrite():
+  | { values: ReadonlyArray<WrittenValue>; settled: Promise<WriteOutcome> }
+  | undefined {
+  return writeValuesStore.getStore();
+}
+
 export async function recordWrite<T>(
   values: ReadonlyArray<WrittenValue>,
   fn: () => Promise<T>,

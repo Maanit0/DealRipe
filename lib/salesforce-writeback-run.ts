@@ -22,6 +22,7 @@ import {
   runWithAuthorizedAccounts,
   SalesforceScopeViolationError,
 } from "./salesforce-scope";
+import { recordWrite } from "./crm-scope";
 import { resolveWriteTarget } from "./rolldog-writeback";
 import { readSalesforceLink } from "./salesforce-link";
 import { supabaseAdmin } from "./supabase";
@@ -63,6 +64,18 @@ const FIELD_SOURCES: ReadonlyArray<{ label: string; fieldKey: string; asBoolean?
  * checkbox already means "not established", which is exactly what we know.
  */
 const CONFIRMED_CONFIDENCE = 0.9;
+
+/**
+ * Salesforce took the request and rejected the change: a validation rule, a
+ * required field, a permission on the object. Carried as a throw purely so the
+ * settlement promise the audit is waiting on resolves as a failure.
+ */
+class SalesforceApplyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SalesforceApplyError";
+  }
+}
 
 export type SalesforceWriteResult = {
   written: boolean;
@@ -236,25 +249,36 @@ export async function writeBackDealToSalesforce(
   if (!target) return { written: false, accountId, plan, reason: "no write target" };
 
   try {
-    const res = await runWithAuthorizedAccounts(target.runtimeAuth, async () => {
-      // Inside the grant, so the assert sees the runtime authorization. Throws
-      // SalesforceScopeViolationError if anything is out of scope, and appends
-      // to crm_access_log either way.
-      assertScopedAccountWrite(
-        tenantSlug,
-        accountId,
-        ["sales_development"],
-        // What is about to land, captured before the PATCH so the audit
-        // describes the write rather than a later re-derivation of it.
+    const res = await runWithAuthorizedAccounts(target.runtimeAuth, async () =>
+      // recordWrite publishes the values AND a settlement promise the audit
+      // hook awaits. applyAccountWriteBack reports a rejected PATCH by
+      // returning an error, which settles as success and had the audit
+      // claiming a write Salesforce refused, so it is rethrown here and turned
+      // back into a reason below.
+      recordWrite(
         plan.writes.map((w) => ({ label: w.label, value: w.display, mode: w.mode })),
-      );
-      return applyAccountWriteBack(plan);
-    });
-    if (res.error) return { written: false, accountId, plan, reason: res.error };
+        async () => {
+          // Inside the grant, so the assert sees the runtime authorization.
+          // Throws SalesforceScopeViolationError if anything is out of scope,
+          // and appends to crm_access_log either way.
+          assertScopedAccountWrite(tenantSlug, accountId, ["sales_development"]);
+          const applied = await applyAccountWriteBack(plan);
+          if (applied.error) throw new SalesforceApplyError(applied.error);
+          return applied;
+        },
+      ),
+    );
+    void res;
     return { written: true, accountId, plan };
   } catch (err) {
     if (err instanceof SalesforceScopeViolationError) {
       return { written: false, accountId, plan, reason: `scope blocked: ${err.reason}` };
+    }
+    // Salesforce accepted the request and refused the change. Distinct from a
+    // scope refusal (we were never allowed) and from a transport failure (we
+    // never found out), and the audit has already recorded it as not landed.
+    if (err instanceof SalesforceApplyError) {
+      return { written: false, accountId, plan, reason: err.message };
     }
     return {
       written: false,

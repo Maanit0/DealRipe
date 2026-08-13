@@ -47,6 +47,42 @@ export type FieldWrite = {
   evidence: string | null;
 };
 
+/**
+ * How much of one Salesforce field our own prose may occupy, and the floor
+ * below which we would rather write nothing.
+ *
+ * Both numbers exist because of Black Gold Logistics on 2026-08-12. Business
+ * Issues held 305 characters of the rep's writing in a 500-character field and
+ * our addition was 317, so the whole thing was skipped and the account learned
+ * nothing from the call. Our 317 characters were the real problem: that is a
+ * paragraph going into a field reps use as a one-liner, and it would have
+ * overflowed a half-empty field too.
+ *
+ * MAX_CONTRIBUTION keeps us to roughly two sentences whatever the field allows.
+ * MIN_CONTRIBUTION is the point below which a trimmed sentence stops being
+ * worth reading, and a stub in a CRO's field is worse than a blank.
+ *
+ * The rep's existing text is still never touched. Only ours is trimmed.
+ */
+const MAX_CONTRIBUTION = 220;
+const MIN_CONTRIBUTION = 80;
+
+/**
+ * Cut text to `max` at the last sentence end, falling back to a word boundary.
+ *
+ * A mid-word cut is what makes a CRM field look machine-filled, and the
+ * ellipsis is the honest signal that there is more in the call record.
+ */
+function trimToSentence(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const hard = text.slice(0, max);
+  const stop = Math.max(hard.lastIndexOf(". "), hard.lastIndexOf("! "), hard.lastIndexOf("? "));
+  if (stop >= Math.floor(max * 0.5)) return hard.slice(0, stop + 1).trimEnd();
+  const soft = text.slice(0, Math.max(0, max - 3));
+  const space = soft.lastIndexOf(" ");
+  return `${(space >= Math.floor(max * 0.5) ? soft.slice(0, space) : soft).trimEnd()}...`;
+}
+
 export type FieldSkip = {
   label: string;
   apiName: string | null;
@@ -267,7 +303,31 @@ export async function planAccountWriteBack(args: {
       default: {
         const limit = f.length ?? 255;
         const body = String(p.value).trim();
-        const line = `${stamp} ${body}${p.evidence ? ` "${p.evidence}"` : ""}`;
+
+        // Two characters for the blank line that separates us from their text.
+        const room = existing ? limit - existing.length - 2 : limit;
+        const budget = Math.min(MAX_CONTRIBUTION, room - stamp.length - 1);
+
+        // Below the floor there is no honest version of the sentence, so skip
+        // rather than write a stub. The reason still reports the arithmetic,
+        // because "no room" without the numbers sent me looking at env vars.
+        if (budget < MIN_CONTRIBUTION) {
+          skips.push({
+            label: p.label,
+            apiName: f.name,
+            reason:
+              `no room: ${existing ? `${existing.length} of ${limit} chars already used` : `field holds ${limit} chars`}, ` +
+              `leaving ${Math.max(0, budget)} for us and ${MIN_CONTRIBUTION} is the floor. Existing text is never truncated.`,
+          });
+          break;
+        }
+
+        // Fit OUR contribution to the room, in descending order of how much we
+        // would like to keep: the quote goes before the sentence does.
+        const withEvidence = `${body}${p.evidence ? ` "${p.evidence}"` : ""}`;
+        const contribution =
+          withEvidence.length <= budget ? withEvidence : trimToSentence(body, budget);
+        const line = `${stamp} ${contribution}`;
 
         if (!existing) {
           writes.push({
@@ -275,8 +335,8 @@ export async function planAccountWriteBack(args: {
             apiName: f.name,
             type: f.type,
             currentValue: null,
-            newValue: line.slice(0, limit),
-            display: line.slice(0, limit),
+            newValue: line,
+            display: line,
             mode: "fill_blank",
             evidence: p.evidence ?? null,
           });
@@ -286,21 +346,12 @@ export async function planAccountWriteBack(args: {
         // Do not repeat ourselves on a second call.
         if (existing.includes(body.slice(0, 60))) break;
 
-        const combined = `${existing}\n\n${line}`;
-        if (combined.length > limit) {
-          skips.push({
-            label: p.label,
-            apiName: f.name,
-            reason: `no room: ${existing.length} chars already used of ${limit}, adding ${line.length} more would overflow. Existing text is never truncated.`,
-          });
-          break;
-        }
         writes.push({
           label: p.label,
           apiName: f.name,
           type: f.type,
           currentValue: existing,
-          newValue: combined,
+          newValue: `${existing}\n\n${line}`,
           display: line,
           mode: "append",
           evidence: p.evidence ?? null,

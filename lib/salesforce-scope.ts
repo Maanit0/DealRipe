@@ -6,38 +6,52 @@
  * grant, same append to crm_access_log, same fail-closed default. Anyone who
  * has read that file can audit this one.
  *
- * READ THIS BEFORE ENABLING ANYTHING HERE.
+ * AUTHORIZED AND LIVE SINCE 2026-08-11.
  *
- * lib/crm-scope.ts carries this line, above assertScopedWrite:
+ * This file used to open by saying it was inert by commitment. It no longer is,
+ * and leaving that text in place was worse than having no note at all: it told
+ * a reader the module could not write at the moment it was writing.
  *
- *   "Writes are Rolldog-only by hard architectural constraint (Magaya security
- *    review): no Salesforce write path is permitted anywhere in the codebase."
+ * The old rule came from a Magaya security review and read "writes are
+ * Rolldog-only ... no Salesforce write path is permitted anywhere in the
+ * codebase". Mark Buman lifted it with Magaya security on 2026-08-11, without a
+ * field restriction. Permitted and implemented are still different: the writer
+ * touches exactly the eight Account fields in FIELD_SOURCES.
  *
- * This file is a Salesforce write path. That constraint is a commitment made to
- * a customer during a security review, and code cannot lift it. So everything
- * here is built and inert:
+ * What actually gates a write today:
  *
- *   - SALESFORCE_PILOT_ACCOUNT_IDS is empty, exactly as PILOT_OPPORTUNITY_IDS
- *     was before Mark confirmed the pilot deals.
- *   - The runtime route requires a 'confirmed' link AND the kill switch below.
- *   - SALESFORCE_WRITEBACK_ENABLED defaults to off, so a deploy of this code
- *     changes nothing about what reaches Magaya's Salesforce.
+ *   - SALESFORCE_WRITEBACK_ENABLED must be exactly "1". Set in production.
+ *   - The account must be authorized, by one of two routes below.
  *
- * Turning it on is a decision for whoever owns that commitment, not a
- * configuration detail. Until then the plan/preview path is fully usable and
- * writes nothing.
+ * SALESFORCE_PILOT_ACCOUNT_IDS is still empty, and that is not a block. It is
+ * the static route, kept for parity with PILOT_OPPORTUNITY_IDS. Every real
+ * write is authorized by the RUNTIME route: a deal whose Salesforce link is
+ * domain-verified ('confirmed') authorizes its own account at write time. That
+ * is the intended policy, so every rep's discovery calls write back without
+ * anyone maintaining a list of ids by hand.
+ *
+ * Known external blocker, 2026-08-12: a validation rule on Account requires
+ * 'Date of Software Acquisition' before any update saves, so every PATCH is
+ * rejected with FIELD_CUSTOM_VALIDATION_EXCEPTION regardless of what we send.
+ * Magaya's Salesforce admin has to exempt the integration user. Nothing in this
+ * codebase can satisfy it without inventing a date, which it will not do.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { emitAudit } from "./crm-scope";
+import { emitAudit, pendingWrite } from "./crm-scope";
 
 /**
  * Static allowlist of Salesforce Account ids DealRipe may write to.
  *
- * Empty by design and by commitment. An entry here is a human asserting that
- * this specific customer's Account may be edited by an automated extraction.
- * Nothing automated may add to this list.
+ * Empty, and empty is correct. This is the static route only. An entry here is
+ * a human asserting that one specific Account may be edited by an automated
+ * extraction, and nothing automated may add to it.
+ *
+ * Do not read an empty list as "nothing can write". Authorization comes from
+ * the runtime route in resolveSalesforceWriteTarget, which grants any deal
+ * holding a domain-verified link. Adding ids here would narrow nothing and
+ * gate nothing; it would only create a second list to keep in step.
  */
 export const SALESFORCE_PILOT_ACCOUNT_IDS: readonly string[] = Object.freeze([
   // intentionally empty: see the security-review note in the file header
@@ -121,6 +135,11 @@ export function assertScopedAccountWrite(
     if (bad) reason = `field '${bad}' is not in SALESFORCE_WRITE_FIELDS`;
   }
 
+  // Prefer the in-flight write, which carries a settlement promise. The audit
+  // hook awaits it, so a PATCH that Salesforce rejects is recorded as a
+  // rejection instead of appearing in the log as a completed write.
+  const pending = reason === null ? pendingWrite() : undefined;
+
   emitAudit({
     tenantSlug,
     system: "salesforce",
@@ -132,7 +151,8 @@ export function assertScopedAccountWrite(
     at: new Date(),
     // Only on a permitted write. A refusal wrote nothing, and recording values
     // against it would read as though it had.
-    fieldValues: reason === null ? fieldValues : undefined,
+    fieldValues: reason === null ? (pending?.values ?? fieldValues) : undefined,
+    settled: pending?.settled,
   });
 
   if (reason !== null) throw new SalesforceScopeViolationError({ reason, accountId });

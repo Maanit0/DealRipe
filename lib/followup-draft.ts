@@ -55,6 +55,16 @@ export type FollowUpDraftInput = {
   summary: PostCallSummary;
   /** Attendees on the call, so the draft addresses real people. */
   attendees?: string;
+  /**
+   * The customer-side people this email is addressed to, by name.
+   *
+   * Without this the model has to infer the greeting from the transcript, which
+   * names everyone in the room including the rep. Juan Lopez's Diamond
+   * Forwarding draft opened "Laerte, Donna, Scott, Juan," and the Juan in that
+   * list was the sender. customerEmails was already computed and correct; it
+   * simply never reached the prompt.
+   */
+  recipients?: string;
   /** ISO date of the call. */
   callDate?: string | null;
   /** microsoft_connections id for the rep, so times come from their calendar. */
@@ -414,8 +424,35 @@ function isMeetingInviteBoilerplate(text: string): boolean {
  * because "Get Outlook for iOS" and a divider were counted with it, so two of
  * the six samples were acknowledgements dressed up as substantial emails.
  */
+/**
+ * Where the rep's own writing ends and somebody else's quoted message begins.
+ *
+ * Outlook opens a quoted original with a separator that CARRIES TEXT, so the
+ * bare-rule strip below never matched it, and the header block underneath is
+ * all short lines that sail through the 60-char filter in learnSignature.
+ *
+ * Ariel's sent mail is mostly replies to meeting invites. His learned
+ * "signature" came out as his sign-off, his name, then
+ * "-----Original Appointment-----" and the invite headers. Appended to a draft,
+ * the body ended in a dash, the completeness check read that as a truncation,
+ * and every draft he should have had was discarded before it reached his
+ * Outlook. That is the Black Gold call on 2026-08-12 and it was never about the
+ * reply path.
+ *
+ * Everything past the first boundary is another person's prose. It is wrong in
+ * a signature and wrong in a voice sample, so it is cut in one place for both.
+ */
+const QUOTED_BOUNDARY_RE =
+  /^\s*(?:-{2,}\s*original\s+(?:message|appointment)\s*-{2,}|_{5,}\s*$|from:\s|sent:\s|on\s.{0,160}\swrote:\s*$|>)/i;
+
+function cutQuotedTail(text: string): string {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => QUOTED_BOUNDARY_RE.test(l));
+  return at === -1 ? text : lines.slice(0, at).join("\n");
+}
+
 function stripMailChrome(text: string): string {
-  return text
+  return cutQuotedTail(text)
     .replace(/Get Outlook for (iOS|Android)\s*<[^>]*>/gi, "")
     .replace(/Sent from my (iPhone|iPad|Android|BlackBerry)[^\n]*/gi, "")
     .replace(/\[cid:[^\]]*\]\s*(<[^>]*>)?/gi, "")
@@ -513,6 +550,7 @@ Non-negotiable rules:
 6. If a gate is genuinely open (economic buyer absent, no decision process mapped, no next meeting), work ONE of them in as a soft closing question. Never list gaps at the customer.
 6a. ASK ABOUT PROCESS, NEVER ABOUT MONEY, in writing. "Is there a formal approval process we should plan around?" is right. "Is there a budget range set?" is wrong: in an email a money question reads as qualifying them rather than helping them, it invites a defensive or evasive answer, and it is the line most likely to get forwarded to procurement. Budget belongs on a call where the rep can read the reaction. Process questions surface the same authority and timing information without the edge, and they give the customer something easy and flattering to answer.
 7. Match the sample voice for greeting, sign-off, sentence length and formality. If the samples are terse, be terse.
+7a. GREET ONLY THE PEOPLE LISTED UNDER "WRITING TO". The rep is the sender and must never appear in their own greeting, and neither must anyone else from the rep's own company. Names in the transcript are the room, not the address line. If no recipients are listed, open without names rather than guessing from the transcript.
 8. Any proposed time carries a TIMEZONE. "Thursday, August 13th at 10:00 AM ET", never a bare "10:00 AM". These customers span Canada, Latin America, Europe and Asia, and an unqualified time is how a booked meeting turns into a no-show. When the customer's own timezone is given below, state the time in THEIRS, then the rep's in brackets: "10:00 AM ET (9:00 AM CT my time)". Writing a time only in the seller's zone quietly makes the buyer do the conversion.
 9. Distinguish what is IN THIS EMAIL from what will be REVIEWED at the meeting. A recording, a datasheet or a video is in this email: write "here's the recording", present tense. A proposal, pricing or an implementation estimate is walked through live, because emailing it ahead removes the reason for the meeting and lets the buyer evaluate it alone. Unless the transcript shows the rep explicitly promising to email a proposal ahead, do NOT say it is coming. Do not lump them together: "the proposal, recording and estimate are on their way" is wrong when only the recording is going now.
 10. FORMAT AS SHORT STANDALONE LINES, one thought each, with a blank line between. Never a dense paragraph. A rep reads this on a phone between calls and a wall of text gets rewritten. Roughly: greeting, one line on what is in the email, one line with the dated ask, one optional line with the softer question.
@@ -557,6 +595,9 @@ function buildUserMessage(
     `TODAY: ${today}`,
     `CUSTOMER: ${input.account}`,
     input.attendees ? `ON THE CALL: ${input.attendees}` : "",
+    input.recipients
+      ? `WRITING TO (greet these people and nobody else): ${input.recipients}`
+      : "",
     input.callDate ? `CALL DATE: ${input.callDate}` : "",
     s.customerTimezone
       ? `CUSTOMER TIMEZONE (they said so on the call): ${s.customerTimezone}. Propose the time in this zone.`
@@ -694,6 +735,22 @@ export async function generateFollowUpDraft(
   // the model ran out of room, and a body not ending in terminal punctuation or
   // a sign-off is the same failure arriving quietly. Returning nothing is right:
   // no draft is recoverable, half a draft in a rep's outbox is not.
+  //
+  // Check the MODEL'S body, before the signature is appended. The check used to
+  // run afterwards, which meant it read the last character of the signature and
+  // never once looked at the text it exists to police: a body truncated
+  // mid-sentence passed whenever the signature happened to end in a letter, and
+  // a sound body was thrown away whenever the signature did not. Both halves of
+  // that showed up in production.
+  const modelTail = parsed.body.trimEnd().slice(-1);
+  if (resp.stop_reason === "max_tokens" || !/[.!?"')\dA-Za-z]/.test(modelTail)) {
+    console.warn(
+      `[followup-draft] discarding truncated draft for ${input.account} ` +
+        `(stop_reason=${resp.stop_reason}, body ends "${parsed.body.trimEnd().slice(-24)}")`,
+    );
+    return null;
+  }
+
   // Append the sign-off ourselves. The model kept abandoning it mid-word
   // ("Ha" for "Happy to..."), and a rep's sign-off is fixed text anyway: not
   // worth a generation, and worth getting exactly right.
@@ -704,16 +761,6 @@ export async function generateFollowUpDraft(
   // thing each rep did to a draft was retype their own signature.
   const signature = learnSignature(samples, repFirstName(input.mailbox));
   parsed.body = `${parsed.body.trimEnd()}\n\n${signature ?? `Best regards,\n${repFirstName(input.mailbox)}`}`;
-
-  const tail = parsed.body.trimEnd().slice(-1);
-  const looksComplete = /[.!?"')\dA-Za-z]/.test(tail);
-  if (resp.stop_reason === "max_tokens" || !looksComplete) {
-    console.warn(
-      `[followup-draft] discarding truncated draft for ${input.account} ` +
-        `(stop_reason=${resp.stop_reason}, ends "${parsed.body.trimEnd().slice(-24)}")`,
-    );
-    return null;
-  }
 
   // On a reply, Graph fills recipients from the thread. Only a fresh draft
   // needs them, and then only customer-side addresses.
@@ -837,14 +884,29 @@ export async function autoDraftFollowUpForCall(args: {
   }
 
   const people = Array.isArray(args.participants)
-    ? (args.participants as Array<{ email?: string | null }>)
+    ? (args.participants as Array<{ email?: string | null; name?: string | null }>)
     : [];
-  const customerEmails = people
-    .map((p) => (p?.email ?? "").toLowerCase().trim())
-    .filter((e) => e.includes("@") && domainOf(e) !== "magaya.com");
+  const customerSide = people.filter((p) => {
+    const e = (p?.email ?? "").toLowerCase().trim();
+    return e.includes("@") && domainOf(e) !== "magaya.com";
+  });
+  const customerEmails = customerSide.map((p) => (p.email ?? "").toLowerCase().trim());
   if (customerEmails.length === 0) {
     return { created: false, reason: "no customer-side attendee on the call" };
   }
+
+  // First names of the customer-side attendees, for the greeting. Same filter
+  // that decides who receives the mail, so the greeting and the address line
+  // cannot disagree about who this email is for.
+  const recipients = customerSide
+    .map((p, i) => {
+      const name = (p.name ?? "").trim();
+      if (name) return name.split(/\s+/)[0];
+      const local = customerEmails[i].split("@")[0].split(/[._-]/)[0];
+      return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
+    })
+    .filter(Boolean)
+    .join(", ");
 
   const db = supabaseAdmin();
   const prior = await db
@@ -881,6 +943,7 @@ export async function autoDraftFollowUpForCall(args: {
     account: args.account,
     summary: args.summary,
     attendees: args.attendees,
+    recipients: recipients || undefined,
     callDate: args.callDate ?? null,
     calendarConnectionId: conn.data?.id ?? null,
   });
