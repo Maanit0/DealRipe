@@ -94,7 +94,10 @@ async function main(): Promise<void> {
     for (const s of skips) console.log(`    skip   ${s.label}: ${s.reason}`);
     if (res.written) console.log(`  SENT`);
     else console.log(`  not sent: ${res.reason ?? "no reason given"}`);
-    if (writes.length === 0) {
+    // Only explain an empty plan when a plan was actually attempted. When the
+    // deal never got that far, printing the extraction explanation sends you
+    // looking at the framework for a problem that lives in write precedence.
+    if (writes.length === 0 && res.plan) {
       console.log(`  An empty plan means no confirmed extraction maps to one of the eight`);
       console.log(`  Account fields in FIELD_SOURCES. Check with why-no-writeback.ts: the`);
       console.log(`  call may have confirmed plenty that only Rolldog has a home for.`);
