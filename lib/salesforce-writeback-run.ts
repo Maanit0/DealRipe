@@ -42,7 +42,23 @@ import { resolveTenantId } from "./tenant-deal-lookup";
  * from the org or invisible to the integration user is skipped with a reason
  * rather than producing an error. Nothing here hardcodes an API name.
  */
-const FIELD_SOURCES: ReadonlyArray<{ label: string; fieldKey: string; asBoolean?: boolean }> = Object.freeze([
+/**
+ * `yesNo` marks a Yes/No PICKLIST, which is not the same thing as a checkbox.
+ *
+ * A boolean has one value and no third state, so an unchecked box means "not
+ * established" and writing false would claim a negative we do not have. That is
+ * why asBoolean fields only ever tick. A Yes/No picklist has three states, Yes,
+ * No and blank, so a customer saying they have no warehouse is real information
+ * the field can hold, and dropping it would repeat the Rolldog checklist
+ * mistake in reverse: discarding a recorded "no" because the code could only
+ * imagine recording a "yes".
+ */
+const FIELD_SOURCES: ReadonlyArray<{
+  label: string;
+  fieldKey: string;
+  asBoolean?: boolean;
+  yesNo?: boolean;
+}> = Object.freeze([
   { label: "Business Issues", fieldKey: "why_looking_now" },
   { label: "Software Purposes", fieldKey: "why_looking" },
   { label: "Any Other Software", fieldKey: "existing_systems" },
@@ -51,6 +67,29 @@ const FIELD_SOURCES: ReadonlyArray<{ label: string; fieldKey: string; asBoolean?
   { label: "Compelling Events", fieldKey: "why_looking_now", asBoolean: true },
   { label: "Budget Confirmed", fieldKey: "budget_fit", asBoolean: true },
   { label: "Executive Sponsorship", fieldKey: "sql4_exec_involvement", asBoolean: true },
+
+  // Discovery profile. Added 2026-08-13, chosen by how often Magaya's own reps
+  // fill each field across the 29 linked accounts rather than by what the
+  // validation rule names. Special_Handling_Instructions sits at 0% and is
+  // deliberately absent.
+  //
+  // Types matter more here than in the block above, and each is handled by
+  // planAccountWriteBack rather than here:
+  //   Number_of_Users            double     -> first number in the sentence
+  //   Are_they_FF_NVOCC...       boolean    -> only ever checked, never cleared
+  //   Does_lead_have_a_warehouse picklist   Yes | No
+  //   Accounting_System_Used     picklist   exact vendor name or nothing
+  //   Annual_Company_Revenue     picklist   band, fitted from a stated figure
+  //
+  // These labels are looked up verbatim against WANTED_LABELS in
+  // salesforce-context.ts, which matches Salesforce's own field labels
+  // including the question marks and slashes. A near-miss here does not error,
+  // it reports "field not visible to the integration user" and skips forever.
+  { label: "Number of Users", fieldKey: "user_count" },
+  { label: "Are they FF/NVOCC/Courier/3PL?", fieldKey: "business_type", asBoolean: true },
+  { label: "Does lead have a warehouse?", fieldKey: "has_warehouse", yesNo: true },
+  { label: "Accounting System Used", fieldKey: "accounting_system" },
+  { label: "Annual Company Revenue", fieldKey: "annual_revenue" },
 ]);
 
 /**
@@ -199,13 +238,19 @@ export async function writeBackDealToSalesforce(
 
   const proposed = FIELD_SOURCES.flatMap((src) => {
     const e = extraction[src.fieldKey];
-    if (!e || e.status !== "Yes") return [];
+    if (!e) return [];
+    // A Yes/No picklist can hold a recorded No. Everything else needs a Yes:
+    // "Unknown" is the absence of an answer and must never become a value.
+    const usable = src.yesNo ? e.status === "Yes" || e.status === "No" : e.status === "Yes";
+    if (!usable) return [];
     const answer = (e.answer ?? "").trim();
-    if (!answer) return [];
+    // A yesNo field carries its meaning in the status, so it does not need the
+    // model to have phrased an answer as well.
+    if (!answer && !src.yesNo) return [];
     return [
       {
         label: src.label,
-        value: src.asBoolean ? true : answer,
+        value: src.yesNo ? (e.status === "Yes" ? "Yes" : "No") : src.asBoolean ? true : answer,
         evidence: e.evidence ?? null,
         confidence: CONFIRMED_CONFIDENCE,
       },

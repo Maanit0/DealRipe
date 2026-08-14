@@ -84,6 +84,13 @@ export const SALESFORCE_WRITE_FIELDS: readonly string[] = Object.freeze([
    * changes.
    */
   "contacts",
+  /**
+   * Fields on the Account's open Opportunity: the intro call outcome and the
+   * next-step agreement checkbox. Its own token because an Opportunity is a
+   * different object with a different audience, and an audit row that called it
+   * an Account write would misstate what was touched.
+   */
+  "opportunity",
 ]);
 
 export class SalesforceScopeViolationError extends Error {

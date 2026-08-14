@@ -7,9 +7,11 @@
  *
  * After this script runs for tenant T:
  *   - public.qualification_frameworks has one row (T, 'Magaya Rolldog', 'rolldog')
- *   - public.framework_fields has 27 rows: 10 Rolldog-writable sub-object
- *     fields + 17 briefing-only (3 cross-stage + 14 SQL stage-gate items),
- *     each tagged with a stage_key (SQL1..SQL5)
+ *   - public.framework_fields has 33 rows: 10 Rolldog-writable sub-object
+ *     fields + 17 briefing-only (3 cross-stage + 14 SQL stage-gate items)
+ *     + 6 discovery-profile fields (5 mapped to Salesforce Sales Development
+ *     fields, 1 NDA signal with no CRM field), each tagged with a stage_key
+ *     (SQL1..SQL5)
  *   - public.deals where tenant=T and framework_id is null are pointed at
  *     the new framework
  *   - public.field_extractions for tenant T with null framework_id are
@@ -204,6 +206,86 @@ const MAGAYA_FIELDS: MagayaFieldSeed[] = [
       attr: "notes",
       parser: "text",
     },
+  },
+
+  // ----- Bucket D: discovery profile -----
+  //
+  // The company facts a Magaya rep gathers before anything is qualified: size,
+  // shape of the business, what they run today. Every one of these has a
+  // Salesforce Sales Development field behind it, and every one was chosen
+  // because Magaya's own reps already fill it. Fill rates across the 29 linked
+  // accounts, measured 2026-08-13: warehouse 52%, users 52%, revenue 45%,
+  // FF/NVOCC 41%, accounting system 34%. Special_Handling_Instructions sits at
+  // 0% and is deliberately absent: extracting a field no rep has ever filled is
+  // work nobody reads.
+  //
+  // write_target is null because these are SALESFORCE fields and this column
+  // only describes Rolldog sub-object writes. lib/salesforce-writeback-run.ts
+  // maps them by field_key through FIELD_SOURCES.
+  //
+  // Extracted on EVERY deal, not only Salesforce-only ones. A deal that gains a
+  // Rolldog opportunity would otherwise stop collecting its own profile at
+  // exactly the point the profile starts mattering, and the briefings, the
+  // forecast room and the digest all read from the extraction rather than from
+  // either CRM.
+  //
+  // Where the Salesforce field is a picklist, its EXACT vocabulary is in the
+  // question. Salesforce matches picklist values literally, so an answer of
+  // "they use Quickbooks" against a list containing "QuickBooks Online" is
+  // silently dropped and the field sits empty while appearing wired. Asking the
+  // model to answer in Magaya's own terms is the difference between a mapping
+  // and a working field.
+  {
+    field_key: "user_count",
+    label: "Company Profile",
+    question:
+      "How many people at the customer would use the software? ANSWER WITH A SINGLE NUMBER and nothing else (e.g. '12', '30'). If they gave a range, answer with the lower bound. If they gave a number of offices or employees rather than users, that is not this: answer Unknown. Only what the customer said, never an inference from company size.",
+    stage_key: "SQL1",
+    write_target: null,
+  },
+  {
+    field_key: "business_type",
+    label: "Company Profile",
+    question:
+      "Did the customer describe their business as a freight forwarder, NVOCC, customs broker, courier, or 3PL (or any combination)? Yes if they described themselves as any of those. No if they are something else entirely, such as a shipper, importer, manufacturer or retailer moving their own goods. Unknown if the call does not say.",
+    stage_key: "SQL1",
+    write_target: null,
+  },
+  {
+    field_key: "has_warehouse",
+    label: "Company Profile",
+    question:
+      "Does the customer operate a warehouse or handle physical storage themselves? Yes only if they said so. A customer who moves freight without storing it is No, and that No is worth recording. Unknown if it never came up.",
+    stage_key: "SQL1",
+    write_target: null,
+  },
+  {
+    field_key: "accounting_system",
+    label: "Company Profile",
+    question:
+      "What accounting system does the customer run today? ANSWER WITH EXACTLY ONE OF THESE VALUES, copied character for character: Alegra | BrexApp (Colombia) | Cargowise | Compaqi (Mexico) | Contifico (Ecuador) | Exactus (Brazil) | FreshBooks | In-house/Custom Built | Lawson | Microsoft Dynamics | Microsoft Dynamics 365 | Microsoft Dynamics GP/Great Plains | Netsuite | No Accounting System | Nubox (LATAM) | OpenERP/Odoo | QuickBooks Desktop - Pro, Enterprise, Etc. | QuickBooks Online | Sage | Sage 100 | Sage 50/PeachTree | Sage Intacct | SAP | SAP Business One | Siesa (LATAM) | Tally (India). If they named a system not on this list, or named one too vaguely to choose between the options (for example 'QuickBooks' without saying Online or Desktop), answer Unknown. Do not guess between two similar options.",
+    stage_key: "SQL1",
+    write_target: null,
+  },
+  {
+    field_key: "annual_revenue",
+    label: "Company Profile",
+    question:
+      "What annual revenue did the customer state for their business? ANSWER WITH EXACTLY ONE OF THESE BANDS: 0 to 1 Million | 1 Million to 10 Million | 10 Million to 20 Million | 20 Million to 50 Million | 50 Million to 100 Million | 100 Million or More. Convert whatever figure they gave into the right band. Revenue only: shipment counts, TEUs, headcount and container volumes are not revenue. Unknown if they gave no revenue figure.",
+    stage_key: "SQL1",
+    write_target: null,
+  },
+  {
+    field_key: "nda_resistance",
+    label: "NDA",
+    question:
+      "Did the customer push back on signing a mutual NDA before a demo? Yes if they questioned why one is needed, deferred it, or said they would need to check internally. No if they agreed readily or one is already signed. Unknown if it never came up.",
+    stage_key: "SQL1",
+    // No Salesforce field exists for this. It lives in the briefing, because
+    // Eduardo reads resistance here as a signal about authority rather than
+    // about legal: "if they go back and say I need an NDA, who authorizes this?
+    // That for us is a tell sign." That judgement was nowhere in the system.
+    write_target: null,
   },
 
   // ----- Bucket B: cross-stage briefing-only, no Rolldog write target -----

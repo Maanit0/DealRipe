@@ -794,11 +794,16 @@ async function processRow(
           const { logCallToSalesforce } = await import("./salesforce-activity");
           const meta = await db
             .from("calls")
-            .select("title, participants, deals!inner(account, rep_email)")
+            .select("title, participants, deal_id, deals!inner(account, rep_email)")
             .eq("id", callId)
             .maybeSingle();
           const m = meta.data as
-            | { title: string | null; participants: unknown; deals: { account: string; rep_email: string | null } }
+            | {
+                title: string | null;
+                participants: unknown;
+                deal_id: string | null;
+                deals: { account: string; rep_email: string | null };
+              }
             | null;
           const people = Array.isArray(m?.participants)
             ? (m?.participants as Array<{ name?: string | null; email?: string | null }>)
@@ -877,6 +882,52 @@ async function processRow(
             console.error(
               `[transcript-sync] salesforce contact sync threw for call ${callId}:`,
               cErr instanceof Error ? cErr.message : cErr,
+            );
+          }
+
+          // The Salesforce OPPORTUNITY, which is a different surface from the
+          // Account and holds two facts we already know. Runs even where a
+          // Rolldog opportunity exists: Intro_Call_Appointment_Outcome has no
+          // Rolldog equivalent, so deal-level precedence would record it
+          // nowhere. Precedence is a per-field question.
+          try {
+            const { writeOpportunityFromCall } = await import("./salesforce-opportunity");
+            // Is this the deal's first call that produced a conversation? The
+            // field is named for the intro call, so stamping it after the
+            // fourth meeting would overwrite what a rep uses it to remember.
+            const prior = await db
+              .from("calls")
+              .select("id, outcome, scheduled_start")
+              .eq("deal_id", m?.deal_id ?? "")
+              .in("outcome", ["captured", "no_show", "no_conversation"])
+              .order("scheduled_start", { ascending: true })
+              .limit(1);
+            const isFirstCall = (prior.data ?? [])[0]?.id === callId;
+
+            const nextStep = await db
+              .from("field_extractions")
+              .select("status")
+              .eq("deal_id", m?.deal_id ?? "")
+              .eq("framework_field_key", "next_step_confirmed")
+              .maybeSingle();
+
+            const oppRes = await writeOpportunityFromCall({
+              tenantSlug: "magaya",
+              accountId: sf.accountId,
+              callOutcome: "captured",
+              isFirstCall,
+              nextStepConfirmed: (nextStep.data as { status?: string } | null)?.status ?? null,
+              apply: true,
+            });
+            console.log(
+              `[transcript-sync] salesforce opportunity for call ${callId}: ` +
+                (oppRes.written.length > 0 ? oppRes.written.join("; ") : "nothing written") +
+                (oppRes.skipped.length > 0 ? `  (${oppRes.skipped.map((s) => `${s.field}: ${s.reason}`).join("; ")})` : ""),
+            );
+          } catch (oErr) {
+            console.error(
+              `[transcript-sync] salesforce opportunity write threw for call ${callId}:`,
+              oErr instanceof Error ? oErr.message : oErr,
             );
           }
         }

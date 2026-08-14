@@ -140,6 +140,62 @@ function matchPicklist(raw: string, allowed: ReadonlyArray<string>): string | nu
   return allowed.find((a) => a.trim().toLowerCase() === s) ?? null;
 }
 
+/**
+ * The first number in a sentence, or null.
+ *
+ * This used to strip every non-digit and parse what was left, which turns
+ * "about 30 users across two offices" into 302 and "10 to 15 seats" into 1015.
+ * Extractions are phrased by a model in the customer's own words, so multi-
+ * number answers are the norm rather than the exception, and a silently wrong
+ * user count in a customer's CRM is worse than a blank one.
+ *
+ * A range takes its lower bound: "10 to 15 users" is 10. Understating is
+ * recoverable by a rep glancing at it; overstating flatters the deal.
+ */
+function firstNumber(raw: string): number | null {
+  const m = raw.replace(/,(?=\d{3}\b)/g, "").match(/\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Fit a stated revenue figure into Magaya's band picklist.
+ *
+ * Annual_Company_Revenue__c is a picklist of ranges ("1 Million to 10 Million"),
+ * and a customer says "we did about eight million last year". Exact string
+ * matching can never succeed on that, so the field would sit at 0% forever
+ * while looking like it was mapped.
+ *
+ * Returns null when no figure can be read, which leaves the field blank rather
+ * than guessing a band. A wrong revenue band is a wrong qualification.
+ */
+function revenueBand(raw: string, allowed: ReadonlyArray<string>): string | null {
+  const s = raw.toLowerCase();
+  const n = firstNumber(s);
+  if (n === null) return null;
+
+  // Normalise to millions. "8 million", "8m", "8,000,000" and "800k" all have
+  // to land in the same unit before any band can be chosen.
+  let millions: number;
+  if (/\b(million|mill\b|mm\b|m\b)/.test(s)) millions = n;
+  else if (/\b(billion|bn\b|b\b)/.test(s)) millions = n * 1000;
+  else if (/\b(thousand|k\b)/.test(s)) millions = n / 1000;
+  else if (n >= 1_000_000) millions = n / 1_000_000;
+  else if (n >= 1000) millions = n / 1_000_000;
+  else return null; // a bare small number is not a revenue figure
+
+  const band =
+    millions < 1 ? "0 to 1 Million"
+    : millions < 10 ? "1 Million to 10 Million"
+    : millions < 20 ? "10 Million to 20 Million"
+    : millions < 50 ? "20 Million to 50 Million"
+    : millions < 100 ? "50 Million to 100 Million"
+    : "100 Million or More";
+
+  return matchPicklist(band, allowed);
+}
+
 function toIsoDate(raw: string | number | boolean): string | null {
   const d = new Date(String(raw));
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
@@ -226,7 +282,12 @@ export async function planAccountWriteBack(args: {
       }
 
       case "picklist": {
-        const v = matchPicklist(String(p.value), f.picklistValues);
+        // Revenue is a band picklist and the answer is a figure in the
+        // customer's words, so exact matching can never succeed on it.
+        const v =
+          f.name === "Annual_Company_Revenue__c"
+            ? revenueBand(String(p.value), f.picklistValues)
+            : matchPicklist(String(p.value), f.picklistValues);
         if (!v) {
           skips.push({
             label: p.label,
@@ -286,8 +347,8 @@ export async function planAccountWriteBack(args: {
       case "double":
       case "int":
       case "currency": {
-        const n = Number(String(p.value).replace(/[^0-9.]/g, ""));
-        if (!Number.isFinite(n) || n <= 0) {
+        const n = firstNumber(String(p.value));
+        if (n === null || n <= 0) {
           skips.push({ label: p.label, apiName: f.name, reason: `"${String(p.value).slice(0, 40)}" is not a number` });
           break;
         }
