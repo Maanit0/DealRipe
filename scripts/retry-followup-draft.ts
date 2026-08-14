@@ -169,7 +169,13 @@ async function main(): Promise<void> {
     console.log(`  created if it succeeds, so only do this when a near-duplicate is acceptable.`);
   }
 
-  console.log(`\n  No outbound mail from ${rep} to ${domains.join(", ")} since the call.`);
+  // Only true when the check above found nothing. This line used to print
+  // unconditionally, so a --diagnose run said "already emailed the customer"
+  // and "no outbound mail since the call" four lines apart, about the same
+  // mailbox. Two statements from one check cannot be allowed to disagree.
+  if (!repEmailed) {
+    console.log(`\n  No outbound mail from ${rep} to ${domains.join(", ")} since the call.`);
+  }
   console.log(`  Every cheap guard passes, so the decline happened inside createFollowUpDraft.`);
   if (!apply) {
     console.log(`  Re-run with --apply to regenerate the summary and try the draft for real.\n`);

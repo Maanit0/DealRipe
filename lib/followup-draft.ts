@@ -895,6 +895,49 @@ export async function autoDraftFollowUpForCall(args: {
     return { created: false, reason: "no customer-side attendee on the call" };
   }
 
+  // Has the rep already followed up themselves?
+  //
+  // A draft exists to save a job, not to duplicate one that is done. On
+  // 2026-08-13 three of Ariel's drafts failed transiently and he wrote all
+  // three himself within hours; a retry that ignored that would have dropped
+  // near-duplicates into his Outlook the next day. Now that transcript-sync
+  // retries automatically, this check is what stops the retry being worse than
+  // the failure.
+  //
+  // A mailbox we could not read returns nothing, which must NOT be read as "no
+  // follow-up happened". Failing to check is a reason to hold off, not a
+  // licence to write.
+  const callEnd = args.callDate ? new Date(args.callDate) : null;
+  if (callEnd && !Number.isNaN(callEnd.getTime())) {
+    const { listMailboxMessages, domainOf: domOf } = await import("./graph-mail");
+    const domains = Array.from(new Set(customerEmails.map((e) => domOf(e)).filter(Boolean))) as string[];
+    try {
+      const msgs = await listMailboxMessages({
+        tenantIdOrDomain: "magaya.com",
+        mailbox,
+        since: callEnd,
+        domains,
+        maxPages: 3,
+      });
+      const already = msgs
+        .filter((m) => m.outbound)
+        .find((m) => [...m.to, ...m.cc].some((a) => domains.includes(domOf(a) ?? "")));
+      if (already) {
+        return {
+          created: false,
+          reason: `rep already emailed the customer after this call ("${already.subject}"), so no draft was written`,
+        };
+      }
+    } catch (err) {
+      return {
+        created: false,
+        reason: `could not read ${mailbox} to check whether the rep already followed up (${
+          err instanceof Error ? err.message : String(err)
+        }); holding off rather than risking a duplicate`,
+      };
+    }
+  }
+
   // First names of the customer-side attendees, for the greeting. Same filter
   // that decides who receives the mail, so the greeting and the address line
   // cannot disagree about who this email is for.

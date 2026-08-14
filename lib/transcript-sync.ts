@@ -146,8 +146,32 @@ export async function runTranscriptSync(
     );
   }
 
+  // Stop before Vercel kills us.
+  //
+  // maxDuration is 300s and this loop does every pending call in one
+  // invocation: extraction, recap, draft, two CRM write-backs and contacts,
+  // roughly 60-90 seconds each. Four or five calls finishing in the same window
+  // and the function is terminated mid-chain, silently, with no error anywhere.
+  //
+  // That is what happened to Ariel on 2026-08-13. Miracle, Mollax and KCarlton
+  // all show a recap sent and no follow-up draft, and the draft is the step
+  // immediately after the recap. No guard declined those drafts; the process
+  // died before reaching them.
+  //
+  // Leaving a call for the next run costs five minutes. Being killed halfway
+  // costs the draft, the CRM write and the contacts, and reports nothing.
+  const startedAt = Date.now();
+  const BUDGET_MS = 240_000;
+
   for (const row of rows.data ?? []) {
     if (!row.recall_bot_id || !row.external_id) continue;
+    if (Date.now() - startedAt > BUDGET_MS) {
+      console.warn(
+        `[transcript-sync] stopping after ${Math.round((Date.now() - startedAt) / 1000)}s with ` +
+          `calls still pending. They are untouched and the next run picks them up.`,
+      );
+      break;
+    }
     counts.pollBots += 1;
     await processRow(
       {
@@ -165,7 +189,107 @@ export async function runTranscriptSync(
   // failed (they carry has_been_extracted=true, so the loop above skips them).
   await retryFailedExtractions(counts, emit);
 
+  // Third pass: recover follow-up drafts that failed for a transient reason.
+  await retryFailedDrafts();
+
   return counts;
+}
+
+/**
+ * Re-attempt follow-up drafts that failed transiently.
+ *
+ * On 2026-08-13 three of Ariel's drafts failed on the same afternoon and were
+ * never retried, because a draft got one attempt and its failure lived only in
+ * a console line. He wrote all three himself. Every one succeeded on the first
+ * manual retry with no code change, which is the definition of a failure that
+ * should have healed itself.
+ *
+ * Runs every five minutes with the rest of the sync. The rep-already-emailed
+ * check inside createFollowUpDraft is what makes this safe: by the time a retry
+ * lands, the rep may have sent their own, and a duplicate draft is worse than
+ * the original miss.
+ */
+async function retryFailedDrafts(): Promise<void> {
+  const db = supabaseAdmin();
+  const rows = await db
+    .from("calls")
+    .select("id, deal_id, participants, scheduled_start, call_date, meeting_type, ingest_error, deals!inner(account, rep_email)")
+    .like("ingest_error", `%${DRAFT_FAILURE_PREFIX}%`)
+    .limit(20);
+  if (rows.error) return;
+
+  for (const r of (rows.data ?? []) as unknown as Array<{
+    id: string;
+    deal_id: string;
+    participants: unknown;
+    scheduled_start: string | null;
+    call_date: string | null;
+    meeting_type: string | null;
+    ingest_error: string | null;
+    deals: { account: string; rep_email: string | null };
+  }>) {
+    const err = r.ingest_error ?? "";
+    const attempt = Number(err.match(/\[draft (\d+)\/\d+\]/)?.[1] ?? 0);
+    if (attempt >= MAX_DRAFT_RETRIES) continue;
+
+    const reason = err.slice(err.indexOf(DRAFT_FAILURE_PREFIX) + DRAFT_FAILURE_PREFIX.length);
+    if (!RETRYABLE_DRAFT_FAILURE.test(reason)) continue;
+
+    try {
+      const { generatePostCallSummary } = await import("./post-call-summary");
+      const { getFrameworkForDeal } = await import("./framework");
+      const { autoDraftFollowUpForCall } = await import("./followup-draft");
+
+      const tr = await db.from("transcripts").select("body").eq("call_id", r.id).maybeSingle();
+      const body = tr.data?.body ?? "";
+      if (body.trim().length < 50) continue;
+      const framework = await getFrameworkForDeal(r.deal_id);
+      if (!framework) continue;
+      const fx = await db
+        .from("field_extractions")
+        .select("framework_field_key, status, answer, evidence, confidence")
+        .eq("deal_id", r.deal_id);
+      const extraction = Object.fromEntries(
+        (fx.data ?? []).map((x) => [String((x as { framework_field_key: string }).framework_field_key), x]),
+      );
+
+      const summary = await generatePostCallSummary({
+        account: r.deals.account,
+        stageKey: "SQL1",
+        framework,
+        extraction: extraction as never,
+        transcript: body,
+      });
+
+      const draft = await autoDraftFollowUpForCall({
+        tenantId: await resolveMagayaTenantId(db),
+        callId: r.id,
+        dealId: r.deal_id,
+        account: r.deals.account,
+        repEmail: r.deals.rep_email,
+        meetingType: r.meeting_type,
+        summary,
+        callDate: r.scheduled_start ?? r.call_date,
+        participants: r.participants,
+      });
+
+      if (draft.created) {
+        console.log(`[transcript-sync] follow-up draft recovered on retry for call ${r.id}`);
+        await clearDraftFailure(db, r.id);
+      } else {
+        console.warn(`[transcript-sync] draft retry ${attempt + 1} failed for call ${r.id}: ${draft.reason}`);
+        await recordDraftFailure(db, r.id, draft.reason ?? "no reason given");
+      }
+    } catch (e) {
+      await recordDraftFailure(db, r.id, e instanceof Error ? e.message : String(e));
+    }
+  }
+}
+
+/** The tenant every cron in this file is pinned to. */
+async function resolveMagayaTenantId(db: ReturnType<typeof supabaseAdmin>): Promise<string> {
+  const t = await db.from("tenants").select("id").eq("slug", "magaya").maybeSingle();
+  return (t.data?.id as string) ?? "";
 }
 
 const MAX_INGEST_RETRIES = 3;
@@ -194,6 +318,60 @@ function describeBotFailure(bot: BotResource): string {
   parts.push(bot.statusSubCode === null ? "sub_code=(none given)" : `sub_code=${bot.statusSubCode}`);
   if (bot.statusMessage !== null) parts.push(`"${bot.statusMessage}"`);
   return parts.join(" ");
+}
+
+/**
+ * Reasons a draft failed that are worth trying again.
+ *
+ * A decision is permanent: the meeting was not an opportunity call, the mailbox
+ * is not allowlisted, there was no customer on the call, the rep already
+ * followed up. Retrying those is noise. A timeout, a rate limit, a 5xx, an
+ * empty model response, is the run being unlucky, and five minutes later it
+ * usually works. The Miracle draft that failed on 2026-08-13 succeeded on the
+ * first manual retry a day later with no code change.
+ *
+ * Default is NOT retryable. An unrecognised reason retried forever is worse
+ * than one that waits for a human.
+ */
+const RETRYABLE_DRAFT_FAILURE =
+  /timeout|timed out|rate.?limit|429|50\d\b|socket|network|fetch failed|ECONNRESET|overloaded|generation returned nothing|draft not created/i;
+
+const MAX_DRAFT_RETRIES = 3;
+const DRAFT_FAILURE_PREFIX = "[draft]";
+
+async function recordDraftFailure(
+  db: ReturnType<typeof supabaseAdmin>,
+  callId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const row = await db.from("calls").select("ingest_error").eq("id", callId).maybeSingle();
+    const prior = (row.data?.ingest_error ?? "") as string;
+    const attempt = Number(prior.match(/\[draft (\d+)\/\d+\]/)?.[1] ?? 0) + 1;
+    const rest = prior.replace(/\[draft \d+\/\d+\][^\n]*\n?/g, "").trim();
+    const line = `[draft ${attempt}/${MAX_DRAFT_RETRIES}] ${DRAFT_FAILURE_PREFIX} ${reason}`;
+    await db
+      .from("calls")
+      .update({ ingest_error: rest ? `${rest}\n${line}` : line })
+      .eq("id", callId);
+  } catch {
+    // Recording why a draft failed must never be the thing that breaks ingest.
+  }
+}
+
+async function clearDraftFailure(
+  db: ReturnType<typeof supabaseAdmin>,
+  callId: string,
+): Promise<void> {
+  try {
+    const row = await db.from("calls").select("ingest_error").eq("id", callId).maybeSingle();
+    const prior = (row.data?.ingest_error ?? "") as string;
+    if (!prior.includes(DRAFT_FAILURE_PREFIX)) return;
+    const rest = prior.replace(/\[draft \d+\/\d+\][^\n]*\n?/g, "").trim();
+    await db.from("calls").update({ ingest_error: rest.length > 0 ? rest : null }).eq("id", callId);
+  } catch {
+    // Same. A stale marker is untidy; a broken ingest is not.
+  }
 }
 
 function parseRetryCount(err: string | null): number {
@@ -718,6 +896,14 @@ async function processRow(
             });
             if (!draft.created) {
               console.warn(`[transcript-sync] follow-up draft skipped for call ${callId}: ${draft.reason}`);
+              // Persist WHY, so a missing draft is explainable and, when the
+              // reason is transient, retryable. Before this the only trace was
+              // a console line: three of Ariel's drafts failed on 2026-08-13
+              // and the first anyone knew was a red cross in the coverage view
+              // with nothing behind it.
+              await recordDraftFailure(db, callId, draft.reason ?? "no reason given");
+            } else {
+              await clearDraftFailure(db, callId);
             }
           }
         }
