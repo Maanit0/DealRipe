@@ -85,11 +85,24 @@ type SfContact = {
 
 type Participant = { name?: string | null; email?: string | null };
 
-/** "Ricardo Rios" -> { first: "Ricardo", last: "Rios" }. LastName is required. */
-export function splitName(full: string): { first: string | null; last: string } {
-  const parts = full.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return { first: null, last: "Unknown" };
-  if (parts.length === 1) return { first: null, last: parts[0] };
+/**
+ * A real human name from a calendar invite, or null.
+ *
+ * Outlook fills the display name with the address itself when the organiser
+ * typed an address rather than picking a person. Passing that through created
+ * nineteen contacts on TQL literally named "BEary@tql.com", visible to their
+ * reps and attributed to the integration user. A record named after an email is
+ * worse than no record: the gap is obvious, the junk looks deliberate.
+ *
+ * So this requires something that looks like a person: no "@", and at least two
+ * words. One-word display names are rejected too, because a lone "Bill" on a
+ * customer account is not a contact anyone can use.
+ */
+export function realName(display: string | null): { first: string | null; last: string } | null {
+  const full = (display ?? "").trim();
+  if (full.length === 0 || full.includes("@")) return null;
+  const parts = full.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return null;
   return { first: parts.slice(0, -1).join(" "), last: parts[parts.length - 1] };
 }
 
@@ -263,15 +276,21 @@ async function syncContactsInner(args: {
       continue;
     }
 
-    // No match anywhere: create. A person on a customer call with no record is
-    // the gap this exists to close.
-    const { first, last } = splitName(p.name ?? p.email.split("@")[0]);
+    // No match anywhere: create, but only if the invite gave us a real name.
+    // Without one we know an address attended and nothing else, and a contact
+    // named after an address is junk a rep has to clean up.
+    const named = realName(p.name);
+    if (!named) {
+      res.skipped += 1;
+      res.notes.push(`${p.email} has no record and the invite gave no usable name, so none was created`);
+      continue;
+    }
     const body: Record<string, unknown> = {
       AccountId: args.accountId,
-      LastName: last,
+      LastName: named.last,
       Email: p.email,
     };
-    if (first) body.FirstName = first;
+    if (named.first) body.FirstName = named.first;
     if (title) body.Title = title;
 
     if (!args.apply) {
@@ -292,7 +311,7 @@ async function syncContactsInner(args: {
     if (ins.status === 201) {
       res.created += 1;
       const created = (await ins.json().catch(() => ({}))) as { id?: string };
-      if (created.id) byEmail.set(p.email, { Id: created.id, FirstName: first, LastName: last, Name: p.name, Email: p.email, Title: title });
+      if (created.id) byEmail.set(p.email, { Id: created.id, FirstName: named.first, LastName: named.last, Name: p.name, Email: p.email, Title: title });
     } else {
       res.skipped += 1;
       res.notes.push(`create failed for ${p.name ?? p.email}: ${(await ins.text().catch(() => "")).slice(0, 160)}`);

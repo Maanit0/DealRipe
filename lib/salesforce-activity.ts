@@ -160,8 +160,24 @@ export function buildCallLogBody(args: {
   }
 
   if (s.stillOpen.length > 0) {
-    lines.push("", "STILL OPEN");
-    for (const o of s.stillOpen.slice(0, 6)) lines.push(`- ${o.label}`);
+    // Dedupe by label. The framework has several fields under one heading, so
+    // an untouched section produces "- Situation" three times over, which read
+    // like a bug to anyone looking at the record and was one. Only the labels
+    // are shown here, so two entries with the same label carry no more
+    // information than one.
+    const seen = new Set<string>();
+    const open: string[] = [];
+    for (const o of s.stillOpen) {
+      const label = o.label.trim();
+      if (label.length === 0 || seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      open.push(label);
+      if (open.length === 6) break;
+    }
+    if (open.length > 0) {
+      lines.push("", "STILL OPEN");
+      for (const label of open) lines.push(`- ${label}`);
+    }
   }
 
   const next = s.nextStepCommitment ?? s.suggestedNextStep;
@@ -169,10 +185,10 @@ export function buildCallLogBody(args: {
     lines.push("", s.nextStepCommitment ? "AGREED NEXT STEP" : "SUGGESTED NEXT STEP", next.trim());
   }
 
-  lines.push(
-    "",
-    `Logged by DealRipe from the call on ${activityDate(args.callDate)}. Qualification fields on this account were updated from the same call.`,
-  );
+  // Do not claim the fields were updated. They are refused by
+  // Record_Triggered_ACCOUNT_Before_Save and have never landed, so this line
+  // asserted something false on every task written since the feature shipped.
+  lines.push("", `Logged by DealRipe from the call on ${activityDate(args.callDate)}.`);
 
   const body = lines.join("\n");
   return body.length > DESCRIPTION_MAX ? `${body.slice(0, DESCRIPTION_MAX - 3)}...` : body;
