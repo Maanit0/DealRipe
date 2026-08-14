@@ -267,7 +267,14 @@ export async function planAccountWriteBack(args: {
           skips.push({ label: p.label, apiName: f.name, reason: `confidence ${(p.confidence ?? 0).toFixed(2)} below ${BOOLEAN_MIN_CONFIDENCE} for a checkbox` });
           break;
         }
-        if (existingRaw === true) break; // already true, nothing to do
+        if (existingRaw === true) {
+          // Say so. This used to break silently, so a confirmed field that was
+          // already ticked appeared in neither writes nor skips and looked like
+          // it had never been extracted. business_type came back Yes at 0.97
+          // confidence on Miracle and vanished from the plan entirely.
+          skips.push({ label: p.label, apiName: f.name, reason: "already checked" });
+          break;
+        }
         writes.push({
           label: p.label,
           apiName: f.name,
@@ -316,7 +323,10 @@ export async function planAccountWriteBack(args: {
         // Union with whatever is already selected, so a BDR's choice survives.
         const had = existing ? existing.split(";").map((s) => s.trim()).filter(Boolean) : [];
         const merged = [...new Set([...had, ...parts])];
-        if (merged.length === had.length) break; // nothing new
+        if (merged.length === had.length) {
+          skips.push({ label: p.label, apiName: f.name, reason: `already contains ${parts.join(", ")}` });
+          break;
+        }
         writes.push({
           label: p.label,
           apiName: f.name,
@@ -347,9 +357,24 @@ export async function planAccountWriteBack(args: {
       case "double":
       case "int":
       case "currency": {
-        const n = firstNumber(String(p.value));
+        // The question asks for a bare number. A prose answer means the model
+        // ignored that, and pulling the first digits out of a sentence is how
+        // "about 30 users across two offices" becomes a user count nobody can
+        // account for. Taking the first number is a good fallback for "30
+        // users"; it is a guess on a paragraph, and a wrong number in a
+        // customer's CRM is the kind of error a rep spots and remembers.
+        const raw = String(p.value).trim();
+        if (raw.split(/\s+/).length > 4) {
+          skips.push({
+            label: p.label,
+            apiName: f.name,
+            reason: `"${raw.slice(0, 40)}" is prose, not a number; not guessing which figure is meant`,
+          });
+          break;
+        }
+        const n = firstNumber(raw);
         if (n === null || n <= 0) {
-          skips.push({ label: p.label, apiName: f.name, reason: `"${String(p.value).slice(0, 40)}" is not a number` });
+          skips.push({ label: p.label, apiName: f.name, reason: `"${raw.slice(0, 40)}" is not a number` });
           break;
         }
         if (existing) {

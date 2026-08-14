@@ -42,14 +42,39 @@ async function main(): Promise<void> {
   const tenantId = await resolveTenantId("magaya");
   const db = supabaseAdmin();
 
-  const deal = await db
+  // Accept an external id OR an account name. Some scripts in this repo match
+  // on one and some on the other, which costs a lookup every time and is a
+  // pointless thing to have to remember. Exact external id first, so a name
+  // that happens to look like an id can never shadow the real row.
+  let deal = await db
     .from("deals")
-    .select("id, account")
+    .select("id, account, external_id")
     .eq("tenant_id", tenantId)
     .eq("external_id", ext)
     .maybeSingle();
+
+  if (!deal.data) {
+    const byName = await db
+      .from("deals")
+      .select("id, account, external_id")
+      .eq("tenant_id", tenantId)
+      .ilike("account", `%${ext}%`);
+    const hits = byName.data ?? [];
+    if (hits.length > 1) {
+      // Re-extracting the wrong deal is not recoverable by re-running, so an
+      // ambiguous name is refused rather than resolved to the first match.
+      console.error(`'${ext}' matches ${hits.length} deals. Be more specific:`);
+      for (const h of hits) console.error(`  ${h.account}  ${h.external_id}`);
+      process.exit(1);
+    }
+    if (hits.length === 1) {
+      deal = { ...byName, data: hits[0], error: null } as typeof deal;
+      console.log(`Matched "${hits[0].account}" (${hits[0].external_id}) by name.`);
+    }
+  }
+
   if (deal.error || !deal.data) {
-    console.error(`Deal '${ext}' not found.`);
+    console.error(`Deal '${ext}' not found by external id or account name.`);
     process.exit(1);
   }
 

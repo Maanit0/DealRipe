@@ -95,12 +95,25 @@ async function main(): Promise<void> {
 
       // Transcript: present, absent, or present but empty. The third case is
       // the one that silently produces an empty extraction.
-      let transcript = "none";
-      if (c.transcript_id) {
-        const t = await db.from("transcripts").select("body").eq("call_id", c.id).maybeSingle();
-        const body = (t.data?.body ?? "") as string;
+      //
+      // Ask the transcripts table directly. This used to look only when
+      // calls.transcript_id was set, so a body stored against call_id with that
+      // column null reported as "none" and made a recoverable deal look lost.
+      // Miracle read "transcript none" two hours after its stored transcript
+      // was used to generate a recap. Every other consumer, reextract-deal and
+      // log-salesforce-calls included, queries by call_id, so the diagnostic was
+      // the only thing that disagreed with production.
+      const t = await db.from("transcripts").select("body").eq("call_id", c.id).maybeSingle();
+      let transcript: string;
+      if (t.error) {
+        transcript = `COULD NOT CHECK (${t.error.message})`;
+      } else if (!t.data) {
+        transcript = "none";
+      } else {
+        const body = (t.data.body ?? "") as string;
         transcript = body.length > 0 ? `${body.length} chars` : "row exists but body is EMPTY";
       }
+      if (!c.transcript_id && t.data) transcript += "  (calls.transcript_id is null, body found by call_id)";
       console.log(`      transcript  ${transcript}`);
       console.log(`      extracted   ${c.has_been_extracted ? "yes" : "NO"}`);
       if (c.ingest_error) console.log(`      error       ${c.ingest_error.slice(0, 160)}`);

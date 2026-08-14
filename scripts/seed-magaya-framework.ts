@@ -239,7 +239,7 @@ const MAGAYA_FIELDS: MagayaFieldSeed[] = [
     field_key: "user_count",
     label: "Company Profile",
     question:
-      "How many people at the customer would use the software? ANSWER WITH A SINGLE NUMBER and nothing else (e.g. '12', '30'). If they gave a range, answer with the lower bound. If they gave a number of offices or employees rather than users, that is not this: answer Unknown. Only what the customer said, never an inference from company size.",
+      "Did the customer say how many people would use the software? Yes if they gave a number, and then ANSWER WITH THAT SINGLE NUMBER and nothing else (e.g. '12', '30'), taking the lower bound of any range. Unknown if they did not say, or gave a number of offices or employees rather than users. THE ONLY TWO VALID STATUSES FOR THIS FIELD ARE Yes AND Unknown. Never answer No; there is no condition here that can be 'not met'.",
     stage_key: "SQL1",
     write_target: null,
   },
@@ -263,7 +263,7 @@ const MAGAYA_FIELDS: MagayaFieldSeed[] = [
     field_key: "accounting_system",
     label: "Company Profile",
     question:
-      "What accounting system does the customer run today? ANSWER WITH EXACTLY ONE OF THESE VALUES, copied character for character: Alegra | BrexApp (Colombia) | Cargowise | Compaqi (Mexico) | Contifico (Ecuador) | Exactus (Brazil) | FreshBooks | In-house/Custom Built | Lawson | Microsoft Dynamics | Microsoft Dynamics 365 | Microsoft Dynamics GP/Great Plains | Netsuite | No Accounting System | Nubox (LATAM) | OpenERP/Odoo | QuickBooks Desktop - Pro, Enterprise, Etc. | QuickBooks Online | Sage | Sage 100 | Sage 50/PeachTree | Sage Intacct | SAP | SAP Business One | Siesa (LATAM) | Tally (India). If they named a system not on this list, or named one too vaguely to choose between the options (for example 'QuickBooks' without saying Online or Desktop), answer Unknown. Do not guess between two similar options.",
+      "Did the customer say what accounting system they run today? THE ONLY TWO VALID STATUSES FOR THIS FIELD ARE Yes AND Unknown. Never answer No; there is no condition here that can be 'not met'. Use Unknown when accounting software did not come up at all. Use Yes whenever they told us, INCLUDING when what they told us is that they have none: a customer who says everything is done manually or that they have no accounting software is a Yes whose answer is 'No Accounting System'. When Yes, ANSWER WITH EXACTLY ONE OF THESE VALUES, copied character for character: Alegra | BrexApp (Colombia) | Cargowise | Compaqi (Mexico) | Contifico (Ecuador) | Exactus (Brazil) | FreshBooks | In-house/Custom Built | Lawson | Microsoft Dynamics | Microsoft Dynamics 365 | Microsoft Dynamics GP/Great Plains | Netsuite | No Accounting System | Nubox (LATAM) | OpenERP/Odoo | QuickBooks Desktop - Pro, Enterprise, Etc. | QuickBooks Online | Sage | Sage 100 | Sage 50/PeachTree | Sage Intacct | SAP | SAP Business One | Siesa (LATAM) | Tally (India). If they named a system not on this list, or named one too vaguely to choose between the options (for example 'QuickBooks' without saying Online or Desktop), answer Unknown. Do not guess between two similar options.",
     stage_key: "SQL1",
     write_target: null,
   },
@@ -271,7 +271,7 @@ const MAGAYA_FIELDS: MagayaFieldSeed[] = [
     field_key: "annual_revenue",
     label: "Company Profile",
     question:
-      "What annual revenue did the customer state for their business? ANSWER WITH EXACTLY ONE OF THESE BANDS: 0 to 1 Million | 1 Million to 10 Million | 10 Million to 20 Million | 20 Million to 50 Million | 50 Million to 100 Million | 100 Million or More. Convert whatever figure they gave into the right band. Revenue only: shipment counts, TEUs, headcount and container volumes are not revenue. Unknown if they gave no revenue figure.",
+      "Did the customer state their annual revenue? Yes if they gave a figure, and then ANSWER WITH EXACTLY ONE OF THESE BANDS: 0 to 1 Million | 1 Million to 10 Million | 10 Million to 20 Million | 20 Million to 50 Million | 50 Million to 100 Million | 100 Million or More, converting whatever figure they gave into the right band. Revenue only: shipment counts, TEUs, headcount and container volumes are not revenue. Unknown if they gave no revenue figure. THE ONLY TWO VALID STATUSES FOR THIS FIELD ARE Yes AND Unknown. Never answer No; there is no condition here that can be 'not met'.",
     stage_key: "SQL1",
     write_target: null,
   },
