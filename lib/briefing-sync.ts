@@ -224,7 +224,7 @@ async function processEvent(
   const keys = callKey === ev.eventId ? [ev.eventId] : [callKey, ev.eventId];
   const byKey = await db
     .from("calls")
-    .select("id, briefing_sent_at")
+    .select("id, briefing_sent_at, outcome, has_been_extracted")
     .eq("deal_id", dealId)
     .in("external_id", keys)
     .limit(1)
@@ -240,7 +240,7 @@ async function processEvent(
   if (!callRow.data) {
     const sameSlot = await db
       .from("calls")
-      .select("id, briefing_sent_at")
+      .select("id, briefing_sent_at, outcome, has_been_extracted")
       .eq("deal_id", dealId)
       .eq("scheduled_start", new Date(startMs).toISOString())
       .limit(2);
@@ -291,7 +291,7 @@ async function processEvent(
         },
         { onConflict: "deal_id,external_id" },
       )
-      .select("id, briefing_sent_at")
+      .select("id, briefing_sent_at, outcome, has_been_extracted")
       .single();
     if (created.error || !created.data) {
       // Losing this is not fatal: count it and let the next tick retry.
@@ -306,6 +306,26 @@ async function processEvent(
   if (alreadySentAt) {
     counts.alreadySent += 1;
     emit({ kind: "already-sent", account: dealExternalId, eventId: ev.eventId });
+    return;
+  }
+
+  // A meeting that has already been captured is over.
+  //
+  // The window runs from 35 minutes before the start to GRACE_AFTER_START_MINUTES
+  // after it, and that grace exists so a briefing still lands for a meeting that
+  // began before we got to it. But if the call already has an outcome, or has
+  // been through extraction, the conversation happened. Sending a "here is what
+  // to cover" email after the fact is worse than sending nothing: it tells the
+  // rep the system does not know what time it is.
+  const captured = callRow.data ?? null;
+  const outcome = (captured as { outcome?: string | null } | null)?.outcome ?? null;
+  const extracted = (captured as { has_been_extracted?: boolean | null } | null)?.has_been_extracted === true;
+  if (outcome !== null || extracted) {
+    emit({
+      kind: "skip",
+      eventId: ev.eventId,
+      reason: `call already ${outcome ?? "extracted"}; briefings are pre-call only`,
+    });
     return;
   }
 

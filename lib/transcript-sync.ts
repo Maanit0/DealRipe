@@ -334,7 +334,7 @@ function describeBotFailure(bot: BotResource): string {
  * than one that waits for a human.
  */
 const RETRYABLE_DRAFT_FAILURE =
-  /timeout|timed out|rate.?limit|429|50\d\b|socket|network|fetch failed|ECONNRESET|overloaded|generation returned nothing|draft not created/i;
+  /timeout|timed out|rate.?limit|429|50\d\b|socket|network|fetch failed|ECONNRESET|overloaded|generation returned nothing|draft not created|did not report a result/i;
 
 const MAX_DRAFT_RETRIES = 3;
 const DRAFT_FAILURE_PREFIX = "[draft]";
@@ -883,6 +883,18 @@ async function processRow(
             | { deal_id: string; participants: unknown; scheduled_start: string | null; call_date: string | null; deals: { account: string; rep_email: string | null } }
             | null;
           if (d) {
+            // Mark BEFORE attempting, not after failing.
+            //
+            // A failure that returns a reason can be recorded. A process that
+            // Vercel terminates returns nothing, records nothing, and is
+            // invisible to the retry pass, which is precisely the case the
+            // retry exists for. Writing the marker first means a killed run
+            // leaves evidence behind, and the next run finds it.
+            //
+            // Cleared on success a few lines down, so the steady state is an
+            // empty ingest_error.
+            await recordDraftFailure(db, callId, "attempt started; the run did not report a result");
+
             const draft = await autoDraftFollowUpForCall({
               tenantId,
               callId,
