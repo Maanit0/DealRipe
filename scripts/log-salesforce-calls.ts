@@ -72,6 +72,8 @@ async function main(): Promise<void> {
   const only = arg("--deal")?.toLowerCase() ?? null;
   const all = process.argv.includes("--all");
   const apply = process.argv.includes("--apply");
+  /** Write to Salesforce even when the deal also has a Rolldog opportunity. */
+  const alsoRolldog = process.argv.includes("--also-rolldog");
   if (!only && !all) {
     console.log("\nPass --deal <name> or --all.\n");
     process.exit(1);
@@ -107,10 +109,19 @@ async function main(): Promise<void> {
     // Same precedence rule the field write-back uses, imported rather than
     // restated. A checker that can disagree with production eventually will.
     const rolldog = resolveWriteTarget(d);
-    if (rolldog.authorized) {
-      console.log(`\n${d.account}\n  skip: Rolldog opportunity ${rolldog.opportunityId} owns this deal's history`);
+    if (rolldog.authorized && !alsoRolldog) {
+      console.log(
+        `\n${d.account}\n  skip: Rolldog opportunity ${rolldog.opportunityId} owns this deal's history` +
+          `\n        (--also-rolldog writes it to Salesforce as well)`,
+      );
       skipped++;
       continue;
+    }
+    if (rolldog.authorized) {
+      // Deliberate operator override, printed so it never looks like the
+      // default. Magaya runs both CRMs and a rep can live in either, so the
+      // precedence rule below is a product decision to revisit, not a law.
+      console.log(`\n${d.account}\n  note: also in Rolldog ${rolldog.opportunityId}; writing to Salesforce too`);
     }
     const target = resolveSalesforceWriteTarget(d);
     if (!target.authorized) {

@@ -20,9 +20,10 @@ database, and a Scotsman framework. None of that governs today.
 money. Mark Buman is the CRO and sponsor, Mitch Nemmers the VP.
 
 Six reps are enrolled: Juan Lopez, Eduardo Bencomo, Alexandra Suntrup, Daniel
-Blitstein, Ariel Rodriguez, Steven Johnson. The first four have connected
-calendars. **Steven has no Rolldog user id in `REP_UID`, so his deals can never
-auto-reconcile.** Get that before he takes pilot calls.
+Blitstein, Ariel Rodriguez, Steven Johnson. **All six connected as of
+2026-08-15**, Steven last after Mark chased him. He starts five weeks behind:
+none of his accounts are linked and calendar-sync never saw his history, so his
+first week of captures has nowhere to write until that is fixed.
 
 Their framework is SQL0 through SQL5, 27 fields, seeded by
 `scripts/seed-magaya-framework.ts`. Rolldog separately holds a 30-item
@@ -111,6 +112,43 @@ a gmail invite.
 **Free-mail domains never resolve by domain**, only by exact address. Matching
 `%@gmail.com` once returned an unrelated company's account.
 
+**The reliable join key for a Salesforce account is the BDR's activity, not the
+domain.** Eduardo, 2026-08-14: there is always an activity on the account when a
+BDR books a discovery call. Match that activity's date and contact against the
+calendar event. Domain matching alone put Dunavant on a stale 2021 record for a
+week and left ten of his deals unlinked. His own edge case: when a rep books the
+meeting himself he logs the activity after the fact or never, so fall back to
+contact, then account, then email the owner and say which step failed.
+
+**Account ids beginning `0013j` are legacy records, `001RN` are current.**
+Characters four to six encode the instance the record was created on. Two deals
+were pointed at `3j` accounts with zero activity while the live opportunity sat
+on the `RN` twin. Salesforce's own duplicate rule does not catch them.
+
+**`salesforce_link_confidence` fails closed below `confirmed`.** Setting
+`salesforce_account_id` alone produces a deal that is correctly linked and
+refuses every write, silently. Any tool that sets the id sets the confidence.
+
+**Magaya deploys per office, so one customer is several accounts.** Medov
+Logistics is the parent of Medov Europe. Read `ParentId`, and when the invite
+does not disambiguate, say which one was chosen rather than picking silently.
+Eduardo is relaxed about landing on the wrong one; he is not relaxed about not
+knowing which was used.
+
+**Rolldog and Salesforce are not either-or.** `log-salesforce-calls.ts` skipped
+every deal that had a Rolldog opportunity, so a deal in both CRMs got nothing in
+Salesforce by design. Eduardo wants both: Salesforce for portability and because
+accounting integrates there, Rolldog because it is where the sales team lives.
+Mark may disagree. Make it configurable rather than assumed.
+
+**The recap reads like a form because it is generated from the extraction.**
+Eduardo, 2026-08-14: "it's very tied to the checks that we have." This is
+topology, not prompt quality. The fix is three independent passes over the
+transcript rather than one derived pass: narrative in the customer's own words
+with no framework vocabulary, then the gap audit unchanged, then demo strategy.
+He was explicit that the audit stays. `docs/recap-target-eduardo.md` is the
+structure he asked for, written by him.
+
 ## The failure mode that dominates this codebase
 
 Every integration here fails by returning nothing rather than by throwing
@@ -189,12 +227,53 @@ All read-only unless noted. Run with `npx tsx scripts/<name>.ts`.
 
 ## Open items
 
-- Post-call draft voice tuning, one preview per rep
-- Salesforce write-back: mapping layer exists, no caller
-- Populating the Rolldog checklist from calls (currently we read it, never tick it)
-- Email context into briefings: nothing is wired
-- Weekly digest verification for six reps plus Mitch
+Ordered by what Eduardo asked for on 2026-08-14, since he is the only rep who
+has looked closely enough to be specific.
+
+**Before Monday**
+
+- Recap rebuilt to `docs/recap-target-eduardo.md`. Three passes, not one.
+- Follow-up draft recipients from the call's external attendees, not from
+  Graph's `createReply`, which addresses the last sender and therefore the BDR.
+  `customerEmails` is already computed and correct and never used on the reply
+  path.
+- Recap written as a Salesforce **Note** on the opportunity as well as the Task.
+  He pasted ours into a Note by hand the day after the call, then shares that
+  Note with the solution engineer to prep the demo. That is the real consumer.
+- Briefing enrichment: the account's own numbers, any prior proposal amount, and
+  the person. He does the LinkedIn and website pass by hand every morning.
+
+**This week**
+
+- Account linking off the BDR activity, per the note above
+- Re-invite the bot by forwarding the invite to a DealRipe address, plus a ping
+  to the rep while the bot is still in the lobby. On a prospect-hosted call the
+  rep is the only person inside who can admit it.
+- Route by call type. `Is_Renewal` and `Opportunity Type` are already on the
+  Salesforce layout. A renewal QBR currently gets a new-business audit and lists
+  budget and decision process as open on a customer who has paid for years.
+- Write to both CRMs when both are linked
+- Teams transcript access via Ernesto as the fallback when the bot never gets in
+- Salesforce Account field writes: blocked on their contractor exempting the
+  integration user from `Record_Triggered_ACCOUNT_Before_Save`
+- Steven Johnson: calendar and a Rolldog uid in `REP_UID`
+
+**The distance to what the decks promise**
+
+- The learning loop. `outcome-sync` runs daily and nothing consumes it. Until
+  this runs, "learns your winning sales motion" is a claim, not a feature.
+- Per-rep commit calibration. The four-hourly snapshots already accumulate the
+  data. Nothing computes it. This is the single reason Ashlee Horn trusted Clari
+  within 5%.
+- The waterfall view over those same snapshots
+- Slack delivery. Ashlee said flatly she does not like email as a channel.
+- The manager layer. Outputs go to rep, leader and CRM. In an org this size the
+  manager is the person doing the inspecting.
+- Mutual action plan
+- Email reasoning in briefings: reply latency, new people cc'd, questions never
+  answered, promises never delivered
+- Demo strategy, then branded deck, then pricing estimate from their price book.
+  Eduardo named this sequence himself and said not to start it until the recap
+  is right.
+- Populating the Rolldog checklist from calls (we read it, never tick it)
 - Rep UI for the Magaya tenant
-- Deals needing a rep to resolve: TQL (7 candidates), Medov (17), Dunavant
-  (only a 2021 record owned by another user), Milsped, Febest, Sunny Wing and
-  Gezairi (no Rolldog opportunity exists at all)

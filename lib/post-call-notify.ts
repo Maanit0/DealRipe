@@ -14,7 +14,8 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { renderGeneralRecapEmail } from "./emails/general-recap";
 import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
-import { classifyMeetingType, generateGeneralRecap, type MeetingType } from "./meeting-classify";
+import { type MeetingType } from "./meeting-classify";
+import { buildRecap } from "./recap-build";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
@@ -116,7 +117,19 @@ export async function sendPostCallSummary(args: {
   // every call is a new-opportunity sales call. A customer or internal meeting
   // gets a plain takeaways + next-steps recap instead of the qualification one
   // (which would be the wrong shape and read as noise, per Eduardo's feedback).
-  const meetingType = args.meetingType ?? (await classifyMeetingType(args.transcript));
+  const built = await buildRecap({
+    tenantId: args.tenantId,
+    dealId: dealRow.data.id,
+    account: dealRow.data.account,
+    framework,
+    fallbackStageKey: dealRow.data.stage_key,
+    closeDate: dealRow.data.rep_forecast_close_date,
+    extraction: args.extraction,
+    transcript: args.transcript,
+    callId: args.callId ?? null,
+    meetingType: args.meetingType,
+  });
+  const meetingType = built.meetingType;
   let email: ReturnType<typeof renderPostCallSummaryEmail> | null = null;
   // The recommended next action, surfaced for Rolldog next-step write-back. Only
   // set on the qualification recap (new opportunity), never a general recap.
@@ -126,95 +139,25 @@ export async function sendPostCallSummary(args: {
   let qualSummary: PostCallSummary | undefined;
   let genTasks: GeneratedTask[] = [];
 
-  if (meetingType !== "new_opportunity") {
-    const general = await generateGeneralRecap({
-      account: dealRow.data.account,
-      transcript: args.transcript,
-    });
-    if (general) {
-      email = renderGeneralRecapEmail({ account: dealRow.data.account, recap: general, meetingType });
-    }
-    // If general generation failed, fall through to the qualification recap.
-  }
+  if (built.kind === "general") {
+    email = renderGeneralRecapEmail({ account: built.account, recap: built.recap, meetingType });
+  } else {
+    const summary = built.summary;
+    genTasks = built.tasks;
 
-  if (!email) {
-    // "Still open" reflects the deal's cumulative call-verified state (the
-    // field_extractions roll-up, which already includes this call by the time
-    // this runs), not just what this one call covered, and never a stale CRM
-    // entry. Rolldog is read (light) only for the current stage. Best-effort.
-    let gapExtraction = args.extraction;
-    try {
-      gapExtraction = (await getDealExtraction(dealRow.data.id)) as unknown as ExtractionMap;
-    } catch (err) {
-      console.warn(
-        `[post-call] extraction roll-up read failed for deal ${args.dealExternalId}: ${
-          err instanceof Error ? err.message : String(err)
-        }; using this call's extraction`,
+    // buildRecap generates the tasks and deliberately does not persist them, so
+    // the write stays on the delivery side where it belongs. This is the only
+    // place that turns a generated task into a row.
+    if (args.callId && genTasks.length > 0) {
+      await createTasksForCall({
+        tenantId: args.tenantId,
+        dealId: dealRow.data.id,
+        callId: args.callId,
+        repEmail: to,
+        tasks: genTasks,
+      }).catch((err) =>
+        console.warn(`[post-call] task create failed: ${err instanceof Error ? err.message : String(err)}`),
       );
-    }
-    // Stage is calls-first (from the canonical deal context), so the recap's
-    // "where it stands" agrees with the briefing and the deal page rather than
-    // deferring to a stale/absent CRM stage. Best-effort: fall back to the deal's
-    // stored stage if the context can't be built.
-    let stageKey = dealRow.data.stage_key;
-    try {
-      const ctx = await getDealContext(args.tenantId, dealRow.data.id);
-      if (ctx) stageKey = ctx.effectiveStageKey;
-    } catch (err) {
-      console.warn(
-        `[post-call] deal context read failed for ${args.dealExternalId}: ${
-          err instanceof Error ? err.message : String(err)
-        }; using deal stage`,
-      );
-    }
-
-    const summary = await generatePostCallSummary({
-      account: dealRow.data.account,
-      stageKey,
-      closeDate: dealRow.data.rep_forecast_close_date ?? undefined,
-      framework,
-      extraction: args.extraction,
-      gapExtraction,
-      transcript: args.transcript,
-    });
-
-    // "Next step agreed but no meeting booked": if the call implies a follow-up
-    // meeting and the calendar has no upcoming call for this deal, flag it so the
-    // rep books it now instead of letting it slip. Best-effort; a read failure
-    // just leaves the flag off.
-    if (summary.followUpMeetingExpected) {
-      try {
-        const upcoming = await getUpcomingCallForDeal(args.tenantId, dealRow.data.id);
-        summary.noFollowupBooked = !upcoming;
-      } catch (err) {
-        console.warn(
-          `[post-call] upcoming-call check failed for ${args.dealExternalId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
-
-    // Generate the rep's next actions from the call (best-effort), show them in
-    // the recap, and persist them to the Actions tab attached to this call.
-    if (args.callId) {
-      genTasks = await generateTasksFromCall({
-        account: dealRow.data.account,
-        transcript: args.transcript,
-        stageKey,
-        nextStepHint: summary.nextStepCommitment ?? summary.suggestedNextStep,
-      }).catch(() => []);
-      if (genTasks.length > 0) {
-        await createTasksForCall({
-          tenantId: args.tenantId,
-          dealId: dealRow.data.id,
-          callId: args.callId,
-          repEmail: to,
-          tasks: genTasks,
-        }).catch((err) =>
-          console.warn(`[post-call] task create failed: ${err instanceof Error ? err.message : String(err)}`),
-        );
-      }
     }
 
     email = renderPostCallSummaryEmail(summary, genTasks);

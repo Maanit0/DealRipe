@@ -52,11 +52,11 @@ export const REP_UID: Record<string, string> = {
   // resolving to the same id confirms it independently.
   "arodriguez@magaya.com": "85", // Ariel, from SSL Intl Corp (opp 83618)
   "dblitstein@magaya.com": "758", // Daniel, from Custom Goods (opp 82005)
-  // TODO: steven (sjohnson@). He did not post an opportunity in the call chat.
-  // Until his id is here his promoted deals never link and never backfill to
-  // Rolldog, silently. unmappedReps() surfaces him and findLinkMatches logs a
-  // warning. Ask him for one Rolldog link, then run
-  // scripts/rolldog-owner-from-opp.ts <id> --name "<account>".
+  // Steven joined five weeks after the others; Mark chased him on 2026-08-15 and
+  // he sent one opportunity link the same morning. 93 is the user-id on Gold
+  // Point INBOND SUBSCRIPTION (opp 82443), read through the unscoped listing
+  // because a direct read is correctly refused by PILOT_OPPORTUNITY_IDS.
+  "sjohnson@magaya.com": "93", // Steven, from Gold Point (opp 82443)
 };
 
 /**

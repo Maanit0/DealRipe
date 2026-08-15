@@ -12,6 +12,13 @@
  *
  *   npx tsx scripts/preflight-reps.ts
  *   npx tsx scripts/preflight-reps.ts --days 7
+ *   npx tsx scripts/preflight-reps.ts --rep dblitstein@magaya.com --verbose
+ *
+ * --rep narrows to one rep (full address, mailbox name, or any part of their
+ * display name). --verbose prints every meeting Graph returned for that rep,
+ * with its organiser and its raw attendee list, because the summary line alone
+ * cannot tell you whether a rep has no external meetings or whether Graph
+ * returned no attendee data to judge them by.
  *
  * READ ONLY. Queries the database, Microsoft Graph and the env, and writes
  * nothing anywhere. Safe to run against production, which is the point.
@@ -20,8 +27,9 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+import { formatMeetingTime } from "../lib/graph-time";
 import { allowedMailboxes } from "../lib/graph-mail";
-import { listUpcomingMeetings } from "../lib/microsoft-graph";
+import { listUpcomingMeetings, type NormalizedMeeting } from "../lib/microsoft-graph";
 import { isAutoJoinRep } from "../lib/pilot-config";
 import { REP_UID } from "../lib/rolldog-reconcile";
 import { supabaseAdmin } from "../lib/supabase";
@@ -57,6 +65,8 @@ type Row = {
   mailbox: Check;
   meetings: Check;
   rolldog: Check;
+  /** --verbose only: one block per meeting Graph returned, printed under the row. */
+  meetingDetail: string[];
 };
 
 const OK = "ok  ";
@@ -68,8 +78,55 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/**
+ * Does this rep match the --rep filter? Accepts the full address, the mailbox
+ * name on its own, or any fragment of the display name, because nobody running
+ * this at 7am remembers whether Daniel is dblitstein or dblitstien.
+ */
+function matchesRep(rep: { name: string; email: string }, filter: string): boolean {
+  const f = filter.toLowerCase().trim();
+  if (!f) return true;
+  const email = rep.email.toLowerCase();
+  return email === f || email.split("@")[0] === f || rep.name.toLowerCase().includes(f);
+}
+
+/**
+ * One meeting, rendered exactly as Graph handed it over.
+ *
+ * The attendee list is printed raw and unfiltered, including the case where it
+ * is empty. "no external attendee" and "Graph returned no attendee data" are
+ * different findings with different fixes, and no summary count can separate
+ * them for you.
+ */
+function describeMeeting(m: NormalizedMeeting): string[] {
+  const lines: string[] = [];
+  const flags = [
+    m.isCancelled ? "CANCELLED" : null,
+    m.joinUrl ? null : "no join url",
+  ].filter(Boolean);
+  lines.push(
+    `      ${formatMeetingTime(m.start?.dateTime)}  ${m.subject ?? "(no subject)"}${
+      flags.length > 0 ? `  [${flags.join(", ")}]` : ""
+    }`,
+  );
+  lines.push(`         organiser  ${m.organizerEmail ?? "(none on the event)"}`);
+  if (m.attendees.length === 0) {
+    lines.push(`         attendees  (none returned by Graph)`);
+    return lines;
+  }
+  for (const a of m.attendees) {
+    const who = a.email ?? "(no address)";
+    const name = a.name ? ` "${a.name}"` : "";
+    const resp = a.responseStatus ? ` · ${a.responseStatus}` : "";
+    lines.push(`         attendee   ${who}${name}${resp}`);
+  }
+  return lines;
+}
+
 async function main(): Promise<void> {
   const days = Number(arg("--days") ?? 7);
+  const onlyRep = arg("--rep") ?? null;
+  const verbose = process.argv.includes("--verbose");
   const tenantId = await resolveTenantId(TENANT_SLUG);
   const db = supabaseAdmin();
 
@@ -86,14 +143,23 @@ async function main(): Promise<void> {
 
   const mailboxes = allowedMailboxes().map((m) => m.toLowerCase());
 
+  const team = onlyRep ? TEAM.filter((r) => matchesRep(r, onlyRep)) : TEAM;
+
   console.log("");
   console.log(`DealRipe preflight  ·  tenant '${TENANT_SLUG}'  ·  ${new Date().toISOString()}`);
   console.log(`Looking ${days} days ahead for scheduled meetings.`);
+  if (onlyRep) {
+    console.log(
+      `Filtered to --rep '${onlyRep}': ${team.length} of ${TEAM.length} reps${
+        team.length === 0 ? ". Nothing matched, so nothing below is a verdict on that rep." : ""
+      }`,
+    );
+  }
   console.log("");
 
   const rows: Row[] = [];
 
-  for (const rep of TEAM) {
+  for (const rep of team) {
     const email = rep.email.toLowerCase();
 
     if (!email) {
@@ -105,6 +171,7 @@ async function main(): Promise<void> {
         mailbox: { ok: false, note: "no email on file" },
         meetings: { ok: false, note: "no email on file" },
         rolldog: { ok: false, note: "no email on file" },
+        meetingDetail: [],
       });
       continue;
     }
@@ -125,11 +192,18 @@ async function main(): Promise<void> {
 
     // Upcoming meetings: the real proof that there is anything to brief on.
     let meetings: Check;
+    const meetingDetail: string[] = [];
     if (!conn) {
       meetings = { ok: false, note: "cannot check without a calendar connection" };
     } else {
       try {
         const upcoming = await listUpcomingMeetings(conn.id, days);
+        if (verbose) {
+          if (upcoming.length === 0) {
+            meetingDetail.push(`      (Graph returned no meetings in the next ${days} days)`);
+          }
+          for (const m of upcoming) meetingDetail.push(...describeMeeting(m));
+        }
         const external = upcoming.filter((m) =>
           (m.attendees ?? []).some((a) => {
             const d = (a.email ?? "").split("@")[1]?.toLowerCase() ?? "";
@@ -152,7 +226,7 @@ async function main(): Promise<void> {
       ? { ok: true, note: `user id ${REP_UID[email]}` }
       : { ok: false, note: "no Rolldog user id; reconciliation cannot attribute their calls" };
 
-    rows.push({ name: rep.name, email, calendar, autoJoin, mailbox, meetings, rolldog });
+    rows.push({ name: rep.name, email, calendar, autoJoin, mailbox, meetings, rolldog, meetingDetail });
   }
 
   // ---- Render -------------------------------------------------------------
@@ -167,6 +241,11 @@ async function main(): Promise<void> {
     console.log(`   ${label(r.mailbox)}  mailbox         ${r.mailbox.note}`);
     console.log(`   ${label(r.meetings)}  meetings        ${r.meetings.note}`);
     console.log(`   ${label(r.rolldog, true)}  rolldog id      ${r.rolldog.note}`);
+    if (r.meetingDetail.length > 0) {
+      console.log("");
+      console.log(`   meetings as Graph returned them:`);
+      for (const line of r.meetingDetail) console.log(line);
+    }
     console.log("");
   }
 
