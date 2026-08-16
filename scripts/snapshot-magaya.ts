@@ -35,7 +35,15 @@ async function main(): Promise<void> {
     const rd = rolldogByDeal.get(deal.id) ?? null;
     await recordDealSnapshot(tenantId, deal, framework, rd);
     written += 1;
-    console.log(`  snapshot: ${deal.account} (${rd?.stageName ?? deal.stageKey}${rd?.forecastCategory ? ` · ${rd.forecastCategory}` : ""})`);
+    // Say why there is no Rolldog state, rather than printing the deal's own
+    // stage as though it came from the CRM.
+    const rolldogNote =
+      rd?.status === "read"
+        ? `${rd.snapshot.stageName ?? "no stage"}${rd.snapshot.forecastCategory ? ` · ${rd.snapshot.forecastCategory}` : ""}`
+        : rd?.status === "no_opportunity"
+          ? `${deal.stageKey}, no Rolldog opportunity`
+          : `${deal.stageKey}, Rolldog unavailable`;
+    console.log(`  snapshot: ${deal.account} (${rolldogNote})`);
   }
   console.log(`snapshot-magaya complete: ${written} deal(s).`);
 }

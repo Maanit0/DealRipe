@@ -595,9 +595,17 @@ export function assertScopedWrite(
 const authorizedOppsStore = new AsyncLocalStorage<ReadonlySet<string>>();
 
 /**
- * Run `fn` with `opportunityIds` temporarily authorized for Rolldog writes.
- * Used only by rolldog-writeback, and only for a deal's own confirmed/high
- * opportunity match. Fail-closed: nothing is authorized outside this wrapper.
+ * Run `fn` with `opportunityIds` temporarily authorized for Rolldog reads and
+ * writes, and only ever for a deal's own opportunity. Fail-closed: nothing is
+ * authorized outside this wrapper.
+ *
+ * Callers, so an auditor can see the whole surface without grepping:
+ *   lib/rolldog-writeback.ts  the write itself, on a confirmed/high match
+ *   lib/deal-context.ts       the briefing's stage read
+ *   lib/stage-gates.ts        the rep's checklist read
+ *   lib/snapshot.ts           the four-hourly stage read
+ *   lib/rolldog-narrative.ts, lib/rolldog-reconcile.ts, lib/promotion.ts
+ * Every one of them passes the single opportunity already stored on the deal.
  */
 export function runWithAuthorizedOpportunities<T>(
   opportunityIds: readonly string[],

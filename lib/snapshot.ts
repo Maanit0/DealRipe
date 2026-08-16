@@ -23,8 +23,9 @@ import {
   frameworkStages,
   stageGateStatus,
 } from "./framework-stages";
+import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { rolldogOppIdForDeal } from "./pilot-config";
-import { getRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import { readRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import type { Deal } from "./seed-data";
 import { supabaseAdmin } from "./supabase";
 import { getDealsForTenant } from "./supabase-queries";
@@ -52,6 +53,31 @@ export type RolldogSnapshot = {
   score: string | null;
 };
 
+/**
+ * WHY the rolldog block is absent, which the block itself cannot say.
+ *
+ *   read             Rolldog answered. `rolldog` holds what it said.
+ *   no_opportunity   This deal has no Rolldog opportunity. Nothing to read.
+ *                    Salesforce-only deals live here.
+ *   unavailable      The read failed. We know nothing, including whether the
+ *                    deal has an opportunity at all.
+ *
+ * These were collapsed into one null, and the deals lookup dropped its error
+ * on the floor besides. Anything asking "did this deal's CRM stage move"
+ * across two snapshots has to answer "unknown" for the last two cases and
+ * would otherwise answer "no", which is the exact substitution of absence of
+ * evidence for evidence of absence this codebase keeps paying for.
+ *
+ * Absent on snapshots written before this was wired, which callers must also
+ * treat as unknown rather than assuming `read`.
+ */
+export type RolldogReadStatus = "read" | "no_opportunity" | "unavailable";
+
+export type RolldogRead =
+  | { status: "read"; snapshot: RolldogSnapshot }
+  | { status: "no_opportunity"; snapshot: null }
+  | { status: "unavailable"; snapshot: null; error: string };
+
 export type DealSignals = {
   stage: string;
   amount: number;
@@ -63,6 +89,11 @@ export type DealSignals = {
   gatesRolldog: Record<string, StageGateSnapshot> | null;
   // Rolldog's own current state this day (for real week-over-week movement).
   rolldog?: RolldogSnapshot | null;
+  // Why `rolldog` is what it is. Additive: every existing consumer of
+  // `rolldog` (lib/pipeline-changes.ts, scripts/deal-category-check.ts) is
+  // unaffected, and anything that needs to tell "no opportunity" from "the
+  // read failed" now can.
+  rolldogRead?: RolldogReadStatus;
   // Per-field answered state (Yes only; for diffing what newly answered).
   answered: string[];
   // Coarse risk flags computed from the signals.
@@ -72,46 +103,101 @@ export type DealSignals = {
 
 /**
  * Resolve each deal's live Rolldog state for the day's snapshot. One core read
- * per Rolldog-linked deal, best-effort: a deal that is not in Rolldog (or whose
- * read fails) maps to null and its snapshot simply carries no rolldog block.
- * Opp resolution mirrors the digest engine: the static pilot map wins, else the
- * stored column (statically-mapped pilot deals don't carry the column).
+ * per Rolldog-linked deal, best-effort. Opp resolution mirrors the digest
+ * engine: the static pilot map wins, else the stored column (statically-mapped
+ * pilot deals don't carry the column).
+ *
+ * Returns WHY there is no snapshot, never a bare null. Three things used to
+ * produce the same null here: a deal with no Rolldog opportunity, a Rolldog
+ * read that failed, and a deals lookup that failed (its error was discarded by
+ * `const { data }`, so a broken query returned an empty map and every deal
+ * silently lost its rolldog block for the day). Only the first is a fact about
+ * the deal.
+ *
+ * A FOURTH thing was producing it, and it was us. The read below was the only
+ * one on this path not wrapped in runWithAuthorizedOpportunities, so the scope
+ * guard refused every opportunity outside the static allowlist and the refusal
+ * arrived as a failed read. Between 2026-07-17 and 2026-08-16 that was 5,464
+ * refusals, and 21 live deals (Dunavant, Milsped, Gezairi, Unitedchb,
+ * Cargoservicesgroup and the rest) recorded a month of snapshots carrying no
+ * CRM stage at all. Everything downstream of those snapshots, the digest's
+ * movement detection, readStageMoved in the prescription ledger, and the
+ * per-rep calibration those snapshots exist to make possible, was reading our
+ * own refusal as a deal that had not moved.
+ *
+ * lib/deal-context.ts made the identical call on the identical opportunity
+ * wrapped, which is why a briefing for one of those deals showed its CRM stage
+ * on the same day its snapshot showed none.
  */
 export async function resolveRolldogSnapshots(
   tenantId: string,
   dealIds: string[],
-): Promise<Map<string, RolldogSnapshot | null>> {
-  const out = new Map<string, RolldogSnapshot | null>();
+): Promise<Map<string, RolldogRead>> {
+  const out = new Map<string, RolldogRead>();
   if (dealIds.length === 0) return out;
   const db = supabaseAdmin();
-  const { data } = await db
+  const res = await db
     .from("deals")
     .select("id, external_id, rolldog_opportunity_id")
     .eq("tenant_id", tenantId)
     .in("id", dealIds);
-  const rows = (data ?? []) as Array<{ id: string; external_id: string | null; rolldog_opportunity_id: string | null }>;
+  if (res.error) {
+    // Say it, for every deal asked about. Returning an empty map would have
+    // each caller conclude "no Rolldog opportunity" for deals that have one.
+    const error = `deals lookup failed: ${res.error.message}`;
+    console.error(`[snapshot] ${error}; no deal can be read from Rolldog this run`);
+    for (const id of dealIds) out.set(id, { status: "unavailable", snapshot: null, error });
+    return out;
+  }
+  const rows = (res.data ?? []) as Array<{ id: string; external_id: string | null; rolldog_opportunity_id: string | null }>;
+  const seen = new Set(rows.map((r) => r.id));
+  for (const id of dealIds) {
+    // Asked about, not returned. That is a missing deal row, not a deal
+    // without an opportunity.
+    if (!seen.has(id)) {
+      out.set(id, { status: "unavailable", snapshot: null, error: "deal not found in tenant" });
+    }
+  }
   await Promise.all(
     rows.map(async (r) => {
       const opp = (r.external_id ? rolldogOppIdForDeal(r.external_id) : null) ?? r.rolldog_opportunity_id;
       if (!opp) {
-        out.set(r.id, null);
+        out.set(r.id, { status: "no_opportunity", snapshot: null });
         return;
       }
-      const s = await getRolldogSummary(String(opp));
-      out.set(
-        r.id,
-        s
-          ? {
-              stageName: s.stageName,
-              stageKey: stageKeyFromSummary(s),
-              forecastCategory: s.forecastCategory,
-              dealSizeMonthly: s.dealSize,
-              closeDate: s.closeDate,
-              status: s.status,
-              score: s.score,
-            }
-          : null,
+      // readRolldogSummary rather than getRolldogSummary: the latter maps a
+      // failed read to null, which is the distinction this function exists to
+      // preserve.
+      //
+      // Authorize this one opportunity for the duration of this one read, the
+      // same wrapper and for the same reason as lib/deal-context.ts. The scope
+      // guard is fail-closed and only the static pilot ids pass by default, so
+      // without this every opportunity the reconciler linked throws and the
+      // deal snapshots as though it has no CRM record. Per-call and per-
+      // opportunity: PILOT_OPPORTUNITY_IDS is not widened, nothing else
+      // becomes readable, and a deal with no linked opportunity still reaches
+      // nothing at all because the `if (!opp)` above returned already.
+      const oppId = String(opp);
+      const read = await runWithAuthorizedOpportunities([oppId], () =>
+        readRolldogSummary(oppId),
       );
+      if (read.status !== "ok") {
+        out.set(r.id, { status: "unavailable", snapshot: null, error: read.error });
+        return;
+      }
+      const s = read.summary;
+      out.set(r.id, {
+        status: "read",
+        snapshot: {
+          stageName: s.stageName,
+          stageKey: stageKeyFromSummary(s),
+          forecastCategory: s.forecastCategory,
+          dealSizeMonthly: s.dealSize,
+          closeDate: s.closeDate,
+          status: s.status,
+          score: s.score,
+        },
+      });
     }),
   );
   return out;
@@ -142,7 +228,7 @@ function computeRisks(deal: Deal, framework: Framework): string[] {
 export function buildSignals(
   deal: Deal,
   framework: Framework,
-  rolldog?: RolldogSnapshot | null,
+  rolldog?: RolldogRead | null,
 ): DealSignals {
   const stages = frameworkStages(framework);
   const gatesDealripe: Record<string, StageGateSnapshot> = {};
@@ -164,7 +250,12 @@ export function buildSignals(
     daysInStage: deal.daysInStage,
     gatesDealripe,
     gatesRolldog: null,
-    rolldog: rolldog ?? null,
+    rolldog: rolldog?.snapshot ?? null,
+    // A snapshot with no read at all is recorded as unavailable, not as a deal
+    // without an opportunity. Callers cannot tell the difference from the
+    // rolldog block alone, and guessing the generous answer is how "no CRM
+    // movement" gets reported for a deal nobody managed to read.
+    rolldogRead: rolldog?.status ?? "unavailable",
     answered,
     risks: computeRisks(deal, framework),
     capturedAt: new Date().toISOString(),
@@ -179,7 +270,7 @@ export async function recordDealSnapshot(
   tenantId: string,
   deal: Deal,
   framework: Framework,
-  rolldog?: RolldogSnapshot | null,
+  rolldog?: RolldogRead | null,
 ): Promise<void> {
   const db = supabaseAdmin();
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
