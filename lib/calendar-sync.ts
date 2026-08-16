@@ -640,6 +640,7 @@ async function processEvent(
     try {
       bot = await createBot({ meetingUrl: ev.joinUrl, joinAt: eventIso });
     } catch (err) {
+      await recordDispatchFailure(callId, err, "createBot(new)");
       emit({
         kind: "error",
         eventId: ev.eventId,
@@ -651,7 +652,7 @@ async function processEvent(
     }
     const upd = await db
       .from("calls")
-      .update({ recall_bot_id: bot.id })
+      .update({ recall_bot_id: bot.id, capture_detail: null, capture_checked_at: null })
       .eq("id", callId);
     if (upd.error) {
       console.error(
@@ -811,6 +812,7 @@ async function processEvent(
     try {
       bot = await createBot({ meetingUrl: ev.joinUrl, joinAt: eventIso });
     } catch (err) {
+      await recordDispatchFailure(callRow.id, err, "createBot(retry)");
       emit({
         kind: "error",
         eventId: ev.eventId,
@@ -828,6 +830,8 @@ async function processEvent(
         scheduled_start: eventIso,
         participants: ev.attendees as unknown as Json,
         organizer_email: ev.organizerEmail,
+        capture_detail: null,
+        capture_checked_at: null,
       })
       .eq("id", callRow.id);
     if (upd.error) {
@@ -877,6 +881,50 @@ async function processEvent(
 // ====================================================================
 // Helpers
 // ====================================================================
+
+/**
+ * Write down that a bot was never dispatched, on the call itself.
+ *
+ * Found on 2026-08-16 by scripts/capture-health.ts. A call for Sunny Wing
+ * Logistics on 08-12 carried recall_bot_id null, outcome null, no
+ * ingest_error, and had sat untouched for four days. createBot had failed and
+ * the only trace was an emit that reached a log line and nothing durable.
+ *
+ * Nothing was ever going to find it. transcript-sync's main loop filters on
+ * recall_bot_id not null, capture-failures.ts queries outcome='capture_failed',
+ * and every rep and CRO view skips a call with no outcome. The retry branch
+ * above does re-dispatch a row with no bot, but only while the meeting is
+ * still ahead of us on the calendar: once it is in the past the event leaves
+ * the lookahead window and the row is orphaned permanently.
+ *
+ * This does not recover the call, which is not recoverable. It makes the
+ * failure legible so the next one is noticed in five minutes rather than in
+ * four days, and only if someone happens to look.
+ *
+ * Best-effort by design. Recording why a bot was not dispatched must never be
+ * the thing that stops the rest of the calendar syncing.
+ */
+async function recordDispatchFailure(
+  callId: string,
+  err: unknown,
+  phase: string,
+): Promise<void> {
+  try {
+    const message = err instanceof Error ? err.message : String(err);
+    await supabaseAdmin()
+      .from("calls")
+      .update({
+        // capture_evidence stays 'not_checked': there is no bot, so Recall has
+        // nothing to tell us about this meeting and never will. Saying we
+        // checked would be the exact lie this column exists to prevent.
+        capture_detail: `no bot was dispatched: ${phase} failed with ${message}`,
+        capture_checked_at: new Date().toISOString(),
+      })
+      .eq("id", callId);
+  } catch {
+    // Deliberately swallowed. See above.
+  }
+}
 
 /**
  * Ensure an auto-created deal exists for a customer domain. Inserts a minimal

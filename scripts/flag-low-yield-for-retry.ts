@@ -117,8 +117,17 @@ async function main(): Promise<void> {
     if (!apply) continue;
     const upd = await db
       .from("calls")
+      // Zero both budgets explicitly. Flagging a call for retry has to give it
+      // a retry: leaving a spent counter in place queues work the retry pass
+      // will skip on sight, which is the same silence this script exists to
+      // break. The old "[retry 0/3]" marker in the text no longer does this;
+      // the counters are columns now.
       .update({
-        ingest_error: `low extraction yield: ${rows} row(s) from a ${chars} char transcript [retry 0/3]`,
+        ingest_error: `low extraction yield: ${rows} row(s) from a ${chars} char transcript`,
+        ingest_failure_class: null,
+        ingest_content_attempts: 0,
+        ingest_infra_attempts: 0,
+        ingest_retry_after: null,
       } as never)
       .eq("id", c.id);
     console.log(upd.error ? `    FAILED: ${upd.error.message}` : `    flagged for retry`);
