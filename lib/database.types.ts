@@ -10,6 +10,17 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
+/**
+ * Three states, never two. "no" is a recorded negative; "unknown" means we
+ * did not check. Everything crossing an integration boundary in this
+ * codebase has to say which of the two it means, and the ledger's columns
+ * are typed so a caller cannot quietly write one for the other.
+ */
+export type Tristate = "yes" | "no" | "unknown";
+
+export type PrescriptionKind = "question" | "end_commitment" | "next_step" | "avoid";
+export type PrescriptionSource = "briefing" | "recap";
+
 export type Database = {
   public: {
     Tables: {
@@ -187,6 +198,39 @@ export type Database = {
           title: string | null;
           call_subtype: string | null;
           organizer_email: string | null;
+          capture_evidence: "observed" | "unavailable" | "not_checked";
+          capture_class:
+            | "captured"
+            | "no_show"
+            | "lobby_timeout"
+            | "lobby_refused"
+            | "never_joined"
+            | "media_lost"
+            | "unknown"
+            | null;
+          capture_sub_code: string | null;
+          capture_detail: string | null;
+          capture_status_changes: Json | null;
+          capture_checked_at: string | null;
+          ingest_failure_class:
+            | "provider"
+            | "auth"
+            | "rate_limit"
+            | "billing"
+            | "content"
+            | "unknown"
+            | null;
+          ingest_content_attempts: number;
+          ingest_infra_attempts: number;
+          ingest_retry_after: string | null;
+          followup_draft_state:
+            | "not_attempted"
+            | "drafted"
+            | "held"
+            | "failed"
+            | "unavailable";
+          followup_draft_reason: string | null;
+          followup_draft_attempts: number;
           created_at: string;
         };
         Insert: {
@@ -209,6 +253,39 @@ export type Database = {
           title?: string | null;
           call_subtype?: string | null;
           organizer_email?: string | null;
+          capture_evidence?: "observed" | "unavailable" | "not_checked";
+          capture_class?:
+            | "captured"
+            | "no_show"
+            | "lobby_timeout"
+            | "lobby_refused"
+            | "never_joined"
+            | "media_lost"
+            | "unknown"
+            | null;
+          capture_sub_code?: string | null;
+          capture_detail?: string | null;
+          capture_status_changes?: Json | null;
+          capture_checked_at?: string | null;
+          ingest_failure_class?:
+            | "provider"
+            | "auth"
+            | "rate_limit"
+            | "billing"
+            | "content"
+            | "unknown"
+            | null;
+          ingest_content_attempts?: number;
+          ingest_infra_attempts?: number;
+          ingest_retry_after?: string | null;
+          followup_draft_state?:
+            | "not_attempted"
+            | "drafted"
+            | "held"
+            | "failed"
+            | "unavailable";
+          followup_draft_reason?: string | null;
+          followup_draft_attempts?: number;
           created_at?: string;
         };
         Update: {
@@ -231,6 +308,39 @@ export type Database = {
           title?: string | null;
           call_subtype?: string | null;
           organizer_email?: string | null;
+          capture_evidence?: "observed" | "unavailable" | "not_checked";
+          capture_class?:
+            | "captured"
+            | "no_show"
+            | "lobby_timeout"
+            | "lobby_refused"
+            | "never_joined"
+            | "media_lost"
+            | "unknown"
+            | null;
+          capture_sub_code?: string | null;
+          capture_detail?: string | null;
+          capture_status_changes?: Json | null;
+          capture_checked_at?: string | null;
+          ingest_failure_class?:
+            | "provider"
+            | "auth"
+            | "rate_limit"
+            | "billing"
+            | "content"
+            | "unknown"
+            | null;
+          ingest_content_attempts?: number;
+          ingest_infra_attempts?: number;
+          ingest_retry_after?: string | null;
+          followup_draft_state?:
+            | "not_attempted"
+            | "drafted"
+            | "held"
+            | "failed"
+            | "unavailable";
+          followup_draft_reason?: string | null;
+          followup_draft_attempts?: number;
           created_at?: string;
         };
         Relationships: [];
@@ -520,39 +630,78 @@ export type Database = {
         };
         Relationships: [];
       };
+      /**
+       * The prescription ledger. See supabase/add-prescription-ledger.sql.
+       *
+       * followed and the three outcome columns are three-state on purpose.
+       * "unknown" means we did not check (no transcript, no calendar, no
+       * Rolldog block) and is never interchangeable with "no".
+       */
       prescribed_actions: {
         Row: {
           id: string;
           tenant_id: string;
           deal_id: string;
-          call_external_id: string | null;
-          framework_field_key: string;
-          prescription: string;
+          call_id: string;
+          issued_at: string;
+          kind: PrescriptionKind;
+          text: string;
+          source: PrescriptionSource;
+          followed: Tristate;
+          followed_evidence: string | null;
+          scored_at: string | null;
+          email_checked_at: string | null;
+          outcome_next_meeting: Tristate;
+          outcome_draft_sent: Tristate;
+          outcome_stage_moved: Tristate;
+          /** Null on rows recovered by parsing a sent briefing email. */
+          framework_field_keys: string[] | null;
           created_at: string;
-          asked_on_next_call: boolean | null;
           outcome_label: string | null;
+          /** DEPRECATED, superseded by `followed`. Nothing writes it. */
+          asked_on_next_call: boolean | null;
         };
         Insert: {
           id?: string;
           tenant_id: string;
           deal_id: string;
-          call_external_id?: string | null;
-          framework_field_key: string;
-          prescription: string;
+          call_id: string;
+          issued_at?: string;
+          kind: PrescriptionKind;
+          text: string;
+          source: PrescriptionSource;
+          followed?: Tristate;
+          followed_evidence?: string | null;
+          scored_at?: string | null;
+          email_checked_at?: string | null;
+          outcome_next_meeting?: Tristate;
+          outcome_draft_sent?: Tristate;
+          outcome_stage_moved?: Tristate;
+          framework_field_keys?: string[] | null;
           created_at?: string;
-          asked_on_next_call?: boolean | null;
           outcome_label?: string | null;
+          asked_on_next_call?: boolean | null;
         };
         Update: {
           id?: string;
           tenant_id?: string;
           deal_id?: string;
-          call_external_id?: string | null;
-          framework_field_key?: string;
-          prescription?: string;
+          call_id?: string;
+          issued_at?: string;
+          kind?: PrescriptionKind;
+          text?: string;
+          source?: PrescriptionSource;
+          followed?: Tristate;
+          followed_evidence?: string | null;
+          scored_at?: string | null;
+          email_checked_at?: string | null;
+          outcome_next_meeting?: Tristate;
+          outcome_draft_sent?: Tristate;
+          outcome_stage_moved?: Tristate;
+          framework_field_keys?: string[] | null;
           created_at?: string;
-          asked_on_next_call?: boolean | null;
           outcome_label?: string | null;
+          asked_on_next_call?: boolean | null;
         };
         Relationships: [];
       };
