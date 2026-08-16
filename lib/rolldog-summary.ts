@@ -15,6 +15,11 @@ export type RolldogSummary = {
   forecastCategory: string | null;
   closeDate: string | null;
   stageName: string | null;
+  /**
+   * Rolldog's numeric stage id, which is the only reliable handle on the one
+   * stage whose NAME carries no number. See stageKeyFromSummary below.
+   */
+  stageId: number | null;
   // Won/lost + removed. status carries the open/won/lost state; statusReason the
   // loss reason Mark cares about; archived flags a dropped opportunity.
   status: string | null;
@@ -49,6 +54,7 @@ export function summaryFromCore(core: Record<string, unknown>): RolldogSummary {
     forecastCategory: str(core["forecast-category"]),
     closeDate: str(core["close-date"]),
     stageName: str(core["stage-name"]),
+    stageId: num(core["stage"]),
     status: str(core["status"]),
     statusReason: str(core["status-reason"]),
     archived: bool(core["archived"]),
@@ -104,13 +110,51 @@ export function repLastActivityIso(args: {
 }
 
 /**
- * Parse a summary's Rolldog stage-name ("SQL 3 - Proposal Validation") into the
- * framework stage key ("SQL3"). Null if the name has no recognizable stage.
+ * Rolldog stage ids whose NAME cannot be parsed for a stage number.
+ *
+ * There is exactly one, and lib/stage-gates.ts already had to solve it for the
+ * checklist: Magaya's second stage is called "SQL - Develop Opportunity
+ * (Qualify)", with no digit anywhere in it, and it is SQL1. That file resolves
+ * it positionally and says so; this one was still parsing the name with a
+ * regex, so six live deals (Dunavant, Ztransportation, ILS Inc, All Square,
+ * Elif Utsukarci, Beyond Pegasus) briefed, snapshotted and scored as deals
+ * with no CRM stage at all while the checklist path knew exactly where they
+ * were.
+ *
+ * Keyed on the id rather than the name because the name is the thing that is
+ * already wrong, and because the same payload carries a leading space in one
+ * checklist item and a typo in another: these strings get tidied.
+ *
+ * Only the observed id is here. The ids run 200, 202 (SQL2), 204 (SQL3), 208
+ * (SQL5), which puts 200 exactly where SQL1 belongs and corroborates
+ * stage-gates, and SQL0 sits apart on 773. That arithmetic implies 206 is SQL4
+ * and it is deliberately NOT listed: nobody has seen it, its name carries a
+ * digit, and the regex below already handles it. Guessing an id here would put
+ * a deal in a stage nobody put it in.
+ */
+const STAGE_ID_TO_KEY: Readonly<Record<number, string>> = Object.freeze({
+  200: "SQL1",
+});
+
+/**
+ * Parse a summary's Rolldog stage into the framework stage key ("SQL3").
+ *
+ * Null means the stage could not be resolved, which on this pilot is usually
+ * an opportunity with no stage set at all: Rolldog returns a null stage-name
+ * and a stage of 0 or -1, and nine linked deals are in that state. That is a
+ * fact about their CRM, not a parse failure, and it must not be confused with
+ * SQL0, which is a real stage carrying id 773.
  */
 export function stageKeyFromSummary(s: RolldogSummary | null): string | null {
-  if (!s || !s.stageName) return null;
-  const m = s.stageName.match(/SQL\s*(\d)/i);
-  return m ? `SQL${m[1]}` : null;
+  if (!s) return null;
+  // The name first: it is what a human reads, and every numbered stage carries
+  // its number there.
+  const m = s.stageName?.match(/SQL\s*(\d)/i);
+  if (m) return `SQL${m[1]}`;
+  if (s.stageId !== null && s.stageId in STAGE_ID_TO_KEY) {
+    return STAGE_ID_TO_KEY[s.stageId];
+  }
+  return null;
 }
 
 /**
