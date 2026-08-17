@@ -37,6 +37,15 @@ export type NotifyResult = {
   /** The generated summary, so callers can reuse it instead of paying for a
    *  second generation (the follow-up draft needs exactly this). */
   summary?: PostCallSummary;
+  /**
+   * The commitments the narrative pass verified, for the follow-up draft.
+   *
+   * Handed over rather than re-derived. The draft used to work the transcript
+   * out for itself and promised Juan's customer a proposal he was not sending,
+   * because the call discussed one. Every line here has a transcript quote
+   * behind it.
+   */
+  agreed?: { weOwe: string[]; customerOwes: string[] };
 };
 
 export async function sendPostCallSummary(args: {
@@ -138,6 +147,7 @@ export async function sendPostCallSummary(args: {
   // Handed back so the follow-up draft can reuse it. Regenerating would be a
   // second Anthropic call on every ingest for identical output.
   let qualSummary: PostCallSummary | undefined;
+  let agreed: { weOwe: string[]; customerOwes: string[] } | undefined;
   let genTasks: GeneratedTask[] = [];
 
   email = renderRecapEmail(built);
@@ -161,6 +171,12 @@ export async function sendPostCallSummary(args: {
 
     nextAction = built.summary.nextStepCommitment ?? built.summary.suggestedNextStep;
     qualSummary = built.summary;
+    if (built.narrative.status === "present") {
+      agreed = {
+        weOwe: built.narrative.value.nextSteps.weOwe.map((f) => f.statement),
+        customerOwes: built.narrative.value.nextSteps.customerOwes.map((f) => f.statement),
+      };
+    }
   }
 
   // Both passes produced nothing. Say so rather than sending an empty shell:
@@ -191,7 +207,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: null,
     });
-    return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction, summary: qualSummary };
+    return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction, summary: qualSummary, agreed };
   }
 
   try {
@@ -213,7 +229,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: res.id || null,
     });
-    return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary };
+    return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary, agreed };
   } catch (err) {
     if (err instanceof MailerConfigError) {
       return { sent: false, to, reason: `mailer not configured: ${err.message}` };

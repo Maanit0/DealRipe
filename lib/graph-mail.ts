@@ -409,6 +409,19 @@ export async function createReplyDraft(args: {
   messageId: string;
   body: string;
   contentType?: "Text" | "HTML";
+  /**
+   * Override the recipients Graph seeded from the thread.
+   *
+   * createReply addresses whoever sent the LAST message on the thread. When a
+   * BDR booked the meeting, that is the BDR, so the rep's follow-up to the
+   * customer was being addressed to a colleague. Eduardo caught this on
+   * 2026-08-14: "your recap email is going out to that BDR instead of the
+   * prospect in the meeting."
+   *
+   * Empty or omitted leaves Graph's own recipients alone, which is correct when
+   * the thread genuinely is with the customer.
+   */
+  toRecipients?: ReadonlyArray<string>;
 }): Promise<DraftResult> {
   assertMailboxAllowed(args.mailbox);
   const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
@@ -454,7 +467,14 @@ export async function createReplyDraft(args: {
   const patchRes = await fetch(`${GRAPH_BASE}/users/${user}/messages/${encodeURIComponent(draft.id)}`, {
     method: "PATCH",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ body: { contentType, content } }),
+    body: JSON.stringify({
+      body: { contentType, content },
+      // Only when the caller supplied them. Sending an empty array would clear
+      // the recipients entirely and leave the rep a draft addressed to nobody.
+      ...(args.toRecipients && args.toRecipients.length > 0
+        ? { toRecipients: args.toRecipients.map((a) => ({ emailAddress: { address: a } })) }
+        : {}),
+    }),
   });
   if (!patchRes.ok) throw new GraphMailError(patchRes.status, await patchRes.text());
 

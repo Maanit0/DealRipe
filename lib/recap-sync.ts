@@ -240,6 +240,7 @@ export async function runRecapSync(
               repEmail: d.deals.rep_email,
               meetingType: row.meeting_type,
               summary: notify.summary,
+              agreed: notify.agreed,
               callDate: d.scheduled_start ?? d.call_date,
               participants: d.participants,
             });

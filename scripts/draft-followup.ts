@@ -98,6 +98,25 @@ async function main(): Promise<void> {
   });
   if (!summary) throw new Error("post-call summary generation returned null");
 
+  // The verified commitments the draft opens on. Without this the preview tests
+  // the old path: the draft would re-derive what was agreed from the transcript
+  // and could promise something the rep never offered, which is the defect this
+  // exists to check for.
+  const { buildNarrative } = await import("../lib/recap-passes");
+  const narrative = await buildNarrative({ account: ctx.account, transcript: tr.data.body });
+  const agreed =
+    narrative.result.status === "present"
+      ? {
+          weOwe: narrative.result.value.nextSteps.weOwe.map((f) => f.statement),
+          customerOwes: narrative.result.value.nextSteps.customerOwes.map((f) => f.statement),
+        }
+      : undefined;
+  console.log(
+    agreed
+      ? `agreed:     ${agreed.weOwe.length} we owe, ${agreed.customerOwes.length} they owe`
+      : `agreed:     none (${narrative.result.status})`,
+  );
+
   console.log(`  next-step commitment: ${summary.nextStepCommitment ?? "(none agreed on the call)"}`);
   console.log(`  follow-up expected:   ${summary.followUpMeetingExpected}`);
   console.log(`  should book a date:   ${summary.shouldBookNextMeeting}`);
@@ -118,6 +137,7 @@ async function main(): Promise<void> {
     customerEmails,
     account: ctx.account,
     summary,
+    agreed,
     attendees: ctx.attendees,
     callDate: call.data.scheduled_start ?? call.data.call_date,
     calendarConnectionId: conn.data?.id ?? null,

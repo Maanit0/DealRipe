@@ -69,6 +69,20 @@ export type FollowUpDraftInput = {
   callDate?: string | null;
   /** microsoft_connections id for the rep, so times come from their calendar. */
   calendarConnectionId?: string | null;
+  /**
+   * What each side actually committed to, from the recap's narrative pass.
+   *
+   * Eduardo, 2026-08-14, on the draft: "it's a little dry. I would like to have
+   * more like, we discussed this, we agree this, kind of like have a starting
+   * point in the next conversation."
+   *
+   * These carry a verified transcript quote behind each line, which is the
+   * point: the draft used to re-derive commitments from the transcript on its
+   * own and got them wrong. Juan's draft opened by promising a proposal
+   * implementation estimate he was never sending, because the call discussed
+   * one and he was only sending a recording. Discussed is not agreed.
+   */
+  agreed?: { weOwe: string[]; customerOwes: string[] };
 };
 
 export type FollowUpDraft = {
@@ -609,6 +623,21 @@ function buildUserMessage(
     `WHAT WAS SAID ON THE CALL:`,
     s.recap,
     ``,
+    // The opening the reps asked for. Stated before the ask, because the point
+    // is to give the customer a foundation to reply from rather than a cold
+    // request.
+    input.agreed && (input.agreed.weOwe.length > 0 || input.agreed.customerOwes.length > 0)
+      ? [
+          `WHAT WAS ACTUALLY AGREED. Open the email by restating this briefly, in your own words, so the customer starts from established ground. These are the ONLY commitments that exist; anything else discussed on the call was discussed, not agreed, and must not be described as something you are sending.`,
+          input.agreed.weOwe.length > 0 ? `We owe them:\n${input.agreed.weOwe.map((x) => `- ${x}`).join("\n")}` : "",
+          input.agreed.customerOwes.length > 0
+            ? `They owe us:\n${input.agreed.customerOwes.map((x) => `- ${x}`).join("\n")}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "",
+    ``,
     s.nextStepCommitment
       ? `THE COMMITMENT ALREADY AGREED (build the dated ask around this, do not invent a different one):\n${s.nextStepCommitment}\nCAUTION: this line is a summary of the rep's intent, not a list of what goes in this email. If it names a proposal, pricing or an estimate, those are what the MEETING is for. Rule 9 overrides this wording.`
       : `NO COMMITMENT WAS AGREED ON THE CALL. The ask should secure one.`,
@@ -762,13 +791,18 @@ export async function generateFollowUpDraft(
   const signature = learnSignature(samples, repFirstName(input.mailbox));
   parsed.body = `${parsed.body.trimEnd()}\n\n${signature ?? `Best regards,\n${repFirstName(input.mailbox)}`}`;
 
-  // On a reply, Graph fills recipients from the thread. Only a fresh draft
-  // needs them, and then only customer-side addresses.
-  const to = thread
-    ? []
-    : [...new Set((input.customerEmails ?? []).map((e) => e.toLowerCase().trim()))].filter(
-        (e) => e.includes("@") && domainOf(e) !== "magaya.com",
-      );
+  // Customer-side addresses from the CALL, computed the same way for a reply and
+  // for a fresh draft.
+  //
+  // This used to be empty on the reply path, on the assumption that Graph fills
+  // recipients from the thread. It does, and it fills them with whoever sent
+  // last, which is the BDR when a BDR booked the meeting. Eduardo, 2026-08-14:
+  // "your recap email is going out to that BDR instead of the prospect in the
+  // meeting." The addresses were already computed and correct and simply were
+  // not used here.
+  const to = [...new Set((input.customerEmails ?? []).map((e) => e.toLowerCase().trim()))].filter(
+    (e) => e.includes("@") && domainOf(e) !== "magaya.com",
+  );
 
   return {
     subject: parsed.subject || `Following up on our call, ${input.account}`,
@@ -822,6 +856,9 @@ export async function createFollowUpDraft(
       mailbox: input.mailbox,
       messageId: draft.replyToMessageId,
       body: draft.body,
+      // Overrides the thread's last sender. Empty leaves Graph's own choice,
+      // which is right when we could not establish who the customer was.
+      toRecipients: draft.to,
     });
     return { created: true, draft, webLink: res.webLink };
   } catch (replyErr) {
@@ -866,6 +903,8 @@ export async function autoDraftFollowUpForCall(args: {
   repEmail: string | null;
   meetingType: string | null;
   summary: PostCallSummary;
+  /** Verified commitments from the narrative pass. See FollowUpDraftInput. */
+  agreed?: { weOwe: string[]; customerOwes: string[] };
   attendees?: string;
   callDate?: string | null;
   participants: unknown;
@@ -985,6 +1024,7 @@ export async function autoDraftFollowUpForCall(args: {
     customerEmails,
     account: args.account,
     summary: args.summary,
+    agreed: args.agreed,
     attendees: args.attendees,
     recipients: recipients || undefined,
     callDate: args.callDate ?? null,
