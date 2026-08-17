@@ -20,6 +20,7 @@
  *   GET  {SALESFORCE_INSTANCE_URL}/services/data/v60.0/sobjects/Opportunity/{id}?fields=StageName,IsClosed,IsWon
  */
 
+import { envValue } from "./env-value";
 import { assertScopedRead } from "./crm-scope";
 
 const API_VERSION = "v60.0";
@@ -206,7 +207,7 @@ function b64url(input: Buffer | string): string {
 }
 
 async function mintViaJwt(): Promise<CachedToken> {
-  const loginUrl = (process.env.SF_LOGIN_URL ?? "https://login.salesforce.com").replace(/\/$/, "");
+  const loginUrl = (envValue("SF_LOGIN_URL") ?? "https://login.salesforce.com").replace(/\/$/, "");
   const clientId = process.env.SF_CLIENT_ID!;
   const username = process.env.SF_USERNAME!;
   const key = privateKey()!;

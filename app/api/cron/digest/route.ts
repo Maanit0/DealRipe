@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { envValue } from "@/lib/env-value";
+
 import { attachDoThis } from "@/lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
 import { getPipelineChanges } from "@/lib/pipeline-changes";
@@ -56,8 +58,8 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const to = addrs(process.env.DIGEST_TO);
-  const bcc = addrs(process.env.DIGEST_BCC);
+  const to = addrs(envValue("DIGEST_TO"));
+  const bcc = addrs(envValue("DIGEST_BCC"));
   if (to.length === 0) {
     return NextResponse.json({ ok: false, reason: "DIGEST_TO not set; nothing sent" });
   }

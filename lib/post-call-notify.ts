@@ -12,7 +12,7 @@
 
 import type { ExtractionMap } from "./briefing-magaya";
 import { renderGeneralRecapEmail } from "./emails/general-recap";
-import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
+import { renderPostCallSummaryEmail, renderReadoutOnlyEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
 import { type MeetingType } from "./meeting-classify";
 import { buildRecap, type RecapBuild } from "./recap-build";
@@ -262,18 +262,19 @@ export function renderRecapEmail(built: RecapBuild): ReturnType<typeof renderPos
     // The readout is the artifact. renderGeneralRecapEmail is the fallback
     // shape and only fires when the narrative produced nothing at all.
     if (built.narrative.status === "present") {
-      const body = renderRecapEmailBody({
+      // The same card shell as the qualification recap, minus the audit. A <pre>
+      // block was making existing-customer recaps look like a log dump next to
+      // every discovery recap.
+      return renderReadoutOnlyEmail({
+        account: built.account,
         narrative: built.narrative,
         demoStrategy: {
           status: "absent",
           reason: "not a new-opportunity call, so no demo strategy was planned",
         },
+        meetingTypeLabel:
+          built.meetingType === "existing_customer" ? "Existing customer" : "Internal",
       });
-      return {
-        subject: `Recap: ${built.account}`,
-        html: `<pre style="font-family:inherit;white-space:pre-wrap">${escapeHtmlBasic(body)}</pre>`,
-        text: body,
-      };
     }
     return built.recap
       ? renderGeneralRecapEmail({

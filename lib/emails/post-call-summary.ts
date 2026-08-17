@@ -293,3 +293,73 @@ function renderText(summary: PostCallSummary, stageLabel: string): string {
   lines.push("DealRipe wrote this from your call. Reply to flag anything wrong.");
   return lines.join("\n");
 }
+
+
+/**
+ * The readout, in the same shell as the qualification recap, with no audit.
+ *
+ * Existing-customer and internal calls were rendering as plain text inside a
+ * <pre>. The content was right and the artifact was not: Speedintlog's
+ * implementation recap arrived as a wall of monospace while every discovery
+ * recap arrived as cards. Same generation deserves the same shell, and the only
+ * thing a non-opportunity call should lose is the qualification audit, which is
+ * exactly what docs/recap-target-eduardo.md asks for.
+ */
+export function renderReadoutOnlyEmail(args: {
+  account: string;
+  narrative: PassResult<Narrative>;
+  demoStrategy: PassResult<DemoStrategy>;
+  meetingTypeLabel: string;
+}): RenderedEmail {
+  const n = args.narrative.status === "present" ? args.narrative.value : null;
+  const d = args.demoStrategy.status === "present" ? args.demoStrategy.value : null;
+  if (!n) {
+    return {
+      subject: `Recap: ${args.account}`,
+      html: card(`${label("Nothing to report", MUTED)}${bodyText("The readout could not be generated for this call.")}`),
+      text: "The readout could not be generated for this call.",
+    };
+  }
+
+  const list = (items: ReadonlyArray<string>): string =>
+    `<ul style="margin:6px 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
+    items.map((i) => `<li style="margin:0 0 6px 0;">${escapeHtml(i)}</li>`).join("") +
+    `</ul>`;
+
+  const cards = [
+    n.executiveSummary ? card(`${label("The call", NAVY)}${bodyText(n.executiveSummary)}`) : "",
+    n.painPoints.length
+      ? card(`${label("What hurts, in their order", AMBER)}${list(n.painPoints.map((p) => p.statement))}`)
+      : "",
+    n.operationalDetail ? card(`${label("The detail that matters", MUTED)}${bodyText(n.operationalDetail)}`) : "",
+    n.nextSteps.weOwe.length ? card(`${label("What we owe them", GREEN)}${list(n.nextSteps.weOwe.map((f) => f.statement))}`) : "",
+    n.nextSteps.customerOwes.length
+      ? card(`${label("What they owe us", GREEN)}${list(n.nextSteps.customerOwes.map((f) => f.statement))}`)
+      : "",
+    d && d.risks.length ? card(`${label("Risks", AMBER)}${list(d.risks)}`) : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const html = `<div style="background:#F1F5F9;padding:24px 0;">
+  <div style="max-width:640px;margin:0 auto;padding:0 16px;">
+    <div style="font-family:${SANS};font-size:18px;font-weight:700;color:${NAVY};margin:0 0 3px 2px;">Recap &middot; ${escapeHtml(args.account)}</div>
+    <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:0 0 18px 2px;">${escapeHtml(args.meetingTypeLabel)}</div>
+    ${cards}
+  </div>
+</div>`;
+
+  const text = [
+    n.executiveSummary,
+    n.painPoints.length ? `\nWhat hurts, in their order:\n${n.painPoints.map((p, i) => `${i + 1}. ${p.statement}`).join("\n")}` : "",
+    n.operationalDetail ? `\nThe detail that matters:\n${n.operationalDetail}` : "",
+    n.nextSteps.weOwe.length ? `\nWhat we owe them:\n${n.nextSteps.weOwe.map((f) => `  - ${f.statement}`).join("\n")}` : "",
+    n.nextSteps.customerOwes.length
+      ? `\nWhat they owe us:\n${n.nextSteps.customerOwes.map((f) => `  - ${f.statement}`).join("\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { subject: `Recap: ${args.account}`, html, text };
+}

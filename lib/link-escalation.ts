@@ -167,6 +167,39 @@ export async function escalateUnlinkedDeals(args: {
   };
   const emit = args.onDecision ?? (() => {});
   const db = supabaseAdmin();
+
+  // A SYSTEMIC failure is not a rep's problem and must never be mailed to them.
+  //
+  // On 2026-08-17 the Vercel SF_LOGIN_URL was set with its own name inside the
+  // value, so every Salesforce auth call failed, so EVERY deal came back
+  // unmatched, so every deal escalated. Four newly onboarded reps were told
+  // their data was wrong when the fault was one line of our config. The
+  // seven-day per-deal cooldown did nothing, because each deal was genuinely
+  // being raised for the first time.
+  //
+  // "unavailable" already means "we could not check", which is the codebase's
+  // own distinction. This just stops us mailing that distinction to a customer's
+  // sales team. When most of a sweep is unavailable, the cause is ours: report
+  // it loudly in the logs and send nobody anything.
+  const unavailable = args.deals.filter((d) => d.result.status === "unavailable");
+  if (unavailable.length > 0 && unavailable.length >= Math.max(3, args.deals.length / 2)) {
+    const why = unavailable[0]?.result.status === "unavailable" ? unavailable[0].result.why : "unknown";
+    console.error(
+      `[link-escalation] SUPPRESSED: ${unavailable.length} of ${args.deals.length} deals could not be checked ` +
+        `for the same reason, which is an outage on our side and not something a rep can act on. ` +
+        `Nothing was emailed. Cause: ${why}`,
+    );
+    counts.considered = args.deals.length;
+    counts.failed = unavailable.length;
+    for (const d of unavailable) {
+      emit({
+        kind: "skipped",
+        account: d.account,
+        reason: "suppressed: a systemic lookup failure is ours to fix, not the rep's",
+      });
+    }
+    return counts;
+  }
   const since = new Date(Date.now() - ESCALATION_COOLDOWN_DAYS * 86_400_000).toISOString();
 
   // Which deals each rep still needs to hear about, after the cooldown.
@@ -179,6 +212,19 @@ export async function escalateUnlinkedDeals(args: {
     if (!to) {
       counts.noRep += 1;
       emit({ kind: "skipped", account: d.account, reason: "the deal has no rep email" });
+      continue;
+    }
+
+    // "We could not check" is never a rep-facing message, even one at a time.
+    // Asking someone to resolve a lookup that did not happen is asking them to
+    // fix our outage.
+    if (d.result.status === "unavailable") {
+      counts.failed += 1;
+      emit({
+        kind: "skipped",
+        account: d.account,
+        reason: `not raised: the lookup did not complete (${d.result.why}), which is ours to fix`,
+      });
       continue;
     }
 
