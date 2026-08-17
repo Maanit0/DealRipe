@@ -62,9 +62,29 @@ function shortDate(iso: string | null): string {
 export async function buildBriefingHistory(
   tenantId: string,
   dealId: string,
+  opts?: {
+    /**
+     * Treat this instant as "now". Defaults to the real now.
+     *
+     * A briefing is written before a call, so "every call so far" and "every
+     * call before this one" are the same set and the default is right. A RECAP
+     * is written about one specific call, and there the two differ: previewing
+     * Dunavant's Aug 12 recap surfaced the Aug 14 pricing conversation as
+     * "prior calls", complete with a figure that had not been quoted yet. In
+     * production the recap runs minutes after the call so it rarely shows, but
+     * any re-run or backfill leaks the future into the past.
+     */
+    asOf?: string | null;
+  },
 ): Promise<string | null> {
   const db = supabaseAdmin();
-  const nowIso = new Date().toISOString();
+  const nowIso = opts?.asOf ?? new Date().toISOString();
+  // A BRIEFING wants every call so far, inclusive of nothing in the future.
+  // A RECAP passes asOf = its own call's start, and must exclude that call:
+  // otherwise the Dunavant Aug 12 recap lists the Aug 12 call as prior history,
+  // which is the recap citing itself. Strict comparison when asOf is supplied
+  // does exactly that, because asOf IS this call's timestamp.
+  const bound = opts?.asOf ? "lt" : "lte";
 
   let calls;
   try {
@@ -73,7 +93,7 @@ export async function buildBriefingHistory(
       .select("id, title, scheduled_start, call_date, outcome, meeting_type")
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
-      .lte("scheduled_start", nowIso)
+      [bound]("scheduled_start", nowIso)
       .order("scheduled_start", { ascending: false })
       .limit(8);
     if (res.error) return null;
@@ -156,6 +176,11 @@ export async function buildBriefingHistory(
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
       .neq("status", "done")
+      // Bounded by the same asOf as the call list above. Without it a recap for
+      // an older call listed commitments created by a LATER call as "still owed
+      // from last time", which reads as the rep having missed things they had
+      // not been asked for yet.
+      [bound]("created_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(6);
     const open = tasks.data ?? [];
@@ -176,18 +201,30 @@ export async function buildBriefingHistory(
   // it, or the rep did, and asking it identically a second time is how a
   // briefing proves it is not paying attention.
   try {
+    //
+    // Reads the prescription ledger's `followed` column, which supersedes
+    // asked_on_next_call. This block existed for months and never fired once,
+    // because the table it reads had no writer: recordPrescription was defined
+    // in lib/closed-loop.ts and nothing ever called it.
+    //
+    // followed = 'no' means the transcript was read and the rep did not do it.
+    // 'unknown' is excluded deliberately: a call with no transcript tells us
+    // nothing about whether the question was asked, and putting it here would
+    // tell a rep they skipped something we never checked.
     const pres = await db
       .from("prescribed_actions")
-      .select("framework_field_key, prescription, asked_on_next_call, created_at")
+      .select("framework_field_keys, text, followed, kind, created_at")
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
+      .eq("followed", "no")
       .order("created_at", { ascending: false })
       .limit(10);
-    const unasked = (pres.data ?? []).filter((p) => p.asked_on_next_call === false);
+    const unasked = (pres.data ?? []).filter((p) => p.kind === "question");
     if (unasked.length > 0) {
       lines.push("ASKED FOR ON A PREVIOUS CALL AND STILL NOT ANSWERED:");
       for (const p of unasked.slice(0, 5)) {
-        lines.push(`  ${p.framework_field_key}: ${(p.prescription ?? "").slice(0, 180)}`);
+        const target = p.framework_field_keys?.[0] ?? "gap";
+        lines.push(`  ${target}: ${(p.text ?? "").slice(0, 180)}`);
       }
       lines.push(
         "These have now survived at least one call. Do not re-ask them in the same words. Either come at the gap from a different angle, or name the fact that it keeps not landing and ask directly why.",

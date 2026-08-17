@@ -203,6 +203,27 @@ function addrs(list: GraphRecipient[] | undefined): string[] {
   return (list ?? []).map(addr).filter((a): a is string => Boolean(a));
 }
 
+/**
+ * Outlook's own meeting-response and invite traffic, which is outbound mail
+ * the rep did not write.
+ *
+ * "Accepted: Magaya Demo" leaves the rep's mailbox addressed to the customer
+ * and looks identical to a follow-up in every field we filter on. Counting it
+ * recorded a rep as having followed up when all they did was click Accept on
+ * an invite, which is the difference between a rep who worked the deal and one
+ * who did nothing.
+ *
+ * Subject-based on purpose: the localized forms below are what Outlook emits,
+ * and a real follow-up does not open with them.
+ */
+export function isCalendarResponseSubject(subject: string | null | undefined): boolean {
+  const s = (subject ?? "").trim();
+  if (!s) return false;
+  return /^\s*(re:\s*|fw:\s*|fwd:\s*)*(accepted|declined|tentative|canceled|cancelled|updated|aceptado|rechazado|provisional|cancelado|invitation|convocatoria)\s*:/i.test(
+    s,
+  );
+}
+
 /** Domain part of an address, for deal-scoping. */
 export function domainOf(email: string | null | undefined): string | null {
   const at = (email ?? "").lastIndexOf("@");
