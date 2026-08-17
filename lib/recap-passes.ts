@@ -329,37 +329,68 @@ export async function buildNarrative(args: {
     };
   }
 
-  let text: string;
-  try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 8000,
-      temperature: 0.2,
-      system: NARRATIVE_SYSTEM,
-      messages: [
-        {
-          role: "user",
-          // Account name and transcript. No framework, no extraction, no stage,
-          // no CRM state. This is the fix; keep it this way.
-          content: `ACCOUNT: ${args.account}\n\nTRANSCRIPT:\n${args.transcript}\n\nWrite the readout JSON. Return JSON only.`,
+  // Generate, and retry once if the JSON does not parse.
+  //
+  // Measured on Medov's 70,252-character transcript: two consecutive runs, one
+  // clean readout and one "the narrative response was not valid JSON". The
+  // failure is silent in the worst way, because an unparseable response
+  // downgrades the whole recap to the old shallow shape and the rep gets the
+  // questionnaire this rebuild exists to replace. Nothing in the output says
+  // why.
+  //
+  // A truncated or malformed response is not evidence about the call, so a
+  // retry is honest rather than papering over a real absence. The second
+  // attempt raises max_tokens, because the most likely cause on a long
+  // transcript is the response being cut off mid-object rather than the model
+  // misunderstanding the format.
+  let o: Record<string, unknown> | null = null;
+  let lastError = "";
+  for (const attempt of [0, 1]) {
+    let text: string;
+    try {
+      const resp = await getAnthropicClient().messages.create({
+        model: getAnthropicModel(),
+        max_tokens: attempt === 0 ? 8000 : 16000,
+        temperature: 0.2,
+        system: NARRATIVE_SYSTEM,
+        messages: [
+          {
+            role: "user",
+            // Account name and transcript. No framework, no extraction, no stage,
+            // no CRM state. This is the fix; keep it this way.
+            content: `ACCOUNT: ${args.account}\n\nTRANSCRIPT:\n${args.transcript}\n\nWrite the readout JSON. Return JSON only.`,
+          },
+        ],
+      });
+      const block = resp.content.find((b) => b.type === "text");
+      text = block && "text" in block ? block.text : "";
+    } catch (err) {
+      // A thrown call is not a parse problem and retrying it here would race
+      // the SDK's own retries. Report it.
+      return {
+        result: {
+          status: "unavailable",
+          reason: `the narrative generation call failed: ${err instanceof Error ? err.message : String(err)}`,
         },
-      ],
-    });
-    const block = resp.content.find((b) => b.type === "text");
-    text = block && "text" in block ? block.text : "";
-  } catch (err) {
-    return {
-      result: {
-        status: "unavailable",
-        reason: `the narrative generation call failed: ${err instanceof Error ? err.message : String(err)}`,
-      },
-      grounding: empty,
-    };
+        grounding: empty,
+      };
+    }
+
+    o = parseJsonObject(text);
+    if (o) break;
+    lastError = `the response was not valid JSON (${text.length} chars, attempt ${attempt + 1})`;
+    if (attempt === 0) {
+      console.warn(
+        `[recap-passes] narrative JSON did not parse for ${args.account} at ${text.length} chars, retrying with a larger budget`,
+      );
+    }
   }
 
-  const o = parseJsonObject(text);
   if (!o) {
-    return { result: { status: "unavailable", reason: "the narrative response was not valid JSON" }, grounding: empty };
+    return {
+      result: { status: "unavailable", reason: `the narrative response could not be parsed twice: ${lastError}` },
+      grounding: empty,
+    };
   }
 
   const numbers = keepQuoted(asNumeric(o.currentEnvironment), args.transcript, NUMERIC_MIN);
