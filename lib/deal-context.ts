@@ -155,6 +155,16 @@ export type DealContext = {
 export async function getDealContext(
   tenantId: string,
   dealId: string,
+  opts?: {
+    /**
+     * Treat this instant as "now" when assembling prior-call history.
+     *
+     * Briefings leave this unset: they run before a call, so every call so far
+     * is every call before this one. Recaps set it to the call's own start, so
+     * a recap for an older call cannot cite a later one as history.
+     */
+    asOf?: string | null;
+  },
 ): Promise<DealContext | null> {
   const deal = await getDealForTenant(tenantId, dealId);
   if (!deal) return null;
@@ -301,7 +311,7 @@ export async function getDealContext(
   // briefing only ever saw a snapshot of the record.
   let history: string | null = null;
   try {
-    history = await buildBriefingHistory(tenantId, dealId);
+    history = await buildBriefingHistory(tenantId, dealId, { asOf: opts?.asOf ?? null });
   } catch (err) {
     // Best-effort: a thin briefing beats no briefing. But a null history is
     // rendered as a genuinely first conversation, so a failure here does not

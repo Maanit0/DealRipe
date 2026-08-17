@@ -6,6 +6,7 @@
 
 import type { PostCallSummary } from "../post-call-summary";
 import type { GeneratedTask } from "../tasks";
+import type { DemoStrategy, Narrative, PassResult } from "../recap-passes";
 
 const BG = "#F4F6F9";
 const CARD = "#FFFFFF";
@@ -76,9 +77,72 @@ function buildFlags(summary: PostCallSummary): string[] {
 export function renderPostCallSummaryEmail(
   summary: PostCallSummary,
   tasks: GeneratedTask[] = [],
+  /**
+   * The readout and the demo plan, when the passes produced them.
+   *
+   * Optional so every existing caller keeps working, but this is the point of
+   * the whole rebuild: without it a rep gets counts of filled and unfilled
+   * fields, which is what Eduardo called "a questionnaire kind of thing". The
+   * audit stays exactly where it was, underneath, because he asked for it.
+   */
+  readout?: { narrative: PassResult<Narrative>; demoStrategy: PassResult<DemoStrategy> },
 ): RenderedEmail {
   const stageLabel = STAGE_LABELS[summary.stageKey] ?? summary.stageKey;
-  const subject = `Recap: ${summary.account} call. ${summary.captured.length} captured, ${summary.stillOpen.length} still open`;
+  // The subject leads with the account and the call, not with a score. A rep
+  // scanning a phone should see whose call it was, and "3 captured, 14 still
+  // open" reads as a grade on them rather than a summary of the customer.
+  const subject = readout?.narrative.status === "present"
+    ? `Recap: ${summary.account}`
+    : `Recap: ${summary.account} call. ${summary.captured.length} captured, ${summary.stillOpen.length} still open`;
+
+  // The readout goes ABOVE the audit and never replaces it.
+  const n = readout?.narrative.status === "present" ? readout.narrative.value : null;
+  const d = readout?.demoStrategy.status === "present" ? readout.demoStrategy.value : null;
+  const readoutCards = n
+    ? [
+        n.executiveSummary ? card(`${label("The call", NAVY)}${bodyText(n.executiveSummary)}`) : "",
+        n.painPoints.length
+          ? card(
+              `${label("What hurts, in their order", AMBER)}` +
+                `<ol style="margin:6px 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
+                n.painPoints.slice(0, 4).map((p) => `<li style="margin:0 0 6px 0;">${escapeHtml(p.statement)}</li>`).join("") +
+                `</ol>`,
+            )
+          : "",
+        n.operationalDetail
+          ? card(`${label("The detail that matters", MUTED)}${bodyText(n.operationalDetail)}`)
+          : "",
+        n.nextSteps.weOwe.length || n.nextSteps.customerOwes.length
+          ? card(
+              `${label("Agreed next steps", GREEN)}` +
+                (n.nextSteps.weOwe.length
+                  ? `<div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:6px 0 2px;">We owe them</div>` +
+                    `<ul style="margin:0 0 8px 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
+                    n.nextSteps.weOwe.map((f) => `<li style="margin:0 0 4px 0;">${escapeHtml(f.statement)}</li>`).join("") +
+                    `</ul>`
+                  : "") +
+                (n.nextSteps.customerOwes.length
+                  ? `<div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:6px 0 2px;">They owe us</div>` +
+                    `<ul style="margin:0 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
+                    n.nextSteps.customerOwes.map((f) => `<li style="margin:0 0 4px 0;">${escapeHtml(f.statement)}</li>`).join("") +
+                    `</ul>`
+                  : ""),
+            )
+          : "",
+        // Promoted into the email deliberately. On Dunavant this was the rep
+        // contradicting himself about the product database, and on KCarlton it
+        // was four hedged answers. It has to be acted on BEFORE the demo, so it
+        // cannot wait in the Note.
+        d && d.validateInternally.length
+          ? card(
+              `${label("Resolve internally before the demo", AMBER)}` +
+                `<ul style="margin:6px 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
+                d.validateInternally.slice(0, 3).map((v) => `<li style="margin:0 0 6px 0;">${escapeHtml(v)}</li>`).join("") +
+                `</ul>`,
+            )
+          : "",
+      ].filter(Boolean).join("\n")
+    : "";
   const flags = buildFlags(summary);
 
   const tasksCard =
@@ -159,6 +223,8 @@ export function renderPostCallSummaryEmail(
 
         <div style="font-family:${SANS};font-size:18px;font-weight:700;color:${NAVY};margin:0 0 3px 2px;">Recap &middot; ${escapeHtml(summary.account)}</div>
         <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:0 0 18px 2px;">${escapeHtml(stageLabel)} &middot; ${summary.captured.length} captured &middot; ${summary.stillOpen.length} still open</div>
+
+        ${readoutCards}
 
         ${card(`${label("What happened", MUTED)}${bodyText(summary.recap)}`)}
 

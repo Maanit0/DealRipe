@@ -15,7 +15,8 @@ import { renderGeneralRecapEmail } from "./emails/general-recap";
 import { renderPostCallSummaryEmail } from "./emails/post-call-summary";
 import { loadFramework } from "./framework";
 import { type MeetingType } from "./meeting-classify";
-import { buildRecap } from "./recap-build";
+import { buildRecap, type RecapBuild } from "./recap-build";
+import { renderRecapEmailBody } from "./recap-render";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
@@ -139,10 +140,8 @@ export async function sendPostCallSummary(args: {
   let qualSummary: PostCallSummary | undefined;
   let genTasks: GeneratedTask[] = [];
 
-  if (built.kind === "general") {
-    email = renderGeneralRecapEmail({ account: built.account, recap: built.recap, meetingType });
-  } else {
-    const summary = built.summary;
+  email = renderRecapEmail(built);
+  if (built.kind === "qualification") {
     genTasks = built.tasks;
 
     // buildRecap generates the tasks and deliberately does not persist them, so
@@ -160,9 +159,21 @@ export async function sendPostCallSummary(args: {
       );
     }
 
-    email = renderPostCallSummaryEmail(summary, genTasks);
-    nextAction = summary.nextStepCommitment ?? summary.suggestedNextStep;
-    qualSummary = summary;
+    nextAction = built.summary.nextStepCommitment ?? built.summary.suggestedNextStep;
+    qualSummary = built.summary;
+  }
+
+  // Both passes produced nothing. Say so rather than sending an empty shell:
+  // no recap beats a recap that asserts a call had no content.
+  if (!email) {
+    return {
+      sent: false,
+      to,
+      reason:
+        built.kind === "general"
+          ? `no readout could be generated for this ${built.meetingType} call, and the fallback recap also returned nothing`
+          : "no recap could be rendered",
+    };
   }
 
   if (args.dryRun) {
@@ -209,4 +220,56 @@ export async function sendPostCallSummary(args: {
     }
     return { sent: false, to, reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+
+/** Minimal escaping for the plain-text readout rendered into an HTML mail. */
+function escapeHtmlBasic(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+
+/**
+ * Which email a built recap becomes.
+ *
+ * Extracted from sendPostCallSummary so scripts/preview-recap-email.ts can show
+ * the EXACT html that would be sent. A preview that re-picks the renderer
+ * itself would drift from production and then reassure you about an email
+ * nobody is going to receive, which is the specific failure this codebase keeps
+ * paying for.
+ *
+ * Pure: no writes, no sends. Returns null when neither pass produced anything,
+ * which the caller reports rather than papering over.
+ */
+export function renderRecapEmail(built: RecapBuild): ReturnType<typeof renderPostCallSummaryEmail> | null {
+  if (built.kind === "general") {
+    // The readout is the artifact. renderGeneralRecapEmail is the fallback
+    // shape and only fires when the narrative produced nothing at all.
+    if (built.narrative.status === "present") {
+      const body = renderRecapEmailBody({
+        narrative: built.narrative,
+        demoStrategy: {
+          status: "absent",
+          reason: "not a new-opportunity call, so no demo strategy was planned",
+        },
+      });
+      return {
+        subject: `Recap: ${built.account}`,
+        html: `<pre style="font-family:inherit;white-space:pre-wrap">${escapeHtmlBasic(body)}</pre>`,
+        text: body,
+      };
+    }
+    return built.recap
+      ? renderGeneralRecapEmail({
+          account: built.account,
+          recap: built.recap,
+          meetingType: built.meetingType,
+        })
+      : null;
+  }
+
+  return renderPostCallSummaryEmail(built.summary, built.tasks, {
+    narrative: built.narrative,
+    demoStrategy: built.demoStrategy,
+  });
 }

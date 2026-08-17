@@ -52,9 +52,21 @@ import {
   getTranscript,
   latestStatusAt,
   recordingDurationMinutes,
-  type BotResource,
   type BotStatus,
 } from "./recall";
+import {
+  captureColumns,
+  captureEvidenceFromBot,
+  classifyCapture,
+  hostSideOf,
+  mediaIsImpossible,
+} from "./capture-classify";
+import {
+  MAX_CONTENT_ATTEMPTS,
+  MAX_INFRA_ATTEMPTS,
+  classifyDraftOutcome,
+  classifyIngestFailure,
+} from "./ingest-failure-class";
 import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-extract";
 import { customerParticipation } from "./attendance";
 import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
@@ -211,10 +223,15 @@ export async function runTranscriptSync(
  */
 async function retryFailedDrafts(): Promise<void> {
   const db = supabaseAdmin();
+  // Only failed and unavailable. A held draft is a decision, not a queue item,
+  // and re-running it would ask Graph the same question and get the same
+  // correct answer forever.
   const rows = await db
     .from("calls")
-    .select("id, deal_id, participants, scheduled_start, call_date, meeting_type, ingest_error, deals!inner(account, rep_email)")
-    .like("ingest_error", `%${DRAFT_FAILURE_PREFIX}%`)
+    .select(
+      "id, deal_id, participants, scheduled_start, call_date, meeting_type, followup_draft_state, followup_draft_reason, followup_draft_attempts, deals!inner(account, rep_email)",
+    )
+    .in("followup_draft_state", ["failed", "unavailable"])
     .limit(20);
   if (rows.error) return;
 
@@ -225,15 +242,18 @@ async function retryFailedDrafts(): Promise<void> {
     scheduled_start: string | null;
     call_date: string | null;
     meeting_type: string | null;
-    ingest_error: string | null;
+    followup_draft_state: string;
+    followup_draft_reason: string | null;
+    followup_draft_attempts: number;
     deals: { account: string; rep_email: string | null };
   }>) {
-    const err = r.ingest_error ?? "";
-    const attempt = Number(err.match(/\[draft (\d+)\/\d+\]/)?.[1] ?? 0);
-    if (attempt >= MAX_DRAFT_RETRIES) continue;
+    if (r.followup_draft_attempts >= MAX_DRAFT_RETRIES) continue;
 
-    const reason = err.slice(err.indexOf(DRAFT_FAILURE_PREFIX) + DRAFT_FAILURE_PREFIX.length);
-    if (!RETRYABLE_DRAFT_FAILURE.test(reason)) continue;
+    // 'unavailable' means we could not find out whether a draft was warranted,
+    // so it is always worth asking again. 'failed' is retried only when the
+    // reason suggests another run would go differently.
+    const d = classifyDraftOutcome(r.followup_draft_reason ?? "");
+    if (r.followup_draft_state === "failed" && !d.retryable) continue;
 
     try {
       const { generatePostCallSummary } = await import("./post-call-summary");
@@ -275,13 +295,15 @@ async function retryFailedDrafts(): Promise<void> {
 
       if (draft.created) {
         console.log(`[transcript-sync] follow-up draft recovered on retry for call ${r.id}`);
-        await clearDraftFailure(db, r.id);
+        await recordDraftWritten(db, r.id);
       } else {
-        console.warn(`[transcript-sync] draft retry ${attempt + 1} failed for call ${r.id}: ${draft.reason}`);
-        await recordDraftFailure(db, r.id, draft.reason ?? "no reason given");
+        console.warn(
+          `[transcript-sync] draft retry ${r.followup_draft_attempts + 1} for call ${r.id}: ${draft.reason}`,
+        );
+        await recordDraftOutcome(db, r.id, draft.reason ?? "no reason given");
       }
     } catch (e) {
-      await recordDraftFailure(db, r.id, e instanceof Error ? e.message : String(e));
+      await recordDraftOutcome(db, r.id, e instanceof Error ? e.message : String(e));
     }
   }
 }
@@ -292,8 +314,6 @@ async function resolveMagayaTenantId(db: ReturnType<typeof supabaseAdmin>): Prom
   return (t.data?.id as string) ?? "";
 }
 
-const MAX_INGEST_RETRIES = 3;
-
 /**
  * How long a finished bot may go without attached media before we treat the
  * recording as lost. Recall uploads after the call ends and a long meeting can
@@ -303,93 +323,85 @@ const MAX_INGEST_RETRIES = 3;
  */
 const MEDIA_GRACE_MS = 45 * 60_000;
 
-/**
- * Recall's own reason for a failure, in one line.
- *
- * The status code on a failed bot is always the word "fatal". The sub_code is
- * where the actionable part lives, and the fix differs completely by value:
- * permission_denied means a human never admitted the bot, meeting_link_expired
- * means the invite carried a stale link, insufficient_credits means the account
- * ran dry and every future call will fail the same way. Recording only "fatal"
- * throws away the difference between a one-off and an outage.
- */
-function describeBotFailure(bot: BotResource): string {
-  const parts = [`status=${bot.rawStatusCode}`];
-  parts.push(bot.statusSubCode === null ? "sub_code=(none given)" : `sub_code=${bot.statusSubCode}`);
-  if (bot.statusMessage !== null) parts.push(`"${bot.statusMessage}"`);
-  return parts.join(" ");
-}
-
-/**
- * Reasons a draft failed that are worth trying again.
- *
- * A decision is permanent: the meeting was not an opportunity call, the mailbox
- * is not allowlisted, there was no customer on the call, the rep already
- * followed up. Retrying those is noise. A timeout, a rate limit, a 5xx, an
- * empty model response, is the run being unlucky, and five minutes later it
- * usually works. The Miracle draft that failed on 2026-08-13 succeeded on the
- * first manual retry a day later with no code change.
- *
- * Default is NOT retryable. An unrecognised reason retried forever is worse
- * than one that waits for a human.
- */
-const RETRYABLE_DRAFT_FAILURE =
-  /timeout|timed out|rate.?limit|429|50\d\b|socket|network|fetch failed|ECONNRESET|overloaded|generation returned nothing|draft not created|did not report a result/i;
-
 const MAX_DRAFT_RETRIES = 3;
-const DRAFT_FAILURE_PREFIX = "[draft]";
 
-async function recordDraftFailure(
+/**
+ * Record the outcome of a draft attempt.
+ *
+ * The whole point of routing through classifyDraftOutcome is that a hold is
+ * not a failure. "rep already emailed the customer after this call" was going
+ * into ingest_error and incrementing an attempt counter that lived in the same
+ * string, so three healthy calls read as broken everywhere that column is
+ * shown and had spent two of their three attempts on the product working
+ * correctly.
+ *
+ * held and unavailable never increment. Only a failure does.
+ */
+async function recordDraftOutcome(
   db: ReturnType<typeof supabaseAdmin>,
   callId: string,
   reason: string,
 ): Promise<void> {
   try {
-    const row = await db.from("calls").select("ingest_error").eq("id", callId).maybeSingle();
-    const prior = (row.data?.ingest_error ?? "") as string;
-    const attempt = Number(prior.match(/\[draft (\d+)\/\d+\]/)?.[1] ?? 0) + 1;
-    const rest = prior.replace(/\[draft \d+\/\d+\][^\n]*\n?/g, "").trim();
-    const line = `[draft ${attempt}/${MAX_DRAFT_RETRIES}] ${DRAFT_FAILURE_PREFIX} ${reason}`;
+    const d = classifyDraftOutcome(reason);
+    if (d.state === "failed") {
+      const row = await db
+        .from("calls")
+        .select("followup_draft_attempts")
+        .eq("id", callId)
+        .maybeSingle();
+      const attempts = Number(row.data?.followup_draft_attempts ?? 0) + 1;
+      await db
+        .from("calls")
+        .update({
+          followup_draft_state: "failed",
+          followup_draft_reason: d.reason,
+          followup_draft_attempts: attempts,
+        })
+        .eq("id", callId);
+      return;
+    }
     await db
       .from("calls")
-      .update({ ingest_error: rest ? `${rest}\n${line}` : line })
+      .update({ followup_draft_state: d.state, followup_draft_reason: d.reason })
       .eq("id", callId);
   } catch {
-    // Recording why a draft failed must never be the thing that breaks ingest.
+    // Recording why a draft was or was not written must never be the thing
+    // that breaks ingest.
   }
 }
 
-async function clearDraftFailure(
+async function recordDraftWritten(
   db: ReturnType<typeof supabaseAdmin>,
   callId: string,
 ): Promise<void> {
   try {
-    const row = await db.from("calls").select("ingest_error").eq("id", callId).maybeSingle();
-    const prior = (row.data?.ingest_error ?? "") as string;
-    if (!prior.includes(DRAFT_FAILURE_PREFIX)) return;
-    const rest = prior.replace(/\[draft \d+\/\d+\][^\n]*\n?/g, "").trim();
-    await db.from("calls").update({ ingest_error: rest.length > 0 ? rest : null }).eq("id", callId);
+    await db
+      .from("calls")
+      .update({ followup_draft_state: "drafted", followup_draft_reason: null })
+      .eq("id", callId);
   } catch {
     // Same. A stale marker is untidy; a broken ingest is not.
   }
 }
 
-function parseRetryCount(err: string | null): number {
-  const m = (err ?? "").match(/\[retry (\d+)\/\d+\]/);
-  return m ? Number(m[1]) : 0;
-}
-
-function stripMarker(err: string | null): string {
-  return (err ?? "").replace(/\[(?:retry \d+\/\d+|gave up[^\]]*)\]\s*/g, "");
-}
-
 /**
  * Re-run extraction from the stored transcript for calls whose first attempt
- * failed after the body was saved (typically an LLM timeout). Capped at
- * MAX_INGEST_RETRIES per call, tracked via a [retry N/3] marker in ingest_error
- * so no schema column is needed. After the cap it is marked "[gave up ...]" and
- * left for manual attention instead of looping forever (which would burn LLM
- * calls). One retry per 5-minute cron run gives natural backoff.
+ * failed after the body was saved.
+ *
+ * Two budgets, because two different things are being counted and only one of
+ * them has anything to do with the call.
+ *
+ *   content   the transcript could not be extracted. Three attempts, then a
+ *             person looks. Unchanged.
+ *   infra     a provider outage, an expired key, a rate limit, a billing stop.
+ *             Backed off with a growing delay and capped separately.
+ *
+ * The old code had one budget of three at one attempt per five-minute run, so
+ * the Anthropic credit stop on 2026-08-16 spent every affected call's entire
+ * allowance in fifteen minutes and abandoned conversations that were never at
+ * fault. Sorting the failure is the fix; classifyIngestFailure owns that
+ * decision and this function does not restate it.
  */
 async function retryFailedExtractions(
   counts: TranscriptSyncCounts,
@@ -398,28 +410,49 @@ async function retryFailedExtractions(
   const db = supabaseAdmin();
   const rows = await db
     .from("calls")
-    .select("id, tenant_id, external_id, ingest_error")
+    .select(
+      "id, tenant_id, external_id, ingest_error, ingest_failure_class, ingest_content_attempts, ingest_infra_attempts, ingest_retry_after",
+    )
     .eq("source", "recall_ai")
     .eq("has_been_extracted", true)
     .not("ingest_error", "is", null)
-    .like("ingest_error", "%extraction failed%")
-    .not("ingest_error", "like", "%gave up%");
+    // Both shapes. The yield guard below writes "low extraction yield" and
+    // scripts/flag-low-yield-for-retry.ts writes the same phrase, and neither
+    // contains "extraction failed", so until now every call either of them
+    // flagged was queued for a retry pass that could not see it.
+    .or("ingest_error.like.%extraction failed%,ingest_error.like.%low extraction yield%");
   if (rows.error) {
     console.error(`[transcript-sync] retry query failed: ${rows.error.message}`);
     return;
   }
 
-  for (const row of rows.data ?? []) {
+  const now = Date.now();
+
+  for (const row of (rows.data ?? []) as unknown as Array<{
+    id: string;
+    tenant_id: string;
+    external_id: string | null;
+    ingest_error: string | null;
+    ingest_failure_class: string | null;
+    ingest_content_attempts: number;
+    ingest_infra_attempts: number;
+    ingest_retry_after: string | null;
+  }>) {
     if (!row.external_id) continue;
-    const prev = parseRetryCount(row.ingest_error);
-    if (prev >= MAX_INGEST_RETRIES) {
-      await writeIngestError(
-        row.id,
-        `[gave up after ${MAX_INGEST_RETRIES} retries] ${stripMarker(row.ingest_error)}`,
-      );
-      continue;
+
+    const contentSpent = Number(row.ingest_content_attempts ?? 0);
+    const infraSpent = Number(row.ingest_infra_attempts ?? 0);
+
+    // Parked. Both ceilings are reported separately so the reason a call
+    // stopped being retried is legible: "the transcript failed three times"
+    // and "our provider was down all day" are different conversations.
+    if (contentSpent >= MAX_CONTENT_ATTEMPTS || infraSpent >= MAX_INFRA_ATTEMPTS) continue;
+
+    // Backing off. Not a failure, not abandoned, just not yet.
+    if (row.ingest_retry_after !== null) {
+      const after = Date.parse(row.ingest_retry_after);
+      if (!Number.isNaN(after) && after > now) continue;
     }
-    const attempt = prev + 1;
 
     const t = await db.from("transcripts").select("body").eq("call_id", row.id).maybeSingle();
     const body = t.data?.body ?? "";
@@ -432,7 +465,15 @@ async function retryFailedExtractions(
         externalCallId: row.external_id,
         transcript: body,
       });
-      await db.from("calls").update({ ingest_error: null, outcome: "captured" }).eq("id", row.id);
+      await db
+        .from("calls")
+        .update({
+          ingest_error: null,
+          outcome: "captured",
+          ingest_failure_class: null,
+          ingest_retry_after: null,
+        })
+        .eq("id", row.id);
       counts.retriesRecovered += 1;
       counts.extracted += 1;
       emit({ kind: "extracted", callId: row.id, recallBotId: "" });
@@ -479,13 +520,65 @@ async function retryFailedExtractions(
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const marker =
-        attempt >= MAX_INGEST_RETRIES
-          ? `[gave up after ${MAX_INGEST_RETRIES} retries]`
-          : `[retry ${attempt}/${MAX_INGEST_RETRIES}]`;
-      await writeIngestError(row.id, `${marker} extraction failed (transcript saved): ${message}`);
+      await recordIngestFailure(row.id, message, {
+        contentAttempts: contentSpent,
+        infraAttempts: infraSpent,
+      });
       counts.ingestErrors += 1;
     }
+  }
+}
+
+/**
+ * Write down an extraction failure and decide what it costs.
+ *
+ * Only a content failure spends the content budget. Everything else, an
+ * unrecognised error included, spends the infra budget and is given a delay,
+ * because "we could not process this transcript" and "we could not run" are
+ * different sentences and only the first is about the call.
+ */
+async function recordIngestFailure(
+  callId: string,
+  message: string,
+  spent: { contentAttempts: number; infraAttempts: number },
+): Promise<void> {
+  const db = supabaseAdmin();
+  const verdict = classifyIngestFailure(message, spent.infraAttempts + 1);
+
+  const contentAttempts = verdict.spendsContentBudget
+    ? spent.contentAttempts + 1
+    : spent.contentAttempts;
+  const infraAttempts = verdict.spendsContentBudget
+    ? spent.infraAttempts
+    : spent.infraAttempts + 1;
+  const retryAfter =
+    verdict.backoffMs > 0 ? new Date(Date.now() + verdict.backoffMs).toISOString() : null;
+
+  const parked =
+    contentAttempts >= MAX_CONTENT_ATTEMPTS || infraAttempts >= MAX_INFRA_ATTEMPTS;
+  const budget = verdict.spendsContentBudget
+    ? `content attempt ${contentAttempts} of ${MAX_CONTENT_ATTEMPTS}`
+    : `${verdict.class} attempt ${infraAttempts} of ${MAX_INFRA_ATTEMPTS}, retrying in ${Math.round(verdict.backoffMs / 60_000)} min`;
+  const tail = parked
+    ? verdict.needsHuman
+      ? "; parked, and someone has to act on this before it can succeed"
+      : "; parked for manual attention"
+    : "";
+
+  const upd = await db
+    .from("calls")
+    .update({
+      ingest_error: `extraction failed (transcript saved): ${message} [${budget}${tail}]`,
+      ingest_failure_class: verdict.class,
+      ingest_content_attempts: contentAttempts,
+      ingest_infra_attempts: infraAttempts,
+      ingest_retry_after: retryAfter,
+    })
+    .eq("id", callId);
+  if (upd.error) {
+    console.error(
+      `[transcript-sync] could not record ingest failure on call ${callId}: ${upd.error.message}`,
+    );
   }
 }
 
@@ -524,14 +617,21 @@ async function processRow(
     // as such and resolve it: capture_failed is filtered out of every rep/CRO
     // view, and it must never trigger a no-show follow-up (the customer may well
     // have attended, we just failed to record). Operators still see it via logs.
+    //
+    // The observations go in alongside the verdict. Recall's copy of this bot
+    // expires; ours does not, and a conclusion we cannot re-check later is a
+    // conclusion nobody can argue with when it is wrong.
+    const evidence = captureEvidenceFromBot(bot);
+    const verdict = classifyCapture({ evidence, hostSide: await hostSideForCall(callId) });
     await db
       .from("calls")
-      .update({ outcome: "capture_failed", has_been_extracted: true })
+      .update({
+        outcome: "capture_failed",
+        has_been_extracted: true,
+        ...captureColumns(evidence, verdict),
+      })
       .eq("id", callId);
-    await writeIngestError(
-      callId,
-      `bot terminated fatal; ${describeBotFailure(bot)}; marked capture_failed`,
-    );
+    await writeIngestError(callId, `${verdict.category}: ${verdict.detail}`);
     emit({ kind: "fatal", callId, recallBotId, rawStatus: bot.rawStatusCode });
     return;
   }
@@ -547,10 +647,21 @@ async function processRow(
   // So wait MEDIA_GRACE_MS from the bot's last status change before concluding
   // anything. The cron runs every 5 minutes and will look again.
   if (bot.status === "done" && !bot.hasMedia) {
+    const evidence = captureEvidenceFromBot(bot);
     const lastChange = latestStatusAt(bot);
     const waitedMs = lastChange === null ? null : Date.now() - lastChange;
 
-    if (waitedMs !== null && waitedMs < MEDIA_GRACE_MS) {
+    // The grace period exists for a bot that recorded and has not finished
+    // uploading. It does not apply to a bot that never recorded: a history
+    // ending in a lobby timeout with an empty recordings array has nothing to
+    // upload, and waiting 45 minutes to say so is 45 minutes of a lost call
+    // looking like a healthy one.
+    //
+    // Every capture failure in the pilot to date is this case, which is why
+    // they were all discovered the following day.
+    const decided = mediaIsImpossible(evidence);
+
+    if (!decided && waitedMs !== null && waitedMs < MEDIA_GRACE_MS) {
       counts.inProgress += 1;
       emit({
         kind: "in-progress",
@@ -562,19 +673,27 @@ async function processRow(
       return;
     }
 
-    // Past the grace period, or Recall gave us no timestamp to measure from.
-    // Record which of those two it was, and record Recall's own reason, since
-    // "fatal" on its own names no cause and every fix depends on the cause.
-    const why = describeBotFailure(bot);
-    const waited =
-      waitedMs === null
+    // "done" is Recall's terminal code for any finished lifecycle, including
+    // one that never got into the room, so it names no cause on its own. The
+    // cause is in the status history, and the classifier reads it off the
+    // entry that carries a sub_code rather than the last entry, which is the
+    // whole reason fourteen calls said "media unavailable" and meant "the bot
+    // was never let in".
+    const verdict = classifyCapture({ evidence, hostSide: await hostSideForCall(callId) });
+    const waited = decided
+      ? "decided immediately: the bot never recorded, so no media was ever coming"
+      : waitedMs === null
         ? "no status timestamp to measure the wait from"
-        : `waited ${Math.round(waitedMs / 60_000)} min`;
+        : `waited ${Math.round(waitedMs / 60_000)} min for media`;
     await db
       .from("calls")
-      .update({ outcome: "capture_failed", has_been_extracted: true })
+      .update({
+        outcome: "capture_failed",
+        has_been_extracted: true,
+        ...captureColumns(evidence, verdict),
+      })
       .eq("id", callId);
-    await writeIngestError(callId, `bot done but media unavailable (${waited}); ${why}; marked capture_failed`);
+    await writeIngestError(callId, `${verdict.category}: ${verdict.detail} (${waited})`);
     emit({ kind: "fatal", callId, recallBotId, rawStatus: bot.rawStatusCode });
     return;
   }
@@ -838,93 +957,21 @@ async function processRow(
         console.error(`[transcript-sync] outcome=captured mark failed for call ${callId}: ${outc.error.message}`);
       }
 
-      // Best-effort: email the rep their post-call summary. Fully isolated in
-      // its own try/catch so a mail failure can never affect ingest status or
-      // the media-delete step below.
-      let recapNextAction: string | undefined;
-      // Reused by the follow-up draft below, so we generate the summary once.
-      let notifySummary: Awaited<ReturnType<typeof sendPostCallSummary>>["summary"];
-      try {
-        const notify = await sendPostCallSummary({
-          tenantId,
-          dealExternalId: ingestResult.dealExternalId,
-          extraction: ingestResult.extraction as unknown as ExtractionMap,
-          transcript,
-          meetingType,
-          callId,
-        });
-        recapNextAction = notify.nextAction;
-        notifySummary = notify.summary;
-        if (!notify.sent) {
-          console.warn(
-            `[transcript-sync] post-call summary not sent for call ${callId}: ${notify.reason}`,
-          );
-        }
-      } catch (notifyErr) {
-        console.error(
-          `[transcript-sync] post-call summary send threw for call ${callId}:`,
-          notifyErr instanceof Error ? notifyErr.message : notifyErr,
-        );
-      }
-
-      // Best-effort: draft the customer follow-up into the rep's Outlook
-      // drafts. Never sent: the app holds Mail.ReadWrite and not Mail.Send, so
-      // the rep reviews and sends. Gated to opportunity calls and allowlisted
-      // mailboxes, and fully isolated so a Graph outage cannot affect ingest.
-      try {
-        if (notifySummary) {
-          const { autoDraftFollowUpForCall } = await import("./followup-draft");
-          const callRow = await db
-            .from("calls")
-            .select("deal_id, participants, scheduled_start, call_date, deals!inner(account, rep_email)")
-            .eq("id", callId)
-            .maybeSingle();
-          const d = callRow.data as
-            | { deal_id: string; participants: unknown; scheduled_start: string | null; call_date: string | null; deals: { account: string; rep_email: string | null } }
-            | null;
-          if (d) {
-            // Mark BEFORE attempting, not after failing.
-            //
-            // A failure that returns a reason can be recorded. A process that
-            // Vercel terminates returns nothing, records nothing, and is
-            // invisible to the retry pass, which is precisely the case the
-            // retry exists for. Writing the marker first means a killed run
-            // leaves evidence behind, and the next run finds it.
-            //
-            // Cleared on success a few lines down, so the steady state is an
-            // empty ingest_error.
-            await recordDraftFailure(db, callId, "attempt started; the run did not report a result");
-
-            const draft = await autoDraftFollowUpForCall({
-              tenantId,
-              callId,
-              dealId: d.deal_id,
-              account: d.deals.account,
-              repEmail: d.deals.rep_email,
-              meetingType,
-              summary: notifySummary,
-              callDate: d.scheduled_start ?? d.call_date,
-              participants: d.participants,
-            });
-            if (!draft.created) {
-              console.warn(`[transcript-sync] follow-up draft skipped for call ${callId}: ${draft.reason}`);
-              // Persist WHY, so a missing draft is explainable and, when the
-              // reason is transient, retryable. Before this the only trace was
-              // a console line: three of Ariel's drafts failed on 2026-08-13
-              // and the first anyone knew was a red cross in the coverage view
-              // with nothing behind it.
-              await recordDraftFailure(db, callId, draft.reason ?? "no reason given");
-            } else {
-              await clearDraftFailure(db, callId);
-            }
-          }
-        }
-      } catch (draftErr) {
-        console.error(
-          `[transcript-sync] follow-up draft threw for call ${callId}:`,
-          draftErr instanceof Error ? draftErr.message : draftErr,
-        );
-      }
+      // The recap and the follow-up draft used to run HERE, inline, and they
+      // are now in lib/recap-sync.ts on their own cron.
+      //
+      // Measured 2026-08-16: one Dunavant-sized recap takes 3m 27s against a
+      // 240s budget inside a 300s ceiling. Running it here is what killed the
+      // process halfway through Ariel's calls on 2026-08-13 and cost three
+      // follow-up drafts. recap-sync picks these calls up within five minutes
+      // from the same sent_messages idempotency record this path used, so
+      // nothing is lost by not doing it here, and a kill there costs a delay
+      // rather than an artifact.
+      //
+      // recapNextAction fed the Rolldog next-step write below. It is no longer
+      // available at this point, and the write-back reads its own next step
+      // rather than being handed one.
+      const recapNextAction: string | undefined = undefined;
 
       // Best-effort: push extracted fields to Rolldog. Gated + fail-closed;
       // no-ops until the deal's opportunity id is mapped (pilot-config) and
@@ -988,8 +1035,19 @@ async function processRow(
         // that took place, and the recap is the point.
         // notifySummary is what carries the recap. Without it there is nothing
         // worth logging, and an activity whose body is empty is worse than none.
-        if (sf.accountId && notifySummary) {
-          const { logCallToSalesforce } = await import("./salesforce-activity");
+        if (sf.accountId) {
+          // The Salesforce call activity and the next-step Task used to be
+          // here. They carry the RECAP body, so they moved to lib/recap-sync.ts
+          // with the recap that produces it. Writing an activity here would
+          // mean writing one with an empty description, which is worse than
+          // none: it puts a row in a customer's timeline that says a call
+          // happened and nothing about what was said.
+          //
+          // The field write-back above stays, because it depends on the
+          // extraction rather than the recap and is cheap.
+          //
+          // The contacts and opportunity writes below still need the call's
+          // account and rep, which the activity block used to fetch.
           const meta = await db
             .from("calls")
             .select("title, participants, deal_id, deals!inner(account, rep_email)")
@@ -1003,48 +1061,6 @@ async function processRow(
                 deals: { account: string; rep_email: string | null };
               }
             | null;
-          const people = Array.isArray(m?.participants)
-            ? (m?.participants as Array<{ name?: string | null; email?: string | null }>)
-            : [];
-          const attendees = people.map((p) => (p?.name ?? p?.email ?? "").trim()).filter(Boolean).join(", ");
-          const logged = await logCallToSalesforce({
-            tenantSlug: "magaya",
-            accountId: sf.accountId,
-            accountName: m?.deals.account ?? ingestResult.dealExternalId,
-            summary: notifySummary,
-            callDate: sfCall.data?.scheduled_start ?? sfCall.data?.call_date ?? null,
-            meetingTitle: m?.title ?? null,
-            repEmail: m?.deals.rep_email ?? null,
-            attendees: attendees || null,
-            apply: true,
-          });
-          if (logged.logged) {
-            console.log(`[transcript-sync] salesforce call activity ${logged.taskId} created for call ${callId}`);
-          } else {
-            console.warn(`[transcript-sync] salesforce call activity skipped for call ${callId}: ${logged.reason}`);
-          }
-
-          // The agreed next step as an open task, which is what Eduardo asked
-          // for on 2026-07-21. nextStepCommitment ONLY: suggestedNextStep is
-          // DealRipe's inference and does not belong in a rep's work queue.
-          // Null when the call agreed nothing, and that is a real answer.
-          const { logNextStepToSalesforce } = await import("./salesforce-activity");
-          const nextStep = await logNextStepToSalesforce({
-            tenantSlug: "magaya",
-            accountId: sf.accountId,
-            accountName: m?.deals.account ?? ingestResult.dealExternalId,
-            commitment: notifySummary.nextStepCommitment ?? null,
-            callDate: sfCall.data?.scheduled_start ?? sfCall.data?.call_date ?? null,
-            repEmail: m?.deals.rep_email ?? null,
-            apply: true,
-          });
-          if (nextStep.created) {
-            console.log(
-              `[transcript-sync] salesforce next step ${nextStep.taskId} created for call ${callId}, due ${nextStep.dueDate}`,
-            );
-          } else {
-            console.log(`[transcript-sync] salesforce next step not created for call ${callId}: ${nextStep.reason}`);
-          }
 
           // Contacts: fill blank Titles and create people who have no record.
           // Separate from the activity write on purpose, so a contact problem
@@ -1181,10 +1197,11 @@ async function processRow(
     } catch (err) {
       counts.ingestErrors += 1;
       const message = err instanceof Error ? err.message : String(err);
-      await writeIngestError(
-        callId,
-        `extraction failed (transcript saved; use --retry-ingest): ${message}`,
-      );
+      // First failure, so both budgets start at zero. Which one this spends is
+      // classifyIngestFailure's decision, not this call site's: a credit stop
+      // on the very first attempt must not cost the transcript one of its
+      // three chances.
+      await recordIngestFailure(callId, message, { contentAttempts: 0, infraAttempts: 0 });
       emit({
         kind: "ingest-error",
         callId,
@@ -1291,6 +1308,32 @@ async function processRow(
     });
   }
 }
+
+/**
+ * Whose meeting this was, for the refusal verdict.
+ *
+ * Its own lookup rather than threading organizer_email through processRow: it
+ * is only read on the two failure branches, and a failure to read it must
+ * degrade to 'unknown' rather than cost the diagnostic that is being written.
+ */
+async function hostSideForCall(
+  callId: string,
+): Promise<"our_side" | "customer_side" | "unknown"> {
+  try {
+    const row = await supabaseAdmin()
+      .from("calls")
+      .select("organizer_email")
+      .eq("id", callId)
+      .maybeSingle();
+    if (row.error) return "unknown";
+    return hostSideOf(row.data?.organizer_email ?? null, MAGAYA_MAIL_DOMAIN);
+  } catch {
+    return "unknown";
+  }
+}
+
+/** The pilot tenant's own mail domain. Every cron in this file is pinned to it. */
+const MAGAYA_MAIL_DOMAIN = "magaya.com";
 
 async function writeIngestError(callId: string, reason: string): Promise<void> {
   const db = supabaseAdmin();

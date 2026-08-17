@@ -100,6 +100,25 @@ export type Narrative = {
   buyingProcess: QuotedFact[];
   /** Timeline and urgency, with the evidence for it. */
   timeline: QuotedFact[];
+  /**
+   * What each side agreed to do, split by who owes it.
+   *
+   * Added after comparing our output to the one Eduardo wrote himself from this
+   * transcript. His carried the four figures he asked Debra to send (user counts
+   * by area, monthly containers, INTTRA bookings, air and eAWB volumes) and ours
+   * carried none of them, despite those being the direct input to the pricing
+   * estimate that is the next thing that has to happen on the deal. A recap that
+   * loses the ask loses the deal's next move.
+   *
+   * `weOwe` also catches commitments the REP made, which is why quotes here are
+   * not restricted to the customer. Eduardo answering "not at all" when Michael
+   * asked whether declining Magaya's internal accounting changes the price is a
+   * commercial commitment, and it was nowhere in our first version.
+   */
+  nextSteps: {
+    customerOwes: QuotedFact[];
+    weOwe: QuotedFact[];
+  };
 };
 
 export type DemoSession = {
@@ -126,6 +145,17 @@ export type DemoStrategy = {
   validateInternally: string[];
   risks: string[];
   positioning: string;
+  /**
+   * The read on the deal itself: what is going for it, and the one thing to do.
+   *
+   * Eduardo's own version of this recap ended with an opportunity assessment and
+   * a recommendation ("move fast, but do not lead with a generic platform
+   * demo"). Ours ended with a positioning sentence and nothing about whether the
+   * deal is good. A manager reading the Note wants the judgement, not only the
+   * plan.
+   */
+  strengths: string[];
+  recommendation: string;
   /**
    * True when the rep already proposed a plan on the call and this refines it.
    *
@@ -157,8 +187,18 @@ const NUMERIC_MIN = 0.95;
 function keepQuoted<T extends QuotedFact>(facts: T[], transcript: string, min: number): { kept: T[]; dropped: T[] } {
   const kept: T[] = [];
   const dropped: T[] = [];
+  // Near-duplicates are dropped silently rather than counted as grounding
+  // failures, because they are the model saying one true thing twice, not
+  // inventing anything. The Dunavant readout carried the accounting answer as
+  // two entries whose only difference was a trailing clause.
+  const seen = new Set<string>();
+  const fingerprint = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 12).join(" ");
   for (const f of facts) {
     if (!f?.quote || !f?.statement) continue;
+    const key = fingerprint(f.statement);
+    if (key.length > 0 && seen.has(key)) continue;
+    if (key.length > 0) seen.add(key);
     (groundingScore(f.quote, transcript) >= min ? kept : dropped).push(f);
   }
   return { kept, dropped };
@@ -181,7 +221,9 @@ Write what the customer actually said. Their operation, their numbers, their wor
 
 HARD RULES:
 1. No em-dashes or en-dashes anywhere. Use commas or periods.
-2. Never state a fact the transcript does not support. Every fact you emit carries the customer's own quote, copied VERBATIM from the transcript. Do not clean up, correct, or reflow a quote. If you cannot quote it, do not claim it.
+2. Never state a fact the transcript does not support. Every fact you emit carries the speaker's own quote, copied VERBATIM from the transcript, including any typos or mangled words in it. Do not clean up, correct, or reflow a quote. If you cannot quote it, do not claim it. Quotes may be from the customer OR from the seller, whichever said the thing.
+2b. THE QUOTE MUST BE THE EVIDENCE FOR THE CLAIM, SPOKEN BY THE PERSON THE CLAIM IS ABOUT. A question is never evidence of its own answer. If you want to say the customer is leaving their vendor over price, quote the CUSTOMER saying price. Do NOT quote the seller asking "why are you switching?", which proves only that the question was asked. If the answer was never actually spoken, omit the claim entirely. Set "speaker" to the person whose position the claim describes.
+2c. ATTRIBUTE TO THE CUSTOMER, NOT TO THE SELLER RESTATING THEM. The seller frequently repeats a customer's numbers back to confirm them ("so you have six users"). The customer owns that fact; the seller is echoing it. Attribute it to the customer who originally gave it, and quote the customer. If only the seller ever said the number and the customer never confirmed it, do not emit it as a fact about their business at all.
 3. Do not use sales qualification vocabulary. Banned: compelling event, budget holder, decision criteria, qualification, discovery, stage, gap, pipeline, MEDDIC, BANT, SQL0 through SQL5, "still open", "captured". Describe what is true about the business instead.
 4. No praise, no marketing language, no "great call", no adjectives that sell. Plain and factual.
 5. Attribute by name when the transcript names the speaker.
@@ -189,13 +231,16 @@ HARD RULES:
 
 SECTION BUDGETS (there is no overall length limit; density is the point):
 - executiveSummary: 2 to 3 sentences. What this account is, what they are trying to do, how serious it is.
-- currentEnvironment: EVERY number they gave. User counts, transaction volumes, percentages, line counts, office counts, dockets, headcount. One entry per number. This is the highest value section, do not summarize it away.
+- currentEnvironment: EVERY number THE CUSTOMER gave about THEIR OWN business. User counts, transaction volumes, percentages, line counts, office counts, dockets, headcount. One entry per number. This is the highest value section, do not summarize it away. EXCLUDE any figure the seller quoted, especially prices, rates and estimates: our price is not a fact about their operation, and this section is what a pricing estimate gets built from. A price the seller named belongs in environmentNotes if it belongs anywhere. Each "statement" here MUST be a complete sentence that already contains the figure, written the way a person would say it: "They run approximately 125 users across warehousing, freight forwarding and customs." NOT a bare label like "Total users across all platforms", which cannot be read aloud in a sentence.
 - environmentNotes: how they work today that is not numeric. Systems they run, what connects to what, where the manual work is.
-- painPoints: ranked, most important first, in their words.
+- painPoints: SPECIFIC PROBLEMS, not requirement categories. A pain point describes something that is going wrong in their operation today, with the mechanics of it: what they have to do by hand, what breaks, what it costs them. "Customs sophistication is a decision driver" is NOT a pain point, it is a category, and categories belong in requirementsByArea. "Unit conversions have to be recalculated by hand on every outbound entry because there is no product database" IS one. If a customer names a driver without describing a problem underneath it, leave it out of this section entirely; the executive summary already carries it.
+  RANK BY HOW MUCH OF THE PROBLEM THEY DESCRIBED, not by what you judge to be important, and not by whether they used the word "driver". In order: (a) a problem they described the mechanics of at length, (b) a problem they attached numbers to, (c) a problem they returned to more than once, (d) everything else. Depth of description is the customer telling you what actually hurts, and it is an observation about the transcript rather than an opinion, so two readers produce the same order.
 - operationalDetail: the ONE specific operational problem a generic notetaker would have missed, written as a full paragraph with the mechanics in it. Null only if the call genuinely contained no such detail.
 - requirementsByArea: grouped by how THEIR business is organized (for example customs, warehousing, forwarding, portal, integrations), not by any sales framework.
 - buyingProcess: who evaluates, who was explicitly said NOT to be the decision maker, how legal and procurement work.
 - timeline: dates, urgency, and what is driving it.
+- environmentNotes MUST also include any COMMERCIAL COMMITMENT either side made on the call, such as an answer about whether an optional module changes the price.
+- nextSteps: split by who owes it. customerOwes is everything the customer agreed to send or do. weOwe is everything the seller agreed to send or do. Every specific figure or document the seller ASKED THE CUSTOMER FOR belongs in customerOwes, listed individually rather than as "send the requested data". If the seller asked for four numbers, that is four entries.
 
 Return a single JSON object, no prose, no markdown fences:
 {
@@ -206,7 +251,11 @@ Return a single JSON object, no prose, no markdown fences:
   "operationalDetail": string|null,
   "requirementsByArea": [{"area": string, "requirements": [string]}],
   "buyingProcess": [{"statement": string, "quote": string, "speaker": string|null}],
-  "timeline": [{"statement": string, "quote": string, "speaker": string|null}]
+  "timeline": [{"statement": string, "quote": string, "speaker": string|null}],
+  "nextSteps": {
+    "customerOwes": [{"statement": string, "quote": string, "speaker": string|null}],
+    "weOwe": [{"statement": string, "quote": string, "speaker": string|null}]
+  }
 }`;
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
@@ -318,11 +367,28 @@ export async function buildNarrative(args: {
   const pains = keepQuoted(asQuoted(o.painPoints), args.transcript, QUOTE_MIN);
   const buying = keepQuoted(asQuoted(o.buyingProcess), args.transcript, QUOTE_MIN);
   const timeline = keepQuoted(asQuoted(o.timeline), args.transcript, QUOTE_MIN);
+  const ns = (o.nextSteps ?? {}) as Record<string, unknown>;
+  const customerOwes = keepQuoted(asQuoted(ns.customerOwes), args.transcript, QUOTE_MIN);
+  const weOwe = keepQuoted(asQuoted(ns.weOwe), args.transcript, QUOTE_MIN);
 
   const grounding: GroundingTrace = {
     droppedNumbers: numbers.dropped.length,
-    droppedFacts: notes.dropped.length + pains.dropped.length + buying.dropped.length + timeline.dropped.length,
-    examples: [...numbers.dropped, ...pains.dropped, ...notes.dropped, ...buying.dropped, ...timeline.dropped]
+    droppedFacts:
+      notes.dropped.length +
+      pains.dropped.length +
+      buying.dropped.length +
+      timeline.dropped.length +
+      customerOwes.dropped.length +
+      weOwe.dropped.length,
+    examples: [
+      ...numbers.dropped,
+      ...pains.dropped,
+      ...notes.dropped,
+      ...buying.dropped,
+      ...timeline.dropped,
+      ...customerOwes.dropped,
+      ...weOwe.dropped,
+    ]
       .slice(0, 5)
       .map((d) => `${d.statement} (quote not found: "${d.quote.slice(0, 60)}")`),
   };
@@ -376,6 +442,7 @@ export async function buildNarrative(args: {
         requirementsByArea,
         buyingProcess: buying.kept,
         timeline: timeline.kept,
+        nextSteps: { customerOwes: customerOwes.kept, weOwe: weOwe.kept },
       },
     },
     grounding,
@@ -395,12 +462,16 @@ HARD RULES:
 4. Order sessions by what the customer weighted most heavily, not by our product's natural order.
 5. "validateInternally" is REQUIRED and is the most important field. List anything the customer asked for where our answer on the call was uncertain, hedged, or negative, and which must be resolved internally BEFORE the session. If the call contained none, return an empty array, which asserts that we checked and found none.
 6. No praise, no marketing language.
+7. "strengths" and "recommendation" are the read on the deal itself. Strengths are the concrete facts that make this winnable (an incumbent contract ending, a stated urgency, a budget already validated), not adjectives. The recommendation is ONE paragraph a sales manager could act on, naming what to do first and what not to do.
+8. Name the session for what it covers. Do NOT prefix it with "Session 1" or a number; the reader's software numbers them.
 
 Return a single JSON object, no prose, no markdown fences:
 {
   "sessions": [{"name": string, "cover": [string], "why": string, "minutes": number|null}],
   "validateInternally": [string],
   "risks": [string],
+  "strengths": [string],
+  "recommendation": string,
   "positioning": string,
   "buildsOnRepPlan": boolean
 }`;
@@ -451,7 +522,16 @@ export async function buildDemoStrategy(args: {
     const resp = await getAnthropicClient().messages.create({
       model: getAnthropicModel(),
       max_tokens: 4000,
-      temperature: 0.3,
+      // Zero, unlike the narrative.
+      //
+      // The narrative is anchored: every fact carries a quote that is verified
+      // against the transcript, so variation there moves prose and not content.
+      // The demo strategy has no such anchor. It is pure synthesis, so it is
+      // where run-to-run variance concentrated: two runs of the same Dunavant
+      // call produced different session structures. This artifact becomes a
+      // Salesforce Note a solution engineer builds a demo from, and there
+      // stability is worth more than variety.
+      temperature: 0,
       system: DEMO_SYSTEM,
       messages: [
         {
@@ -512,6 +592,8 @@ export async function buildDemoStrategy(args: {
       sessions,
       validateInternally: strings(o.validateInternally),
       risks: strings(o.risks),
+      strengths: strings(o.strengths),
+      recommendation: typeof o.recommendation === "string" ? o.recommendation.trim() : "",
       positioning: typeof o.positioning === "string" ? o.positioning.trim() : "",
       buildsOnRepPlan: o.buildsOnRepPlan === true,
     },

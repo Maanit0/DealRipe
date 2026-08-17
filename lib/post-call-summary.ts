@@ -86,14 +86,36 @@ export function capturedFields(
   framework: Framework,
   extraction: ExtractionMap,
 ): CapturedField[] {
+  // The Magaya framework's 27 fields share about 15 labels: five are "Company
+  // Profile", three "Situation", three "Budget". Rendering f.label alone put two
+  // lines reading "Budget: ..." next to each other in a rep's recap, which
+  // reads as a bug in our software rather than as two different questions.
+  //
+  // Disambiguate only where a label actually repeats, so the common case keeps
+  // the clean label the framework author chose.
+  const labelCounts = new Map<string, number>();
+  for (const f of framework.fields) {
+    labelCounts.set(f.label, (labelCounts.get(f.label) ?? 0) + 1);
+  }
+
   const out: CapturedField[] = [];
   for (const f of framework.fields) {
     const e = extraction[f.fieldKey];
     if (e && e.status === "Yes") {
-      out.push({ fieldKey: f.fieldKey, label: f.label, answer: e.answer ?? "" });
+      const ambiguous = (labelCounts.get(f.label) ?? 0) > 1;
+      out.push({
+        fieldKey: f.fieldKey,
+        label: ambiguous ? `${f.label} (${humanizeFieldKey(f.fieldKey)})` : f.label,
+        answer: e.answer ?? "",
+      });
     }
   }
   return out;
+}
+
+/** "sql4_exec_involvement" -> "exec involvement". Enough to tell two apart. */
+function humanizeFieldKey(key: string): string {
+  return key.replace(/^sql\d+_/, "").replace(/_/g, " ");
 }
 
 /** Open gaps at the current stage plus the next stage, de-duplicated. */

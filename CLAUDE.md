@@ -483,7 +483,25 @@ has looked closely enough to be specific.
   call does not. Close that asymmetry first.
 - The recap has never been linted. `lintBriefing` is called from exactly one
   place, `generate-briefing.ts`. Extend it before the Note ships, since that
-  writes generated copy into a customer's CRM.
+  writes generated copy into a customer's CRM. Three tiers, because the failures
+  are not alike:
+    - AUTO-FIX, never regenerate: em-dashes and en-dashes. Substitution is exact
+      and lossless, and regenerating a 3m30s pass over one dash is absurd. The
+      dash in the Salesforce Task title is not model output at all (it is the
+      rep's own calendar subject via `cleanMeetingTitle`) so it can ONLY be
+      fixed this way.
+    - REGENERATE ONCE, then ship and flag: framework vocabulary in the
+      narrative. "Compelling event" is off-register, not wrong, and suppressing
+      the section would delete the operational-detail paragraph to fix a noun.
+    - HARD FAIL, suppress: unfilled placeholders, bracketed tokens, a heading
+      with nothing under it. Anything that asserts what we cannot stand behind.
+  One more check, learned 2026-08-16: a pain point containing no verb that
+  describes a problem is a requirement CATEGORY that leaked through ("customs
+  sophistication is a decision driver"). Categories belong in
+  `requirementsByArea`; pain points describe mechanics. It is mechanically
+  detectable and it is worth detecting, because ranking categories as pains
+  pushed the one paragraph the doc calls "worth more than the whole gap audit"
+  down to fourth.
 - Recap as a Salesforce **Note**. `renderRecapNote` produces the body; nothing
   posts it.
 - Follow-up draft recipients from the call's external attendees, not from

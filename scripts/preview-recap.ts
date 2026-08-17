@@ -24,6 +24,13 @@ config({ path: ".env.local" });
 import { loadFramework } from "../lib/framework";
 import { formatMeetingTime } from "../lib/graph-time";
 import { buildRecap } from "../lib/recap-build";
+import {
+  renderDemoStrategyProse,
+  renderNarrativeProse,
+  renderPassGap,
+  renderRecapEmailBody,
+  renderRecapNote,
+} from "../lib/recap-render";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 import type { ExtractionMap } from "../lib/briefing-magaya";
@@ -44,6 +51,11 @@ async function main(): Promise<void> {
   const dealArg = arg("deal");
   const callArg = arg("call");
   const asJson = process.argv.includes("--json");
+  // The two real artifacts. --note is what goes in the Salesforce Note and what
+  // Eduardo shares with the solution engineer; --email is what the rep opens on
+  // a phone. Same generation, different readers.
+  const asNote = process.argv.includes("--note");
+  const asEmail = process.argv.includes("--email");
   if (!dealArg && !callArg) {
     console.error("Pass --deal <name or external id fragment> or --call <call id>.");
     process.exit(1);
@@ -213,6 +225,7 @@ async function main(): Promise<void> {
     extraction,
     transcript: body,
     callId: callRow.id,
+    callAt: callRow.scheduled_start,
     // Reuse the stored classification when there is one, exactly as
     // transcript-sync does, so the preview routes the way production routed.
     meetingType: (callRow.meeting_type as MeetingType | null) ?? undefined,
@@ -223,13 +236,43 @@ async function main(): Promise<void> {
     return;
   }
 
+  if ((asNote || asEmail) && built.kind === "qualification") {
+    if (asNote) {
+      console.log(
+        renderRecapNote({
+          account: built.account,
+          callTitle: callRow.title,
+          callAt: formatMeetingTime(callRow.scheduled_start ?? undefined),
+          stageKey: built.stageKey,
+          narrative: built.narrative,
+          demoStrategy: built.demoStrategy,
+          captured: built.summary.captured,
+          stillOpen: built.summary.stillOpen,
+          history: built.history,
+        }),
+      );
+    }
+    if (asEmail) {
+      if (asNote) console.log(`\n${"=".repeat(78)}\nEMAIL BODY\n${"=".repeat(78)}`);
+      console.log(renderRecapEmailBody({ narrative: built.narrative, demoStrategy: built.demoStrategy }));
+    }
+    return;
+  }
+
   console.log(rule(`ROUTE`));
   console.log(`kind         ${built.kind}`);
   console.log(`meetingType  ${built.meetingType}`);
   console.log(`why          ${built.reason}`);
 
   if (built.kind === "general") {
-    console.log(rule(`GENERAL RECAP`));
+    console.log(rule(`NARRATIVE  (no audit: ${built.meetingType})`));
+    if (built.narrative.status === "present") {
+      console.log(renderNarrativeProse(built.narrative.value));
+      return;
+    }
+    console.log((renderPassGap("", built.narrative) ?? "").trim());
+    if (!built.recap) return;
+    console.log(rule(`FALLBACK GENERAL RECAP`));
     console.log(built.recap.summary);
     console.log(`\nTakeaways`);
     for (const t of built.recap.takeaways) console.log(`  - ${t}`);
@@ -244,46 +287,12 @@ async function main(): Promise<void> {
   // and unmoved, exactly as docs/recap-target-eduardo.md asks.
   console.log(rule(`PASS 1  NARRATIVE`));
   if (built.narrative.status !== "present") {
-    console.log(`  ${built.narrative.status.toUpperCase()}: ${built.narrative.reason}`);
+    console.log((renderPassGap("", built.narrative) ?? "").trim());
   } else {
-    const n = built.narrative.value;
-    console.log(n.executiveSummary);
-    if (n.currentEnvironment.length) {
-      console.log(`\nCurrent environment, their numbers:`);
-      for (const f of n.currentEnvironment) {
-        console.log(`  ${f.value} ${f.unit}`);
-        console.log(`      ${f.statement}`);
-        console.log(`      "${f.quote}"${f.speaker ? `  (${f.speaker})` : ""}`);
-      }
-    }
-    if (n.environmentNotes.length) {
-      console.log(`\nHow they work today:`);
-      for (const f of n.environmentNotes) console.log(`  - ${f.statement}`);
-    }
-    if (n.painPoints.length) {
-      console.log(`\nPain points, ranked:`);
-      for (const f of n.painPoints) {
-        console.log(`  - ${f.statement}`);
-        console.log(`      "${f.quote}"${f.speaker ? `  (${f.speaker})` : ""}`);
-      }
-    }
-    console.log(`\nOperational detail:`);
-    console.log(n.operationalDetail ? `  ${n.operationalDetail}` : `  (the call contained no such detail)`);
-    if (n.requirementsByArea.length) {
-      console.log(`\nRequirements by area:`);
-      for (const r of n.requirementsByArea) {
-        console.log(`  ${r.area}`);
-        for (const q of r.requirements) console.log(`      - ${q}`);
-      }
-    }
-    if (n.buyingProcess.length) {
-      console.log(`\nBuying process:`);
-      for (const f of n.buyingProcess) console.log(`  - ${f.statement}`);
-    }
-    if (n.timeline.length) {
-      console.log(`\nTimeline:`);
-      for (const f of n.timeline) console.log(`  - ${f.statement}`);
-    }
+    // The prose renderer, not a bespoke one. The Salesforce Note, the email and
+    // this preview must show the same words, or iterating here improves
+    // something the rep never sees.
+    console.log(renderNarrativeProse(built.narrative.value));
   }
 
   const g = built.narrativeGrounding;
@@ -316,32 +325,20 @@ async function main(): Promise<void> {
   }
   if (s.coaching) console.log(`coaching     ${s.coaching}`);
 
+  console.log(rule(`PRIOR CALLS AND CRM STATE`));
+  console.log(built.history ? built.history : "  No prior calls on this deal. This is a first conversation.");
+  console.log("");
+  console.log(
+    built.crmContext
+      ? `Salesforce BDR context (${built.crmContextStatus}):\n${built.crmContext}`
+      : `Salesforce BDR context: none carried (${built.crmContextStatus})`,
+  );
+
   console.log(rule(`PASS 3  DEMO STRATEGY`));
   if (built.demoStrategy.status !== "present") {
-    console.log(`  ${built.demoStrategy.status.toUpperCase()}: ${built.demoStrategy.reason}`);
+    console.log((renderPassGap("", built.demoStrategy) ?? "").trim());
   } else {
-    const d = built.demoStrategy.value;
-    console.log(
-      d.buildsOnRepPlan
-        ? `(builds on the plan the rep proposed on the call)`
-        : `(no rep-proposed plan on the call, so this is ours)`,
-    );
-    for (const [i, sess] of d.sessions.entries()) {
-      console.log(`\n  Session ${i + 1}: ${sess.name}${sess.minutes ? `  (${sess.minutes} min)` : ""}`);
-      for (const c of sess.cover) console.log(`      - ${c}`);
-      if (sess.why) console.log(`      why: ${sess.why}`);
-    }
-    console.log(`\n  Validate internally before the session:`);
-    if (d.validateInternally.length === 0) {
-      console.log(`      none identified on this call`);
-    } else {
-      for (const v of d.validateInternally) console.log(`      - ${v}`);
-    }
-    if (d.risks.length) {
-      console.log(`\n  Risks:`);
-      for (const r of d.risks) console.log(`      - ${r}`);
-    }
-    if (d.positioning) console.log(`\n  Positioning: ${d.positioning}`);
+    console.log(renderDemoStrategyProse(built.demoStrategy.value));
   }
 
   console.log(rule(`TASKS  (${built.tasks.length}, generated, not saved)`));
