@@ -665,7 +665,20 @@ function buildUserMessage(
     // front of a CUSTOMER on a deal already past demo, where raising it reads
     // as the rep having lost track of their own deal. Only surface it while a
     // demo is genuinely still ahead.
-    s.nda?.demoIsNext && !s.nda.ndaInPlace && isPreDemoStage(s.stageKey)
+    // The stage gate alone was too blunt. Dunavant's Aug 14 call sits at a
+    // proposal-stage key because pricing was discussed, while the demo is still
+    // ahead on Thursday the 20th and Michael owes a signed NDA on Monday the
+    // 17th. isPreDemoStage said false, the rule was suppressed, and the draft
+    // confirmed a demo without mentioning the signature that gates it.
+    //
+    // So the stage is now one of two ways to establish a demo is still ahead.
+    // The other is the commitments themselves, which are verified against the
+    // transcript and say so directly. That keeps the original protection (do
+    // not raise an NDA on a deal genuinely past demo) while no longer relying
+    // on stage as a proxy for something the agreed steps state outright.
+    s.nda?.demoIsNext &&
+    !s.nda.ndaInPlace &&
+    (isPreDemoStage(s.stageKey) || agreedMentionsUpcomingDemo(input.agreed))
       ? `\nA demo is still ahead and no NDA is signed. Magaya requires one first, so make the proposed date contingent on it rather than raising the NDA as a separate request.`
       : "",
     open ? `\nQUALIFICATION GAPS STILL OPEN (work at most ONE in as a question, never list them):\n${open}` : "",
@@ -676,6 +689,22 @@ function buildUserMessage(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Do the agreed commitments themselves say a demo is still coming?
+ *
+ * Deliberately narrow. It looks only at what both sides COMMITTED to, not at
+ * anything merely discussed, because a demo someone mentioned in passing is not
+ * a demo that gates an NDA.
+ */
+function agreedMentionsUpcomingDemo(
+  agreed: { weOwe: string[]; customerOwes: string[] } | undefined,
+): boolean {
+  if (!agreed) return false;
+  return [...agreed.weOwe, ...agreed.customerOwes].some((x) =>
+    /\b(demo|demonstration|presentation|walk ?through)\b/i.test(x),
+  );
 }
 
 function parseJson(text: string): { subject: string; body: string; attachmentsToAdd: string[] } | null {
