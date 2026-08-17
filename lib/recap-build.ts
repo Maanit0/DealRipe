@@ -37,6 +37,7 @@ import {
   type Narrative,
   type PassResult,
 } from "./recap-passes";
+import { applyRecapFixes, describeRecapFindings, lintRecap, recapBlockers } from "./recap-lint";
 import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 import { generateTasksFromCall, type GeneratedTask } from "./tasks";
@@ -358,6 +359,24 @@ export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
     }).catch(() => []);
   }
 
+  // Lint before anything renders. Fixes are applied silently, regenerate-tier
+  // findings are logged and shipped, and a suppress-tier finding downgrades the
+  // readout to absent so the audit still goes out on its own.
+  let lintedNarrative = narrativePass.result;
+  if (lintedNarrative.status === "present") {
+    const findings = lintRecap({ narrative: lintedNarrative, demoStrategy });
+    const blockers = recapBlockers(findings);
+    if (findings.length > 0) {
+      console.warn(`[recap-build] lint findings for deal ${input.dealId}:\n${describeRecapFindings(findings)}`);
+    }
+    lintedNarrative = blockers.length > 0
+      ? {
+          status: "absent",
+          reason: `the readout was suppressed by ${blockers.length} lint rule(s): ${blockers.map((b) => b.rule).join(", ")}`,
+        }
+      : { status: "present", value: applyRecapFixes(lintedNarrative.value) };
+  }
+
   return {
     kind: "qualification",
     reason:
@@ -368,7 +387,7 @@ export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
     meetingType,
     stageKey,
     summary,
-    narrative: narrativePass.result,
+    narrative: lintedNarrative,
     narrativeGrounding: narrativePass.grounding,
     demoStrategy,
     history,
