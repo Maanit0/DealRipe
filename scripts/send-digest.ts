@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     .replace(/\s+/g, " ")
     .trim();
 
-  console.log(`to:        ${to}`);
+  console.log(`to:        ${to.split(",").map((t) => t.trim()).filter(Boolean).join(", ")}`);
   console.log(`subject:   ${subject}`);
   console.log(`html:      ${htmlPath} (${html.length} chars)`);
   console.log(`reply-to:  ${replyTo ?? "(none)"}`);
@@ -60,7 +60,17 @@ async function main(): Promise<void> {
     return;
   }
 
-  const res = await sendEmail({ to, subject, html, text, ...(replyTo ? { replyTo } : {}) });
+  // Split on commas. sendEmail takes a string or an array, and passing
+  // "a@x.com,b@x.com" as one string makes it a single malformed recipient,
+  // which is exactly how the Aug 17 digest reached nobody at the first address.
+  const recipients = to.split(",").map((t) => t.trim()).filter(Boolean);
+  const res = await sendEmail({
+    to: recipients.length === 1 ? recipients[0] : recipients,
+    subject,
+    html,
+    text,
+    ...(replyTo ? { replyTo } : {}),
+  });
   console.log(`\nSent. Resend id: ${res.id}`);
 }
 
