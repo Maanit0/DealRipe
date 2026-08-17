@@ -42,6 +42,18 @@ export type BriefingEmailContext = {
   stageKey: string;
   attendees?: string;
   minutesUntil?: number;
+  /**
+   * What to show instead of the SQL stage label, when the stage is not the
+   * honest description of the relationship.
+   *
+   * Medov is a customer since 2023 with 111 licences at about $22,000 a month
+   * and an open Active Renewal, and this header called them "Lead" because the
+   * deal row sits at SQL0. The body of that briefing got it right and the line
+   * above it did not, which is the first thing a rep reads. Set by
+   * briefing-sync from the resolved meeting context; absent falls back to the
+   * stage, which is correct for ordinary new business.
+   */
+  standingLabel?: string | null;
 };
 
 function escapeHtml(s: string): string {
@@ -72,7 +84,7 @@ export function renderPreCallBriefingEmail(
   briefing: MagayaBriefing,
   ctx: BriefingEmailContext,
 ): RenderedEmail {
-  const stageLabel = STAGE_LABELS[ctx.stageKey] ?? ctx.stageKey;
+  const stageLabel = ctx.standingLabel ?? STAGE_LABELS[ctx.stageKey] ?? ctx.stageKey;
   const subject = `Briefing for your ${ctx.account} call${
     typeof ctx.minutesUntil === "number" ? ` in ${ctx.minutesUntil} min` : ""
   }`;

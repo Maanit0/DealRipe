@@ -17,6 +17,7 @@
  */
 
 import { isMeaningfulContact } from "./contacts-extract";
+import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { prettyAccount, repName } from "./display-names";
 import { loadFramework, type Framework } from "./framework";
 import { isConsumerMailShell, rolldogOppIdForDeal } from "./pilot-config";
@@ -610,12 +611,30 @@ export async function getPipelineChanges(
 
   // One Rolldog read per linked deal + one upcoming-call check per deal (both
   // best-effort, parallel).
+  //
+  // The read is wrapped in runWithAuthorizedOpportunities for the same reason
+  // lib/snapshot.ts and lib/deal-context.ts wrap theirs: assertScopedRead is
+  // fail-closed, so an opportunity outside PILOT_OPPORTUNITY_IDS throws, and
+  // getRolldogSummary maps the throw to null. That null is indistinguishable
+  // here from "the rep has entered no forecast", which is how this engine came
+  // to report 27 deals carrying a rep forecast when 45 do. The other 18 were
+  // our own refusal, and crm_access_log had been recording it as allowed=false
+  // with these exact READ_FIELDS the whole time.
+  //
+  // Per-call and per-opportunity: PILOT_OPPORTUNITY_IDS is not widened, the
+  // scope lasts one read, and a deal with no linked opportunity reaches
+  // nothing at all because the `if (opp)` guard returned already.
   const summaries = new Map<string, RolldogSummary | null>();
   const hasUpcoming = new Map<string, boolean>();
   await Promise.all(
     deals.map(async (d) => {
       const opp = oppByDeal.get(d.id);
-      if (opp) summaries.set(d.id, await getRolldogSummary(opp));
+      if (opp) {
+        summaries.set(
+          d.id,
+          await runWithAuthorizedOpportunities([opp], () => getRolldogSummary(opp)),
+        );
+      }
       try {
         hasUpcoming.set(d.id, !!(await getUpcomingCallForDeal(tenantId, d.id)));
       } catch {

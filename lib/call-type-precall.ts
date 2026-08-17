@@ -1,0 +1,251 @@
+/**
+ * What kind of call this is, decided BEFORE it happens.
+ *
+ * lib/meeting-classify.ts answers the same question from the transcript, which
+ * is the wrong side of the call for a briefing. `calls.meeting_type` and
+ * `calls.call_subtype` are written by transcript-sync AFTER capture, so at
+ * briefing time they are null for the meeting being briefed and the briefing
+ * has never had this input at all.
+ *
+ * The cost of not having it, measured by the prescription ledger across five
+ * reps: 25% follow-through on discovery calls, and 0% on demos, follow-ups and
+ * existing-customer calls. Cargoservicesgroup was a customer mid-implementation
+ * discussing patch 14.2 being asked "what's driving you to look at a new
+ * solution", and Unitedchb was a demo ending "appreciate the demo" being asked
+ * the same. The reps were right to ignore both.
+ *
+ * Two rules this is built on:
+ *
+ *   DETERMINISTIC FIRST. The strongest evidence is the deal's OWN captured
+ *   history, which is already classified and sitting in the calls table. A deal
+ *   whose last call was a demo is not about to have a first discovery call. No
+ *   model is needed to know that and none is used.
+ *
+ *   UNKNOWN IS A RESULT. When there is no history and the subject says nothing,
+ *   this returns "unknown" with a reason rather than defaulting to discovery.
+ *   classifyCallSubtype defaults to "discovery" on failure and says so in its
+ *   own comment; doing that here would put a first-discovery briefing in front
+ *   of a signed customer, which is the exact failure being fixed.
+ */
+
+import { supabaseAdmin } from "./supabase";
+
+export type PreCallType =
+  | "discovery"
+  | "demo"
+  | "proposal"
+  | "follow_up"
+  | "existing_customer"
+  | "internal"
+  /** No history and no signal in the subject. Brief without assuming a stage. */
+  | "unknown";
+
+export type PreCallTypeRead = {
+  type: PreCallType;
+  /**
+   * Where it came from, so a briefing that gets this wrong can be traced to the
+   * evidence rather than to a guess.
+   *   history  the deal's own captured calls, already classified
+   *   subject  the calendar title
+   *   none     nothing to go on
+   */
+  source: "history" | "subject" | "none";
+  reason: string;
+};
+
+/**
+ * Subject patterns, ordered most specific first.
+ *
+ * These mirror the guidance that has been in the briefing prompt as prose since
+ * the Alexandra week (onboarding and proposal walkthroughs read as first
+ * discovery calls). Encoding them here makes the decision inspectable and
+ * testable instead of leaving it to the model to notice mid-generation.
+ */
+const SUBJECT_RULES: Array<{ type: PreCallType; re: RegExp; label: string }> = [
+  // Existing customer first: a kickoff or a training is not a sales call at all,
+  // and getting this wrong qualifies someone who has already paid.
+  {
+    type: "existing_customer",
+    re: /\b(onboarding|kick\s?off|kickoff|training|implementation|go[-\s]?live|support|health\s?check|qbr|business\s+review|office\s+hours|check[-\s]?in)\b/i,
+    label: "reads as an existing-customer meeting",
+  },
+  {
+    type: "internal",
+    re: /\b(internal|all[-\s]?hands|stand\s?up|standup|1[-:\s]?on[-:\s]?1|one[-\s]?on[-\s]?one|team\s+(meeting|sync|dinner)|interview|candidate|payroll|benefits)\b/i,
+    label: "reads as an internal meeting",
+  },
+  {
+    type: "proposal",
+    re: /\b(proposal|pricing|price|quote|estimate|contract|redline|negotiat|renewal|terms|sow|order\s+form)\b/i,
+    label: "reads as a pricing or contract conversation",
+  },
+  {
+    type: "demo",
+    re: /\b(demo|demonstration|walk\s?through|walkthrough|presentation|storyboard|deep\s?dive)\b/i,
+    label: "reads as a demo or walkthrough",
+  },
+  {
+    type: "follow_up",
+    re: /\b(cont\.?|continued|follow[-\s]?up|next\s+steps?|part\s+2|additional\s+session|recap|touch\s?base)\b/i,
+    label: "reads as a conversation already in progress",
+  },
+  {
+    type: "discovery",
+    re: /\b(intro|introduction|discovery|first\s+call|initial)\b/i,
+    label: "reads as an early conversation",
+  },
+];
+
+/** Ordering used to decide whether history has already moved past a stage. */
+const ADVANCEMENT: Record<string, number> = {
+  discovery: 1,
+  demo: 2,
+  follow_up: 2,
+  proposal: 3,
+};
+
+export function preCallTypeFromSubject(subject: string | null | undefined): PreCallTypeRead | null {
+  const s = (subject ?? "").trim();
+  if (!s) return null;
+  for (const rule of SUBJECT_RULES) {
+    if (rule.re.test(s)) {
+      return { type: rule.type, source: "subject", reason: `the title ${rule.label}` };
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the kind of call about to happen.
+ *
+ * History outranks the subject, with one deliberate exception: a subject that
+ * reads as an existing-customer or internal meeting wins outright, because
+ * those are the two errors that cost the most in front of a rep and the title
+ * is explicit evidence about THIS meeting where history is evidence about
+ * previous ones.
+ */
+export async function resolvePreCallType(args: {
+  tenantId: string;
+  dealId: string;
+  subject: string | null | undefined;
+  /**
+   * Only consider calls before this instant. Defaults to now.
+   *
+   * In production nothing later can have a subtype yet, since transcript-sync
+   * writes it after capture. It matters for a re-run or a backfill, where
+   * without the bound this reads calls that had not happened when the briefing
+   * went out and quietly grades itself with the answers. Same leak the recap
+   * path closed with asOf.
+   */
+  beforeIso?: string | null;
+}): Promise<PreCallTypeRead> {
+  const fromSubject = preCallTypeFromSubject(args.subject);
+  if (fromSubject && (fromSubject.type === "existing_customer" || fromSubject.type === "internal")) {
+    return fromSubject;
+  }
+
+  const db = supabaseAdmin();
+  const prior = await db
+    .from("calls")
+    .select("meeting_type, call_subtype, scheduled_start, call_date")
+    .eq("tenant_id", args.tenantId)
+    .eq("deal_id", args.dealId)
+    .not("call_subtype", "is", null)
+    .lt("scheduled_start", args.beforeIso ?? new Date().toISOString())
+    .order("scheduled_start", { ascending: false })
+    .limit(6);
+
+  if (prior.error) {
+    // Say what could not be read. Falling through to the subject alone is the
+    // right behaviour, but doing it silently would make a briefing that ignores
+    // a deal's whole history look identical to one for a brand new deal.
+    console.warn(
+      `[call-type] prior-call read failed for deal ${args.dealId}, falling back to the invite title alone: ${prior.error.message}`,
+    );
+    return (
+      fromSubject ?? {
+        type: "unknown",
+        source: "none",
+        reason: "the deal's history could not be read and the title says nothing about the stage",
+      }
+    );
+  }
+
+  const rows = prior.data ?? [];
+
+  // A deal with any existing-customer call is an existing customer. That does
+  // not revert.
+  if (rows.some((r) => r.meeting_type === "existing_customer")) {
+    return {
+      type: "existing_customer",
+      source: "history",
+      reason: "a previous call on this deal was an existing-customer meeting",
+    };
+  }
+
+  // Narrow to the types this module actually understands rather than trusting
+  // whatever string is in the column. call_subtype is free text in the
+  // database, and a value transcript-sync starts writing tomorrow would
+  // otherwise flow straight through as a PreCallType nothing handles.
+  const KNOWN: ReadonlySet<string> = new Set<PreCallType>([
+    "discovery",
+    "demo",
+    "proposal",
+    "follow_up",
+    "existing_customer",
+  ]);
+  const subtypes = rows
+    .map((r) => r.call_subtype)
+    .filter((s): s is PreCallType => typeof s === "string" && KNOWN.has(s));
+
+  if (subtypes.length > 0) {
+    const latest = subtypes[0];
+    const furthest = subtypes.reduce(
+      (best, s) => ((ADVANCEMENT[s] ?? 0) > (ADVANCEMENT[best] ?? 0) ? s : best),
+      subtypes[0],
+    );
+
+    // The subject may legitimately advance the deal past its history: a deal
+    // whose last call was a demo, with "Proposal Review" on the invite, is a
+    // proposal call. It may never take it BACKWARDS.
+    if (fromSubject && (ADVANCEMENT[fromSubject.type] ?? 0) > (ADVANCEMENT[furthest] ?? 0)) {
+      return {
+        type: fromSubject.type,
+        source: "subject",
+        reason: `${fromSubject.reason}, ahead of the last captured call (${latest})`,
+      };
+    }
+
+    // Never brief discovery on a deal that has already demoed or quoted.
+    if ((ADVANCEMENT[furthest] ?? 0) >= 2) {
+      return {
+        type: furthest === latest ? latest : furthest,
+        source: "history",
+        reason: `this deal has already had a ${furthest} call`,
+      };
+    }
+    return {
+      type: latest,
+      source: "history",
+      reason: `the last captured call on this deal was ${latest}`,
+    };
+  }
+
+  if (fromSubject) return fromSubject;
+  return {
+    type: "unknown",
+    source: "none",
+    reason: "no captured history on this deal and the title says nothing about the stage",
+  };
+}
+
+/**
+ * Is a first-discovery framing appropriate.
+ *
+ * The single question the briefing prompt actually needs answered. "unknown"
+ * counts as yes, because with no evidence either way an early framing is the
+ * safer error on a new deal, and the prompt is separately told not to assume.
+ */
+export function allowsDiscoveryFraming(type: PreCallType): boolean {
+  return type === "discovery" || type === "unknown";
+}

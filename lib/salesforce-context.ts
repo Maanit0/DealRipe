@@ -201,7 +201,89 @@ function render(value: unknown): string | null {
  * because Salesforce orgs of this age always carry some duplicates and refusing
  * to brief on all of them helps nobody.
  */
-async function resolveAccountId(domain: string, addresses: ReadonlyArray<string> = []): Promise<string | null> {
+
+/**
+ * Choose between accounts that all match the same customer.
+ *
+ * Magaya's org carries duplicate records for the same company, and the old ones
+ * are not empty: they hold years of accumulated contacts. Dunavant's 2021
+ * Closed Lost record had 14 contacts on dunavant.com while the account the rep
+ * actually works had 2, so ranking by contact count picked the dead one and
+ * marked it 'confirmed'. Every write would have landed where nobody looks, and
+ * nothing would have thrown.
+ *
+ * So the discriminator is LIVE WORK, not accumulated data, which is the rule
+ * Eduardo gave on 2026-08-14: "there's always an activity when that discovery
+ * is going to happen, that's the most accurate way to match it."
+ *
+ *   1. an open opportunity
+ *   2. any activity at all
+ *   3. a current (001RN) record over a legacy (0013j) one
+ *
+ * Returns null when nothing separates them, which leaves the caller's own
+ * tiebreak in charge rather than inventing a winner here.
+ */
+async function preferLiveAccount(
+  ids: readonly string[],
+  expectName?: string | null,
+): Promise<string | null> {
+  const clean = ids.map((i) => soqlSafe(i)).filter(Boolean);
+  if (clean.length === 0) return null;
+  if (clean.length === 1) return clean[0];
+  const inList = clean.map((i) => `'${i}'`).join(",");
+
+  // Uncaught for the same reason the strategies above are: a failure here must
+  // surface, not quietly hand back the wrong twin.
+  const oq = await sfGet<{ records?: Array<{ AccountId?: string | null }> }>(
+    `/query?q=${encodeURIComponent(
+      `SELECT AccountId FROM Opportunity WHERE AccountId IN (${inList}) AND IsClosed = false LIMIT 200`,
+    )}`,
+  );
+  const withOpenOpp = new Set((oq.records ?? []).map((r) => r.AccountId).filter(Boolean) as string[]);
+
+  // EXACTLY ONE, and nothing else counts.
+  //
+  // The first version of this also ranked by task count and preferred 001RN
+  // over 0013j when the opportunity signal was silent. Both were wrong, and
+  // Mollaxpanama proved it: those tiebreaks turned a match the old code
+  // correctly held back for a human into a 'confirmed' link to a legacy record
+  // named "Vene-embarques, C.A. LLC", a different company entirely.
+  //
+  // An open opportunity means somebody is selling to this account right now.
+  // Task counts and record ages are accumulation, and accumulation cannot tell
+  // you which of two DIFFERENT companies the customer is. Where the opportunity
+  // signal does not separate them, this returns null and the caller's existing
+  // behaviour stands, which for an unresolved domain means falling through to
+  // the name path and, ultimately, to a human.
+  if (withOpenOpp.size !== 1) return null;
+  const winner = [...withOpenOpp][0];
+
+  // The open opportunity says somebody is selling to this account. It does NOT
+  // say it is the same company as the deal, and that distinction is the whole
+  // guard. Mollaxpanama's domain matched several accounts, exactly one of which
+  // had an open opportunity, and that account is named "Vene-embarques, C.A.
+  // LLC". Without this check the resolver upgraded a match the old code
+  // correctly left for a human into a 'confirmed' link on a different company.
+  //
+  // No name to check against means no confidence to add: return null and let
+  // the caller's existing fallbacks run, which end at a person.
+  if (!expectName || !expectName.trim()) return null;
+
+  const nq = await sfGet<{ records?: Array<{ Name?: string | null }> }>(
+    `/query?q=${encodeURIComponent(`SELECT Name FROM Account WHERE Id = '${soqlSafe(winner)}' LIMIT 1`)}`,
+  );
+  const foundName = nq.records?.[0]?.Name ?? "";
+  // Same normalized prefix test the name path uses, so the two agree about
+  // what "the same company" means.
+  return nameOverlaps(foundName, expectName) ? winner : null;
+}
+
+async function resolveAccountId(
+  domain: string,
+  addresses: ReadonlyArray<string> = [],
+  /** The deal's account name, used to sanity-check a duplicate-record tiebreak. */
+  expectName?: string | null,
+): Promise<string | null> {
   const clean = soqlSafe(domain).toLowerCase().trim();
   if (!clean || !clean.includes(".")) return null;
 
@@ -255,6 +337,11 @@ async function resolveAccountId(domain: string, addresses: ReadonlyArray<string>
     }
     if (counts.size === 1) return [...counts.keys()][0];
     if (counts.size > 1) {
+      // Live work decides first. Contact count was the ONLY tiebreak here and
+      // it is the one that chose Dunavant's 2021 Closed Lost record over the
+      // account holding the opportunity created on the day of the call.
+      const live = await preferLiveAccount([...counts.keys()], expectName);
+      if (live) return live;
       const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
       // A clear plurality is a duplicate-record problem, not a real
       // ambiguity. On a tie, keep going rather than giving up: the website
@@ -271,7 +358,13 @@ async function resolveAccountId(domain: string, addresses: ReadonlyArray<string>
     )}`,
   );
   const recs = wq.records ?? [];
-  return recs.length === 1 && recs[0].Id ? recs[0].Id : null;
+  if (recs.length === 1 && recs[0].Id) return recs[0].Id;
+  // Two websites matching is the duplicate-record case again, not a genuine
+  // ambiguity, so give live work a chance to decide before giving up.
+  if (recs.length > 1) {
+    return preferLiveAccount(recs.map((r) => r.Id).filter(Boolean) as string[], expectName);
+  }
+  return null;
 }
 
 /**
@@ -476,7 +569,7 @@ export async function resolveAccount(args: {
   //    told apart here.
   if (domain || addresses.length > 0) {
     try {
-      const id = await resolveAccountId(domain, addresses);
+      const id = await resolveAccountId(domain, addresses, args.dealAccountName ?? null);
       if (id) {
         const ctx = await loadAccountContext(id);
         return {
@@ -588,4 +681,241 @@ export function accountContextLines(ctx: SalesforceAccountContext): string {
     }
   }
   return out.join("\n");
+}
+
+// =====================================================================
+// Customer standing and opportunity situation
+//
+// Added for lib/meeting-context.ts. Everything above answers "what does
+// Salesforce hold about this company"; this answers the two questions every
+// downstream action actually needs before it decides anything:
+//
+//   Are they already a customer, and if so where are they in their life with
+//   us (implementing, live, churned)?
+//   What KIND of deal is the open opportunity, specifically is it a renewal?
+//
+// Both were guessed from the calendar title until now. Both are recorded in
+// Salesforce, on fields confirmed present in Magaya's org by describe:
+// Account.Customer_Since__c, Customer_Status__c, Implementati__c,
+// Account_Active_Licenses__c, and Opportunity.Is_Renewal__c,
+// Opportunity_Type__c, Type.
+//
+// Field-level security can hide any of them from the integration user, so both
+// reads describe first and query only what is actually visible, the same way
+// accountFieldMap does. A hidden field is "did not check", never "no".
+// =====================================================================
+
+type DescribeField = { name: string; type: string };
+
+const _describeCache = new Map<string, { at: number; names: Set<string> }>();
+
+/** Field API names visible to the integration user on an sobject. */
+async function visibleFields(sobject: string): Promise<Set<string>> {
+  const hit = _describeCache.get(sobject);
+  if (hit && Date.now() - hit.at < FIELD_MAP_TTL_MS) return hit.names;
+  const d = await sfGet<{ fields?: DescribeField[] }>(`/sobjects/${sobject}/describe`);
+  const names = new Set((d.fields ?? []).map((f) => f.name));
+  _describeCache.set(sobject, { at: Date.now(), names });
+  return names;
+}
+
+export type CustomerStanding =
+  | {
+      status: "customer";
+      /** ISO date they became a customer, when the org records one. */
+      since: string | null;
+      /** Magaya's own implementation status picklist, when populated. */
+      implementation: string | null;
+      activeLicenses: number | null;
+      churnedOn: string | null;
+      accountType: string | null;
+      detail: string;
+    }
+  | { status: "prospect"; detail: string }
+  /** Read failed, or every field that would answer it is hidden. */
+  | { status: "unavailable"; detail: string };
+
+/**
+ * Is this account already a Magaya customer.
+ *
+ * "prospect" is only returned when the fields that would say otherwise were
+ * READABLE and empty. If the read failed or the fields are hidden, this is
+ * "unavailable", because telling a paying customer of six years that we think
+ * they are a prospect is the single most expensive error in this product.
+ */
+export async function readCustomerStanding(accountId: string): Promise<CustomerStanding> {
+  const id = soqlSafe(accountId);
+  if (!id) return { status: "unavailable", detail: "no account id" };
+
+  const CANDIDATES = [
+    "Customer_Since__c",
+    "Implementati__c",
+    "Account_Active_Licenses__c",
+    "Intacct_Customer_Churn_Date__c",
+    "Type",
+    "Active__c",
+  ];
+
+  let fields: string[];
+  try {
+    const visible = await visibleFields("Account");
+    fields = CANDIDATES.filter((f) => visible.has(f));
+  } catch (e) {
+    return {
+      status: "unavailable",
+      detail: `Account describe failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  if (fields.length === 0) {
+    return { status: "unavailable", detail: "no customer-standing field is visible to the integration user" };
+  }
+
+  let row: Record<string, unknown>;
+  try {
+    const q = await sfGet<{ records?: Array<Record<string, unknown>> }>(
+      `/query?q=${encodeURIComponent(`SELECT ${fields.join(", ")} FROM Account WHERE Id = '${id}' LIMIT 1`)}`,
+    );
+    const rows = q.records ?? [];
+    if (rows.length === 0) return { status: "unavailable", detail: "account not found" };
+    row = rows[0];
+  } catch (e) {
+    return {
+      status: "unavailable",
+      detail: `account read failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const str = (k: string): string | null => {
+    const v = row[k];
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const num = (k: string): number | null => (typeof row[k] === "number" ? (row[k] as number) : null);
+
+  const since = str("Customer_Since__c");
+  const licenses = num("Account_Active_Licenses__c");
+  const churn = str("Intacct_Customer_Churn_Date__c");
+  const accountType = str("Type");
+
+  // Customer_Status__c is NOT evidence and is deliberately not read here.
+  //
+  // It carries 'Active' on 39,297 of Magaya's ~45,000 accounts, including every
+  // one of Gezairi, Dunavant, Oceanbridge, IFF and Miracle Logistics, all of
+  // which are prospects on a first discovery call. It describes whether the
+  // RECORD is active, not whether the company buys from Magaya. Reading it as
+  // customer evidence classified seven genuine discovery calls as expansion
+  // conversations, which is the checklist-boolean mistake again: a field whose
+  // values were assumed rather than checked.
+  //
+  // Account.Type is the field that means this. It splits 5,198 Customer against
+  // 39,452 Prospect and agrees with Customer_Since__c and the licence count on
+  // every account inspected.
+  const evidence: string[] = [];
+  if (accountType && /customer/i.test(accountType)) evidence.push(`account type ${accountType}`);
+  if (since) evidence.push(`customer since ${since}`);
+  if (licenses !== null && licenses > 0) evidence.push(`${licenses} active licence(s)`);
+  // A churn date only counts alongside one of the above. On its own it would
+  // make a record that once had a stray date look like a customer.
+  if (churn && evidence.length > 0) evidence.push(`churned ${churn}`);
+
+  if (evidence.length > 0) {
+    return {
+      status: "customer",
+      since,
+      implementation: str("Implementati__c"),
+      activeLicenses: licenses,
+      churnedOn: churn,
+      accountType,
+      detail: evidence.join(", "),
+    };
+  }
+
+  return {
+    status: "prospect",
+    detail:
+      accountType && /prospect/i.test(accountType)
+        ? `Salesforce records this account as a Prospect, with no customer-since date and no active licence`
+        : `Salesforce holds no customer-since date, no active licence and no customer account type (${fields.length} field(s) checked)`,
+  };
+}
+
+export type OpportunitySituation =
+  | {
+      status: "found";
+      id: string;
+      name: string;
+      stage: string;
+      isRenewal: boolean | null;
+      opportunityType: string | null;
+      closeDate: string | null;
+      amount: number | null;
+      detail: string;
+    }
+  /** The account was read and has no open opportunity. */
+  | { status: "none"; detail: string }
+  | { status: "unavailable"; detail: string };
+
+/**
+ * The open opportunity on this account, with the two fields that change how a
+ * call should be run: whether it is a renewal, and what type of deal it is.
+ *
+ * findOpenOpportunity in lib/salesforce-opportunity.ts answers a narrower
+ * question for the write path and deliberately reads only Id, Name and Stage.
+ * This is the read side and needs more, so it is separate rather than widening
+ * a query the writer depends on.
+ */
+export async function readOpportunitySituation(accountId: string): Promise<OpportunitySituation> {
+  const id = soqlSafe(accountId);
+  if (!id) return { status: "unavailable", detail: "no account id" };
+
+  const CANDIDATES = ["Is_Renewal__c", "Opportunity_Type__c", "Type", "CloseDate", "Amount"];
+  let extra: string[];
+  try {
+    const visible = await visibleFields("Opportunity");
+    extra = CANDIDATES.filter((f) => visible.has(f));
+  } catch (e) {
+    return {
+      status: "unavailable",
+      detail: `Opportunity describe failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  try {
+    const soql =
+      `SELECT Id, Name, StageName${extra.length ? ", " + extra.join(", ") : ""} FROM Opportunity ` +
+      `WHERE AccountId = '${id}' AND IsClosed = false ORDER BY CreatedDate DESC LIMIT 1`;
+    const q = await sfGet<{ records?: Array<Record<string, unknown>> }>(
+      `/query?q=${encodeURIComponent(soql)}`,
+    );
+    const rows = q.records ?? [];
+    if (rows.length === 0) {
+      return { status: "none", detail: "no open opportunity on this account" };
+    }
+    const r = rows[0];
+    const isRenewal = typeof r.Is_Renewal__c === "boolean" ? (r.Is_Renewal__c as boolean) : null;
+    const oppType =
+      (typeof r.Opportunity_Type__c === "string" && r.Opportunity_Type__c) ||
+      (typeof r.Type === "string" && r.Type) ||
+      null;
+    const bits = [
+      `stage ${String(r.StageName ?? "unknown")}`,
+      isRenewal === true ? "flagged as a renewal" : isRenewal === false ? "not a renewal" : "renewal flag not readable",
+      oppType ? `type ${oppType}` : "type not set",
+    ];
+    return {
+      status: "found",
+      id: String(r.Id),
+      name: String(r.Name ?? ""),
+      stage: String(r.StageName ?? ""),
+      isRenewal,
+      opportunityType: oppType,
+      closeDate: typeof r.CloseDate === "string" ? r.CloseDate : null,
+      amount: typeof r.Amount === "number" ? r.Amount : null,
+      detail: bits.join(", "),
+    };
+  } catch (e) {
+    return {
+      status: "unavailable",
+      detail: `opportunity read failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }

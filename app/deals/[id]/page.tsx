@@ -14,6 +14,7 @@ import {
   stageKeyFromSummary,
   type RolldogSummary,
 } from "@/lib/rolldog-summary";
+import { runWithAuthorizedOpportunities } from "@/lib/crm-scope";
 import { getDealById, getStageForDeal } from "@/lib/seed-data";
 import { getSentMessages } from "@/lib/sent-messages";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -54,7 +55,17 @@ async function loadLiveMagayaDeal(id: string, tenantSlug: string) {
       // auto-linked deals (Aeronet, Core Logistics, Extrum).
       const opp = (ext ? rolldogOppIdForDeal(ext) : null) ?? row.data?.rolldog_opportunity_id ?? null;
       if (opp) {
-        rolldogSummary = await getRolldogSummary(opp);
+        // Authorize this one opportunity for this one read. assertScopedRead is
+        // fail-closed, so without the wrapper every auto-linked deal (the exact
+        // ones named above) threw, getRolldogSummary mapped the throw to null,
+        // and the page rendered with no CRM stage and no deal size as though
+        // Rolldog held nothing for it. Same wrapper and same reason as
+        // lib/deal-context.ts, which reads the identical opportunity for the
+        // briefing, which is why a deal could show its stage in a briefing and
+        // not on its own page.
+        rolldogSummary = await runWithAuthorizedOpportunities([String(opp)], () =>
+          getRolldogSummary(String(opp)),
+        );
         const rStage = stageKeyFromSummary(rolldogSummary);
         if (rStage) deal.stageKey = rStage;
         if (rolldogSummary?.dealSize != null) deal.arr = rolldogSummary.dealSize;

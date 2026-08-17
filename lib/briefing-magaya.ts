@@ -14,6 +14,7 @@
  * nextStepCommitment, whatsAtRisk, signalFlag.
  */
 
+import type { PreCallTypeRead } from "./call-type-precall";
 import type { Framework } from "./framework";
 import { CLOSING_DISCIPLINE, formatPlaysForBriefing } from "./magaya-plays";
 
@@ -184,6 +185,12 @@ export function buildMagayaBriefingUserMessage(args: {
    * record: the rep has spoken to this customer and the BDR filled in a form.
    */
   rolldogNarrative?: string | null;
+  /**
+   * What kind of call this is, resolved before it happens by
+   * lib/call-type-precall.ts. Absent or "unknown" falls back to the prose
+   * guidance, which is what the prompt had on its own.
+   */
+  callType?: PreCallTypeRead | null;
 }): string {
   const { framework, extraction } = args;
 
@@ -248,6 +255,45 @@ export function buildMagayaBriefingUserMessage(args: {
 
   if (args.history) {
     lines.push(``, `SINCE LAST CALL:`, args.history);
+  }
+
+  // What kind of call this is, RESOLVED, not left for the model to infer.
+  //
+  // The prose block below has been in this prompt since the Alexandra week and
+  // it is guidance, not a decision: the model had to notice the title, weigh it
+  // against an empty qualification record, and get it right every time. The
+  // prescription ledger measured how often that failed. 25% follow-through on
+  // discovery calls against 0% on demos, follow-ups and existing-customer
+  // calls, because the questions issued to those calls were first-discovery
+  // questions and the reps correctly did not ask them.
+  //
+  // lib/call-type-precall.ts now decides this from the deal's own captured
+  // history and the invite title, before the call, and states it as a fact with
+  // its source. The prose stays underneath as the fallback for "unknown".
+  if (args.callType && args.callType.type !== "unknown") {
+    const t = args.callType;
+    lines.push(``, `THIS IS A ${t.type.toUpperCase().replace("_", " ")} CALL, because ${t.reason}.`);
+    if (t.type === "existing_customer") {
+      lines.push(
+        `They have already bought. Do NOT qualify them, do NOT ask what systems they run today, do NOT ask what is driving them to look for a solution, and never propose a demo. Brief on what is unresolved operationally, what they are trying to get done, and the health of the account. A qualification question here tells a paying customer we do not know who they are.`,
+      );
+    } else if (t.type === "internal") {
+      lines.push(
+        `This is not a customer call. There is nothing to qualify and nobody to ask.`,
+      );
+    } else if (t.type === "proposal") {
+      lines.push(
+        `Our number is in front of them, or is about to be. The job is a decision, a signing path or a redline, not discovery. Never ask whether budget exists, never ask what systems they run today, and never ask what is driving them to look: all three tell the customer we have not registered our own proposal. Ask about the approval sequence, what would have to change for the investment to work, and who signs.`,
+      );
+    } else if (t.type === "demo") {
+      lines.push(
+        `They have seen or are about to see the product. Discovery framing is wrong: asking what they run today, after we built a demo for them, reads as a rep who did not prepare. Ask what they need to see to be convinced, who else must see it, and what happens after.`,
+      );
+    } else if (t.type === "follow_up") {
+      lines.push(
+        `This conversation is already in progress. Never open as though meeting them for the first time and never re-ask what they have already told us. Pick up what was left open.`,
+      );
+    }
   }
 
   if (args.meetingSubject) {

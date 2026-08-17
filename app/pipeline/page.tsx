@@ -21,6 +21,7 @@ import {
   stageKeyFromSummary,
   type RolldogSummary,
 } from "@/lib/rolldog-summary";
+import { runWithAuthorizedOpportunities } from "@/lib/crm-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   getDealsForTenant,
@@ -69,7 +70,14 @@ async function loadMagayaPipeline(tenantSlug: string) {
             null;
           if (!opp) return;
           const [live, baseline] = await Promise.all([
-            getRolldogSummary(opp),
+            // Authorized per opportunity, for this read only. Without the
+            // wrapper the fail-closed guard refused every auto-linked deal and
+            // the refusal arrived here as `live === null`, which the fallback
+            // below then papered over with the frozen day-0 baseline. That is
+            // the worst shape this bug takes: the table showed a plausible
+            // stage and size from the day the pilot started and never moved,
+            // and nothing on the page said the live read had been refused.
+            runWithAuthorizedOpportunities([String(opp)], () => getRolldogSummary(String(opp))),
             getCrmBaseline(r.id).catch(() => null),
           ]);
           // Live read preferred; fall back to the frozen day-0 baseline so a

@@ -9,7 +9,13 @@
 
 import { supabaseAdmin } from "./supabase";
 
-export type SentMessageKind = "briefing" | "recap" | "no_show_draft" | "followup_draft";
+export type SentMessageKind =
+  | "briefing"
+  | "recap"
+  | "no_show_draft"
+  | "followup_draft"
+  /** Asking a rep which Salesforce account a deal belongs to. */
+  | "link_escalation";
 
 export type SentMessage = {
   id: string;
@@ -127,6 +133,14 @@ export async function getDigestSends(tenantId: string): Promise<DigestSend[]> {
   }));
 }
 
+const KNOWN_KINDS: ReadonlySet<string> = new Set<SentMessageKind>([
+  "briefing",
+  "recap",
+  "no_show_draft",
+  "followup_draft",
+  "link_escalation",
+]);
+
 /** All archived messages for a deal, newest first. */
 export async function getSentMessages(dealId: string): Promise<SentMessage[]> {
   const res = await supabaseAdmin()
@@ -137,7 +151,14 @@ export async function getSentMessages(dealId: string): Promise<SentMessage[]> {
   if (res.error || !res.data) return [];
   return res.data.map((r) => ({
     id: r.id,
-    kind: (r.kind === "recap" || r.kind === "no_show_draft" ? r.kind : "briefing") as SentMessageKind,
+    // Every kind we know, not two of them.
+    //
+    // This listed the known pair and collapsed EVERYTHING else to "briefing",
+    // so a follow-up draft sitting in a rep's Outlook was displayed as a
+    // briefing that had been emailed to them, and the new link_escalation would
+    // have been too. Two different things reported as one is the same defect
+    // this codebase keeps paying for, just in a diagnostic rather than a query.
+    kind: (KNOWN_KINDS.has(r.kind) ? r.kind : "briefing") as SentMessageKind,
     callId: (r as { call_id?: string | null }).call_id ?? null,
     toEmail: r.to_email,
     subject: r.subject,

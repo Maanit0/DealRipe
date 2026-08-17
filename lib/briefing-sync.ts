@@ -19,9 +19,16 @@ import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
 import { attendeeLineFromMeeting } from "./attendees";
+import {
+  describeContext,
+  resolveMeetingContext,
+  shouldBrief,
+  standingLabel,
+} from "./meeting-context";
 import { graphIso } from "./graph-time";
 import { briefingStateFromContext, getDealContext } from "./deal-context";
 import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-config";
+import { prescriptionsFromBriefing, recordPrescriptions } from "./prescription-ledger";
 import { prewarmRolldogToken } from "./rolldog";
 import { recordSentMessage } from "./sent-messages";
 import { supabaseAdmin } from "./supabase";
@@ -356,9 +363,36 @@ async function processEvent(
     attendeeLineFromMeeting(ev.attendees, ctx.crmContacts) ??
     (ctx.contacts.length > 0 ? ctx.attendees : undefined);
 
+  // What kind of call this is, decided before it happens rather than left for
+  // the prompt to infer from the title. See lib/call-type-precall.ts for what
+  // this cost when nothing decided it.
+  const context = await resolveMeetingContext({
+    tenantId,
+    dealId,
+    callId,
+    subject: ev.subject,
+    participants: ev.attendees,
+    beforeIso: new Date(startMs).toISOString(),
+  });
+  console.log(`[briefing-sync] ${describeContext(context)}`);
+  const callType = context.meeting;
+
+  // An internal meeting is not a customer call and has nothing to brief. The
+  // join-gate already refuses these, but only on deals it has to classify from
+  // the invite: once a deal exists, an internal meeting with its attendees
+  // sails through and the rep gets customer questions for a conversation with
+  // colleagues. call-quarantine catches it afterwards, which is too late for
+  // the email that already went out.
+  const brief = shouldBrief(context);
+  if (!brief.act) {
+    emit({ kind: "skip", eventId: ev.eventId, reason: brief.reason });
+    return;
+  }
+
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
     attendees: attendees ?? `the ${ctx.account} team`,
+    callType,
     // The calendar title is the only signal we have about what kind of call
     // this is before it happens. Without it every briefing for an account with
     // no captured history reads as a first discovery call.
@@ -371,6 +405,7 @@ async function processEvent(
   const email = renderPreCallBriefingEmail(briefing, {
     account: ctx.account,
     stageKey: ctx.effectiveStageKey,
+    standingLabel: standingLabel(context),
     attendees,
     minutesUntil,
   });
@@ -385,6 +420,32 @@ async function processEvent(
       return;
     }
     throw err;
+  }
+
+  // Record what the rep was just told to do.
+  //
+  // Written HERE and not at generation, because the ledger measures what was
+  // issued to a rep, not what a preview or a diagnostic rendered. The briefing
+  // has gone out by this line, so every row corresponds to an instruction a
+  // human actually received.
+  //
+  // Best-effort in exactly the way the archive below is: the email is already
+  // sent, and losing the ledger row is a gap in the learning loop rather than a
+  // failure of the send. It is logged loudly because a silent gap here is
+  // indistinguishable from a rep who was never told anything, which is the
+  // reading this ledger exists to make impossible.
+  const ledger = await recordPrescriptions({
+    tenantId,
+    dealId,
+    callId,
+    source: "briefing",
+    issuedAt: new Date().toISOString(),
+    prescriptions: prescriptionsFromBriefing(briefing),
+  });
+  if (ledger.status === "unavailable") {
+    console.error(
+      `[briefing-sync] briefing for call ${callId} was sent but its prescriptions were not recorded, so it will look like this rep was told nothing: ${ledger.error}`,
+    );
   }
 
   // Archive the exact briefing that was sent (best-effort, never blocks).

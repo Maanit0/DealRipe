@@ -17,8 +17,14 @@
  */
 
 import { resolutionSummary, type AccountResolution } from "./salesforce-context";
-import { resolveAccountForDeal, writeSalesforceLink, type StoredLink } from "./salesforce-link";
+import {
+  readSalesforceLink,
+  resolveAccountForDeal,
+  writeSalesforceLink,
+  type StoredLink,
+} from "./salesforce-link";
 import { supabaseAdmin } from "./supabase";
+import { describeMatch, matchAccountForMeeting } from "./salesforce-account-match";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
 export type LinkRow = {
@@ -64,7 +70,7 @@ export async function sweepSalesforceLinks(
 
   const calls = await db
     .from("calls")
-    .select("deal_id, title, scheduled_start")
+    .select("deal_id, title, scheduled_start, participants")
     .eq("tenant_id", tenantId)
     .gte("scheduled_start", new Date().toISOString())
     .lte("scheduled_start", new Date(Date.now() + days * 86_400_000).toISOString())
@@ -72,9 +78,20 @@ export async function sweepSalesforceLinks(
   if (calls.error) throw new Error(`could not list upcoming calls: ${calls.error.message}`);
 
   const subjectByDeal = new Map<string, string | null>();
+  // Attendees and the meeting date, for the strong rungs below.
+  const meetingByDeal = new Map<string, { emails: string[]; date: string | null }>();
   for (const c of calls.data ?? []) {
     if (!c.deal_id || subjectByDeal.has(c.deal_id)) continue;
     subjectByDeal.set(c.deal_id, c.title ?? null);
+    const emails = Array.isArray(c.participants)
+      ? (c.participants as Array<{ email?: string | null }>)
+          .map((p) => (p?.email ?? "").trim())
+          .filter(Boolean)
+      : [];
+    meetingByDeal.set(c.deal_id, {
+      emails,
+      date: (c.scheduled_start ?? "").slice(0, 10) || null,
+    });
   }
 
   const counts = { confirmed: 0, review: 0, ambiguous: 0, noAccount: 0, lookupFailed: 0, written: 0 };
@@ -97,6 +114,43 @@ export async function sweepSalesforceLinks(
     ) {
       continue;
     }
+    // Eduardo's ladder first: the exact attendee address against a Contact, then
+    // an activity on the meeting's own date. Domain matching is what put
+    // Dunavant on a stale 2021 record and left ten deals unlinked, so it is
+    // now the FALLBACK rather than the primary, and it only runs when the
+    // stronger rungs found nothing.
+    const meeting = meetingByDeal.get(d.id);
+    if (meeting && meeting.emails.length > 0) {
+      const strong = await matchAccountForMeeting({
+        attendeeEmails: meeting.emails,
+        meetingDate: meeting.date,
+        accountName: d.account,
+      });
+      if (strong.status === "matched" && strong.match.confidence === "confirmed") {
+        const row: LinkRow = {
+          dealId: d.id,
+          account: d.account,
+          externalId: d.external_id,
+          stored: await readSalesforceLink(tenantId, d.id),
+          resolution: {
+            status: "resolved_by_domain",
+            accountId: strong.match.accountId,
+            accountName: strong.match.accountName,
+            confidence: "confirmed",
+          },
+          summary: describeMatch(strong),
+        };
+        counts.confirmed += 1;
+        if (opts.apply) {
+          const w = await writeSalesforceLink(tenantId, d.id, strong.match.accountId, "confirmed");
+          row.write = w;
+          if (w.written) counts.written += 1;
+        }
+        rows.push(row);
+        continue;
+      }
+    }
+
     const { domain, address } = domainOfDeal(d.external_id);
     const { resolution, stored } = await resolveAccountForDeal({
       tenantId,

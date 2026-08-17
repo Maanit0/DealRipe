@@ -8,6 +8,7 @@
 
 import { isMeaningfulContact } from "./contacts-extract";
 import { isConsumerMailShell } from "./pilot-config";
+import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { getRolldogSummary } from "./rolldog-summary";
 import { supabaseAdmin } from "./supabase";
 
@@ -231,7 +232,14 @@ export async function buildWeeklyDigestData(tenantId: string): Promise<WeeklyDig
     [...attention, ...movement].map(async (item) => {
       const opp = oppByDeal.get(item.dealId);
       if (!opp) return;
-      const sum = await getRolldogSummary(opp);
+      // Authorized per opportunity for this read only, the same as every other
+      // Rolldog read on a live path. Unwrapped, the fail-closed guard refused
+      // each auto-linked opportunity and the "best-effort" comment above
+      // quietly became "always omitted", so a surfaced deal lost its
+      // rep-forecast line for a reason that had nothing to do with Rolldog.
+      const sum = await runWithAuthorizedOpportunities([String(opp)], () =>
+        getRolldogSummary(String(opp)),
+      );
       if (sum && (sum.forecastCategory || sum.closeDate)) {
         item.repForecast = { category: sum.forecastCategory, closeDate: sum.closeDate };
       }

@@ -35,7 +35,8 @@ stage-requirement checklist the reps maintain by hand.
 - Supabase / Postgres. Types in `lib/database.types.ts`
 - Vercel crons in `vercel.json`: calendar-sync, transcript-sync, briefing-sync
   every 5 min; rolldog-relink every 2h; snapshot every 4h; outcome-sync and
-  audit daily; digest Tuesdays 11:00
+  audit daily; prescription-scoring every 6h; digest Tuesdays 11:00;
+  link-escalation Mondays 14:00
 - Recall.ai for meeting bots
 - Microsoft Graph: delegated Calendars.Read per rep, app-only Mail.Read and
   Mail.ReadWrite. **Deliberately not Mail.Send.** Drafts are never sent.
@@ -48,8 +49,12 @@ stage-requirement checklist the reps maintain by hand.
 calendar-sync    reads each rep's calendar, decides whether to join (join-gate),
                  creates the deal and calls row, schedules the Recall bot
 briefing-sync    ~30 min before start, builds context and emails the rep
-transcript-sync  bot finishes -> transcript -> extraction -> recap email ->
-                 follow-up draft in Outlook -> Rolldog write-back
+transcript-sync  bot finishes -> transcript persisted -> extraction -> marked.
+                 Fast, and the only stage where being killed loses something
+                 unrecoverable. CRM field write-back rides here (no LLM).
+recap-sync       recap (three passes) -> follow-up draft in Outlook ->
+                 Salesforce call activity and next-step Task. Everything
+                 expensive and re-runnable.
 rolldog-relink   every 2h, links deals to newly created opportunities and
                  backfills every captured call into them
 ```
@@ -67,6 +72,79 @@ authorize their own `confirmed`/`high` match at write time through
 `runWithAuthorizedOpportunities`, needing no allowlist entry. `resolveWriteTarget`
 in `lib/rolldog-writeback.ts` is the single source of that decision. Anything
 asking "will this deal write back" calls it rather than restating the rules.
+
+**Every Rolldog READ needs the same wrapper, and TWO of them did not have it.**
+`assertScopedRead` is as fail-closed as the write side, so an opportunity
+outside `PILOT_OPPORTUNITY_IDS` throws unless the call is wrapped in
+`runWithAuthorizedOpportunities`, and the throw arrives at the caller as a
+failed read rather than as a refusal.
+
+`lib/snapshot.ts` was the first: 5,464 refusals between 2026-07-17 and
+2026-08-16, and 21 live deals recording a month of four-hourly snapshots with
+no CRM stage at all. The digest's movement detection, `readStageMoved` and the
+per-rep calibration were all reading our own refusal as a deal that had not
+moved.
+
+`lib/pipeline-changes.ts` was the second, found 2026-08-16 while building
+`scripts/evidence-pack.ts` and fixed the same day. Its per-deal
+`getRolldogSummary` was unwrapped, so the engine behind Mark's weekly digest
+AND the /review dashboard reported 27 deals carrying a rep forecast when 45 do.
+The other 18 arrived as `forecastCategory: null`, which reads as "the rep has
+entered no forecast" and is indistinguishable from it.
+
+Finding one does not mean you have found the last one. That same grep
+(`getRolldogSummary`, `readRolldogSummary`, `getDealRoom`) on 2026-08-16 found
+three MORE unwrapped call sites. All are now fixed, and the worst of them is
+the reason this paragraph exists:
+
+- `app/deals/[id]/page.tsx` the deal page. An auto-linked deal showed no CRM
+  stage and no deal size, while a briefing for the same deal showed both,
+  because `lib/deal-context.ts` reads the identical opportunity wrapped.
+- `app/pipeline/page.tsx` the pipeline table. This one is the nastiest shape
+  the bug takes and the argument for never leaving one of these open: the
+  refusal arrived as a null live read, and the existing fallback quietly
+  substituted the frozen day-0 `deal_crm_baseline`. The table therefore showed
+  a plausible stage and size that had been frozen since the pilot started, with
+  nothing on the page saying the live read had been refused. A blank cell is a
+  visible bug; a stale cell that looks live is not.
+- `lib/weekly-digest-data.ts` reached by `scripts/generate-digest.ts`, not by
+  the cron. Its "best-effort per deal" rep-forecast enrichment was in practice
+  always omitted.
+
+The live crons were already clean: `app/api/cron/digest/route.ts` and
+`app/review/page.tsx` both go through `getPipelineChanges`.
+
+One unwrapped read is left on purpose. `lib/crm-baseline.ts` calls `getDealRoom`
+bare, and it is safe TODAY only because its single caller,
+`scripts/capture-crm-baseline.ts`, iterates `PILOT_DEAL_ROLLDOG_IDS`, whose
+opportunities are in `PILOT_OPPORTUNITY_IDS` by construction. It is a trap
+rather than a bug: the first person to call `captureCrmBaseline` for an
+auto-linked deal gets a throw that presents as "Rolldog has no room for this
+opportunity". Wrap it when you touch that file.
+
+`crm_access_log` says so every time and in real time: `allowed=false` with the
+exact `READ_FIELDS` of the summary read. Query it before believing any claim
+that a CRM record is absent, and query it after any fix, because zero refused
+reads over a run is the only proof the wrapper is actually on the path. All
+five sites were verified that way on 2026-08-16: the evidence pack, a
+`generate-digest` run, and authenticated loads of `/pipeline?tenant=magaya` and
+a deal page linked to an opportunity outside `PILOT_OPPORTUNITY_IDS`, each
+producing 0 refused reads where the first two had produced 60 across 19
+opportunities.
+
+**Magaya's second Rolldog stage has no digit in its name.** It is called
+"SQL - Develop Opportunity (Qualify)", stage id 200, and it is SQL1.
+`lib/stage-gates.ts` resolves it positionally for the checklist and always did;
+`stageKeyFromSummary` parsed the name with a regex and returned null, so six
+live deals briefed and scored as having no CRM stage. The ids run 200, 202
+(SQL2), 204 (SQL3), 208 (SQL5), with SQL0 apart on 773. That arithmetic implies
+206 is SQL4, which is why 206 is deliberately NOT mapped: nobody has seen it.
+
+**A stage of 0 or -1 with a null name means the rep never set a stage.** Nine
+linked opportunities are in that state (Best, Dpworld, Successchb, GUYWBD, Air
+Americas, Extrum, TW Customs, Shipping My Car, Loomis). It is a fact about their
+CRM, not a parse failure, and it is not SQL0, which is a real stage carrying id
+773. Mapping the number 0 to SQL0 would invent a stage for nine deals.
 
 **Rolldog's stage checklist lives at
 `/opportunities/{id}/opportunity-stages-requirement`.** Note the pluralization.
@@ -141,6 +219,33 @@ Salesforce by design. Eduardo wants both: Salesforce for portability and because
 accounting integrates there, Rolldog because it is where the sales team lives.
 Mark may disagree. Make it configurable rather than assumed.
 
+**The recap is three passes now, and they live in their own cron.** Measured
+2026-08-16: one 36k-character transcript takes 3m 27s. transcript-sync has a
+240s budget inside a 300s ceiling and checks it only at the top of its loop, so
+a recap starting at t=239s is killed halfway. That is the 2026-08-13 failure
+that cost Ariel three drafts. `lib/recap-sync.ts` refuses to START a call it
+cannot finish, so an interruption there costs five minutes and nothing else.
+`scripts/run-recap-sync.ts` drives it by hand.
+
+**The narrative pass runs for EVERY call type; only the audit is routed.** A
+renewal or a support call gets the readout and no qualification record, which is
+what `docs/recap-target-eduardo.md` asks for. The narrative never receives the
+extraction: `buildNarrative` has no framework parameter, which is the only form
+of that instruction that cannot be quietly undone.
+
+**A no-show has a transcript.** Joining noise, "okay", "I'll be on the line",
+about a thousand characters of nothing. It passes any length check. Filter on
+`outcome` against the NO_CONTENT set or you will email a rep a recap of a
+meeting that never happened.
+
+**Contact count is a broken tiebreaker for duplicate Salesforce accounts.** A
+legacy record accumulates contacts for years: Dunavant's 2021 Closed Lost record
+had 14 on dunavant.com while the live account had 2, so ranking by count picked
+the dead one and marked it `confirmed`. An OPEN OPPORTUNITY separates live from
+dead. A name check is still required on top of it, because Mollaxpanama has one
+candidate with an open opportunity and it is named "Vene-embarques, C.A. LLC",
+a different company. Both guards live in `preferLiveAccount`.
+
 **The recap reads like a form because it is generated from the extraction.**
 Eduardo, 2026-08-14: "it's very tied to the checks that we have." This is
 topology, not prompt quality. The fix is three independent passes over the
@@ -148,6 +253,48 @@ transcript rather than one derived pass: narrative in the customer's own words
 with no framework vocabulary, then the gap audit unchanged, then demo strategy.
 He was explicit that the audit stays. `docs/recap-target-eduardo.md` is the
 structure he asked for, written by him.
+
+**`Account.Customer_Status__c` does not mean what it says.** It carries
+'Active' on 39,297 of Magaya's ~45,000 accounts, including every prospect on a
+first discovery call. It describes whether the RECORD is active. The field that
+means "they buy from us" is **`Account.Type`** (5,198 Customer against 39,452
+Prospect), corroborated by `Customer_Since__c` and `Account_Active_Licenses__c`.
+Reading Customer_Status as customer evidence classified seven genuine discovery
+calls as expansion conversations. Same shape as the checklist boolean: a field
+whose values were assumed rather than counted.
+
+**The useful Salesforce fields for classifying a call, all confirmed present by
+describe:** `Opportunity.Is_Renewal__c`, `Opportunity.Opportunity_Type__c`,
+`Account.Type`, `Account.Customer_Since__c`, `Account.Implementati__c`
+(implementation status), `Account.Account_Active_Licenses__c`. Read through
+`readCustomerStanding` / `readOpportunitySituation` in `lib/salesforce-context.ts`,
+which describe first so a field hidden by field-level security is "did not
+check" rather than "no".
+
+**Recall transcripts are diarized into fragments and interleaved, so a spoken
+sentence is often not contiguous text.** One sentence is split across several
+lines by the same speaker with other people's "mhm" in between. Any check that
+requires a verbatim quote must join a single speaker's own consecutive
+fragments (`quoteAppearsIn` in `lib/prescription-scoring.ts`), never across
+speakers. A naive contiguous match rejects correct evidence and reports it as
+the thing not having been said, which is this codebase's own failure mode
+arriving from the inside.
+
+**An end commitment is usually secured after the call, in writing.** The first
+scoring run found 21 commitments and exactly one proposed out loud, with seven
+of the remaining twenty followed by mail from the rep to the customer. A
+question is asked on the call or not at all; a commitment has two channels and
+scoring it from the transcript alone records reps who did the work as reps who
+did nothing.
+
+**Follow-through on a briefing tracks the CALL TYPE, not the rep.** Measured
+across five reps: 25% on discovery, 8% on proposal, 0% on demo, follow-up and
+existing-customer calls. Cargoservicesgroup was an existing customer mid
+implementation being asked "what's driving you to look at a new solution", and
+Unitedchb was a demo ending "appreciate the demo" being asked the same. The reps
+were right not to ask. Read a low rate on a late-stage or existing-customer call
+as evidence about the briefing, never about the rep, until "route by call type"
+below is done.
 
 ## The failure mode that dominates this codebase
 
@@ -180,6 +327,73 @@ disagree with the code it checks will, and it will do so confidently.
 There is an outstanding pass to do: grep for `catch { ... = null }` and give each
 one a distinguishable failure result.
 
+**Capture failures are admission failures, not recording failures.** Fourteen
+calls carried "bot done but media unavailable". Not one had lost media: thirteen
+bots were never admitted to the meeting and one had a dead join link. The cause
+was in Recall's `status_changes` the whole time, and `extractLatestStatusDetail`
+in `lib/recall.ts` read the sub_code off the LAST entry, which on a lobby death
+is a bare `done` carrying nothing while `call_ended(timeout_exceeded_waiting_room)`
+sits immediately before it. `lib/capture-classify.ts` reads backwards for the
+first entry that carries a sub_code, and is the single source of that verdict.
+
+**A lobby timeout is undecidable and always will be.** A bot waiting outside the
+room cannot see whether anyone is inside it, so "the meeting ran and nobody
+noticed the lobby" and "the meeting never happened" produce byte-identical
+histories. Recall's own `noone_joined_timeout`, which would decide it, only fires
+once the bot is inside. Eleven of the fourteen are this. They are counted as
+themselves, never as failures and never as no-shows, and capture rate is reported
+as a range for that reason.
+
+**A call whose bot was never dispatched is invisible to everything.**
+transcript-sync's main loop filters on `recall_bot_id not null`,
+`capture-failures.ts` queries `outcome='capture_failed'`, and every rep and CRO
+view skips a call with no outcome, so a row where `createBot` failed sits
+untouched forever carrying nothing. calendar-sync's no-bot retry branch does
+re-dispatch, but only while the meeting is still in the lookahead window; once
+it is in the past the row is orphaned. `recordDispatchFailure` now writes the
+reason onto the call, and `capture-health.ts` reports it as unknown rather than
+counting it anywhere. Found 2026-08-16, four days after it happened to Sunny
+Wing Logistics, and only because unknown is never folded into a failure bucket.
+
+**An absent recording is what SUCCESS looks like.** `deleteSourceRecording` runs
+on every successful capture to honour the delete-after-pull commitment, so a bot
+that reached `in_call_recording` with no media attached is the normal end state
+of a call that worked. `classifyCapture` briefly read that as `media_lost` and
+returned it for Gezairi and Speed International, both captured, with 22,301 and
+54,860 character transcripts sitting in our own database. The only thing
+separating "Recall lost it" from "we pulled it and cleaned up" is whether a
+transcript is stored, so a caller that has not passed `transcriptChars` gets
+`unknown`, never `media_lost`.
+
+**A Recall 404 in `ingest_error` usually means we deleted that bot, not that
+Recall forgot it.** The Gezairi row carries a 404 for a bot id that is not the
+bot id on the row: calendar-sync's reschedule path calls `deleteBot` then
+`createBot`, and transcript-sync polled the dead id once before the row caught
+up. The call captured normally. Do not read a 404 as evidence expiry without
+checking the id in the error against `recall_bot_id`.
+
+**The bots are stuck in Magaya's own lobbies, not the customer's.** Of the ten
+lobby events with a recorded organizer, nine are Magaya-organized meetings and
+one is customer-organized, and Eduardo says that one was a no-show he did not
+attend. So the first remedy is a Teams lobby policy change through Ernesto, not
+a notification: Magaya controls the door on its own meetings. The rep ping and
+the forward-the-invite re-entry are for the residual, where the prospect hosts.
+
+**A refused bot is not automatically a lost call.** Eduardo, 2026-08-14: "good
+if it's maybe an internal conversation, I think I rejected it once." Both
+refusals in the pilot were in Magaya-organized meetings, so the hand on the deny
+button was Magaya's, and a rep keeping a conversation private is the product
+working. `classifyCapture` takes `hostSide` for this reason: a refusal in our own
+meeting is undecidable and someone has to be asked, a refusal in the customer's
+is a loss. Do not restate that rule anywhere; `capture-health.ts` computes its
+rate from `countsAsCaptureFailure` rather than from the category for exactly
+this reason, having got it wrong once by re-deriving it.
+
+**Teams caps the lobby at 30 minutes regardless of what we ask for.** Our
+`waiting_room_timeout` of 2400s is applied and correct; `call_ended_by_platform_waiting_room_timeout`
+is the platform ending it first. Waiting longer is exhausted as a lever, so the
+remaining fix is getting a human to admit the bot.
+
 ## Diagnostics
 
 All read-only unless noted. Run with `npx tsx scripts/<name>.ts`.
@@ -192,10 +406,39 @@ All read-only unless noted. Run with `npx tsx scripts/<name>.ts`.
 - `diagnose-deal.ts --deal X` walks one deal through the whole chain
 - `preflight-reps.ts` per-rep readiness
 - `preflight-calls.ts` next 48h: bot, briefing, write target
+- `capture-health.ts` per rep and overall, over any window: captured, no-show,
+  lobby timeout, bot refused, never joined, media failure, and unknown with its
+  reason. Imports `lib/capture-classify.ts` rather than restating it, and
+  reports capture rate as a range because lobby timeouts are undecidable
+- `backfill-capture-diagnostics.ts` re-reads Recall for every capture_failed
+  call and stores what it says. Dry run by default, `--apply` **writes**,
+  `--reclassify` moves a proven no-show off capture_failed
 - `rolldog-opp-detail.ts --name X` opportunities with owner, stage, created
+- `link-accounts.ts` matches deals to Salesforce accounts by Eduardo's ladder
+  (contact address, then activity on the meeting date, then domain, then name).
+  Dry run by default, `--apply` **writes** the confirmed links
+- `prescription-report.ts --rep X` follow-through rate and the outcome rate for
+  followed versus not followed; `--deal Y` every prescription with its evidence
+- `backfill-prescriptions.ts` recovers prescriptions from briefings already
+  sent. Dry run by default, `--apply` **writes**
 - `link-deal.ts --deal X --opp N --apply` **writes**
+- `mine-plays.ts [--rep X] [--days 30] [--top N]` the specific moves the reps
+  made, verbatim, grouped by what the move was doing, with whether a next
+  meeting followed within seven days and whether the stage advanced within
+  thirty. Quotes are verified back against the transcript with `quoteAppearsIn`,
+  and the seller side is decided from the invite roster, never from the model
 - `probe-stage-gates.ts --opp N` discovery for the checklist endpoint
 - `verify-stage-gates.ts --opps a,b,c` checks item ids are stable
+- `evidence-pack.ts --days 45` what the pilot has actually produced, for an
+  outside conversation: coverage and capture, what was delivered and written,
+  where DealRipe's forecast differs from the rep's and why, what it caught,
+  follow-through by call type, and three named examples. Every figure is a
+  query and anything unmeasurable prints as "not measured" rather than as
+  zero. Two claims it deliberately refuses to print: the forecast-accuracy
+  tile in `lib/forecast-room.ts` (`CALIBRATION`, 90% against the rep's 63%,
+  184 deals) is a hardcoded demo constant never computed from a Magaya
+  outcome, and a probability-weighted pipeline figure would require the
+  category-to-probability map, which is also a demo device
 
 ## Conventions
 
@@ -232,7 +475,17 @@ has looked closely enough to be specific.
 
 **Before Monday**
 
-- Recap rebuilt to `docs/recap-target-eduardo.md`. Three passes, not one.
+- Deploy. `recap-sync` exists in `vercel.json` but until it ships NOTHING
+  produces recaps: transcript-sync no longer does.
+- The qualification email still renders through the OLD
+  `renderPostCallSummaryEmail`. The general path already uses the new
+  `renderRecapEmailBody`, so a renewal gets the new artifact and a discovery
+  call does not. Close that asymmetry first.
+- The recap has never been linted. `lintBriefing` is called from exactly one
+  place, `generate-briefing.ts`. Extend it before the Note ships, since that
+  writes generated copy into a customer's CRM.
+- Recap as a Salesforce **Note**. `renderRecapNote` produces the body; nothing
+  posts it.
 - Follow-up draft recipients from the call's external attendees, not from
   Graph's `createReply`, which addresses the last sender and therefore the BDR.
   `customerEmails` is already computed and correct and never used on the reply
@@ -245,13 +498,35 @@ has looked closely enough to be specific.
 
 **This week**
 
-- Account linking off the BDR activity, per the note above
+- ~~Account linking off the BDR activity~~ DONE. The ladder lives in
+  `lib/salesforce-account-match.ts` and now runs FIRST in the relink cron;
+  domain matching is the fallback. Confirmed links went 39 to 78 of 92 deals.
+  Two guards worth knowing: an account named "Tbd" is a real record in their
+  org and two deals matched it through a contact, so placeholder names are
+  demoted to `review`; and a legacy `0013j` match looks for its current `001RN`
+  twin by name prefix, because the legacy records are where the typos are
+  ("UNITED CUSOTMHOUSE BROKERS INC"). Still unresolved: 5 ambiguous (a person
+  chooses), 4 review, 5 with no calls to match on
 - Re-invite the bot by forwarding the invite to a DealRipe address, plus a ping
   to the rep while the bot is still in the lobby. On a prospect-hosted call the
   rep is the only person inside who can admit it.
 - Route by call type. `Is_Renewal` and `Opportunity Type` are already on the
   Salesforce layout. A renewal QBR currently gets a new-business audit and lists
   budget and decision process as open on a customer who has paid for years.
+  The ledger measured the cost of this: 0% follow-through on demo, follow-up
+  and existing-customer calls against 25% on discovery. `lib/call-type-precall.ts`
+  now resolves the type BEFORE the call and the briefing prompt states it as a
+  fact. Note `calls.meeting_type` and `call_subtype` are written by
+  transcript-sync AFTER capture, so they are null for the call being briefed:
+  the pre-call resolver uses the deal's PRIOR calls plus the invite title.
+  Backtested at 21 right, 2 wrong, and 35 of 58 still `unknown` for want of a
+  signal, which is what the CRM and email inputs would close.
+- ~~Rolldog reads outside the scope guard~~ DONE 2026-08-16. All five call
+  sites are wrapped: `lib/pipeline-changes.ts` (deals carrying a rep forecast
+  went 27 to 45), `app/deals/[id]/page.tsx`, `app/pipeline/page.tsx`,
+  `lib/weekly-digest-data.ts`, plus `lib/snapshot.ts` earlier. Every path
+  re-verified at 0 refused reads in `crm_access_log`. Recorded in full under
+  hard-won facts, since the class of bug matters more than these instances.
 - Write to both CRMs when both are linked
 - Teams transcript access via Ernesto as the fallback when the bot never gets in
 - Salesforce Account field writes: blocked on their contractor exempting the
@@ -262,6 +537,12 @@ has looked closely enough to be specific.
 
 - The learning loop. `outcome-sync` runs daily and nothing consumes it. Until
   this runs, "learns your winning sales motion" is a claim, not a feature.
+  The prescription ledger (`prescribed_actions`, see
+  `supabase/add-prescription-ledger.sql`) is the substrate: what the briefing
+  told the rep, whether they did it, and what followed. Written on issue by
+  `briefing-sync`, scored by `lib/prescription-scoring.ts`. Nothing consumes it
+  yet either, but it now accumulates several rows per call instead of one row
+  per deal per quarter.
 - Per-rep commit calibration. The four-hourly snapshots already accumulate the
   data. Nothing computes it. This is the single reason Ashlee Horn trusted Clari
   within 5%.

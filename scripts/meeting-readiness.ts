@@ -27,6 +27,7 @@ config({ path: ".env.local" });
 
 import { crosswalkRolldogOpportunityId } from "../lib/crm-crosswalk";
 import { getDealContext, briefingStateFromContext } from "../lib/deal-context";
+import { resolveMeetingContext } from "../lib/meeting-context";
 import { generateBriefingFromState } from "../lib/generate-briefing";
 import { attendeeLineFromMeeting } from "../lib/attendees";
 import { formatMeetingTime, graphIso } from "../lib/graph-time";
@@ -241,8 +242,20 @@ async function main(): Promise<void> {
         console.log(`   rep notes   ${ctx.rolldogNarrative ? `${ctx.rolldogNarrative.split("\n").length} lines from Rolldog tabs` : "none written"}`);
         console.log(`   context     ${ctx.confirmed}/${ctx.total} gates confirmed, ${sfState}`);
         try {
+          // The same call type briefing-sync resolves. Without it this preview
+          // generates a DIFFERENT briefing from the one the rep receives, which
+          // is the exact way a diagnostic stops being one.
+          const mc = await resolveMeetingContext({
+            tenantId,
+            dealId: deal.data.id,
+            subject: m.subject ?? null,
+            participants: m.attendees ?? [],
+            beforeIso: graphIso(m.start?.dateTime) ?? null,
+          });
+          console.log(`   call type   ${mc.meeting.type} (${mc.confidence}), ${mc.meeting.reason}`);
           const b = await generateBriefingFromState({
             ...briefingStateFromContext(ctx),
+            callType: mc.meeting,
             meetingSubject: m.subject ?? null,
             meetingDate: graphIso(m.start?.dateTime)?.slice(0, 10) ?? null,
             // Who is actually on the invite, which is the point of the rule

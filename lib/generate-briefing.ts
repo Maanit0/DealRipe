@@ -26,6 +26,7 @@ import {
   openGapsUpToStage,
   type ExtractionMap,
 } from "./briefing-magaya";
+import type { PreCallTypeRead } from "./call-type-precall";
 import { inferStageKey } from "./deal-state";
 import type { ExtractionResult } from "./scotsman";
 import type { Framework } from "./framework";
@@ -85,6 +86,8 @@ export type BriefingState = {
   meetingDate?: string | null;
   /** The rep's own written notes from Rolldog's narrative tabs. */
   rolldogNarrative?: string | null;
+  /** What kind of call this is, resolved pre-call. See lib/call-type-precall.ts. */
+  callType?: PreCallTypeRead | null;
 };
 
 /**
@@ -126,6 +129,7 @@ export async function generateBriefingFromState(
     stageGates: state.stageGates,
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
+    callType: state.callType,
     today: new Date().toISOString().slice(0, 10),
   });
 
