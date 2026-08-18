@@ -210,8 +210,21 @@ as sales outcomes they would make DealRipe-observed deals look like they lose at
 `Opportunity.Loss_Reason__c` exists and is populated, and it is a much richer
 label than the won/lost boolean. Use it when the loop is finally built.
 
-Fixing outcome-sync is still worth doing NOW, but for the future rather than for
-a backlog: it is the only thing that will capture pilot deals as they close.
+FIXED 2026-08-18 (`e59fc67`), for the future rather than for a backlog: it is
+the only thing that will capture pilot deals as they close. Resolution moved off
+`external_id` and onto `salesforce_account_id`, in `lib/salesforce-outcome.ts`.
+Two rules do the choosing, and both exist because getting them wrong invents an
+outcome: any OPEN opportunity means still in play, and a close counts only if it
+lands on or after the first call we captured. `open_with_recent_close` carries
+both facts instead of picking one (Speed International won 2026-08-14 with other
+business still open, so it is reported and left unlabelled). Dry run: 92
+resolved, 0 errors, 0 unavailable, 1 won, 5 lost, 46 open, 8 only historical, 32
+with no opportunity on the account. Drive it with
+`scripts/run-outcome-sync.ts`, dry run by default, `--apply` **writes**.
+
+`getPipelineChanges` now drops deals carrying an `outcome_label` and returns
+`closedOut`, so the digest and /review stop counting resolved deals as live
+pipeline without silently showing fewer rows.
 
 **Rolldog's stage checklist lives at
 `/opportunities/{id}/opportunity-stages-requirement`.** Note the pluralization.
@@ -612,10 +625,10 @@ has looked closely enough to be specific.
   `lib/weekly-digest-data.ts`, plus `lib/snapshot.ts` earlier. Every path
   re-verified at 0 refused reads in `crm_access_log`. Recorded in full under
   hard-won facts, since the class of bug matters more than these instances.
-- Close the loop on dead deals. Eleven deals whose Salesforce account carries
-  only closed opportunities are still live SQL0 in our pipeline and in Mark's
-  digest, six of them lost. Needs the outcome mapping above, then a rule for
-  what a closed deal does to briefing, snapshotting and the digest.
+- Close the loop on dead deals. The mapping and the digest exclusion are done;
+  what remains is running `supabase/add-outcome-detail.sql` then
+  `scripts/run-outcome-sync.ts --apply`, and deciding what a closed deal does to
+  BRIEFING and SNAPSHOTTING, which still treat them as live.
 - Write to both CRMs when both are linked
 - Teams transcript access via Ernesto as the fallback when the bot never gets in
 - Salesforce Account field writes: blocked on their contractor exempting the
