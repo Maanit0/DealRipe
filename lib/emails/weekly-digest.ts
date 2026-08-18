@@ -211,6 +211,25 @@ function doThisText(d: DealChangeRecord): string {
 
   // The ball is in the customer's court: don't push a meeting, set a check-in.
   if (d.nextStepIsCustomerWait) {
+    // A date that has already passed changes WHAT we say, not just when.
+    //
+    // Core Logistics went to Magaya's CRO on Aug 17 reading "Customer to respond
+    // by Jul 30. Set a check-in for Jul 30 to follow up if you have not heard."
+    // Nothing aged followUpBy out, so a wait the customer never honoured was
+    // rendered as a wait still in progress, with an instruction to schedule
+    // something for a date nineteen days gone.
+    //
+    // The overdue case is a STRONGER signal than the original wait: the customer
+    // owed a response, the date went by, and nobody chased. Saying so is the
+    // point of the line.
+    const overdue = d.followUpBy ? Date.parse(d.followUpBy) < Date.now() : false;
+    if (overdue && d.followUpBy) {
+      const days = Math.floor((Date.now() - Date.parse(d.followUpBy)) / 86_400_000);
+      return (
+        `The customer owed a response by ${dstr(d.followUpBy)}, ${days} days ago, ` +
+        `and has not been chased since.${gap ? ` Chase it now and ${gap}.` : " Chase it now."}`
+      );
+    }
     const by = d.followUpBy ? ` by ${dstr(d.followUpBy)}` : "";
     const chase = d.followUpBy ? ` Set a check-in for ${dstr(d.followUpBy)} to follow up if you have not heard.` : "";
     return `Customer to respond${by}.${chase}${gap ? ` Use the window to ${gap}.` : ""}`.trim();

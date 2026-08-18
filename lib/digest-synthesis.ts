@@ -55,7 +55,11 @@ const SYSTEM = `You prepare a CRO's weekly pipeline review. For ONE deal you pro
 - Return EXACTLY the same number of bullets, in the SAME order. Do not merge, drop, or add.
 - Each should read complete and stand on its own, ideally under ~110 characters, but never truncate a fact to hit that.
 
-No em-dashes anywhere. Return ONLY minified JSON: {"action":"...","bullets":["...","..."]}. No markdown, no code fences.`;
+No em-dashes anywhere. Return ONLY minified JSON: {"action":"...","bullets":["...","..."]}. No markdown, no code fences.
+NEVER STATE A MEETING DATE unless that exact date appears in the agreed next step or on the calendar. The forecast close date is not a meeting date and must never be turned into one. If the agreed next step names a weekday or a bare day number ("Thursday the 13th"), refer to it as agreed without inventing a calendar date, and never pair it with a date from anywhere else. Prefer saying less over saying a date that is wrong.
+
+An overdue date changes the instruction. If a customer response was due and the date has passed, say that it passed and has not been chased. Never tell a rep to schedule anything for a date already gone, and never use the phrase "use the window" about a window that has closed.
+`;
 
 type Synth = { action: string; bullets: string[] };
 
@@ -74,7 +78,13 @@ async function synthDeal(d: DealChangeRecord): Promise<Synth> {
   const inputBullets = d.whatChanged.map((w) => w.text);
   const facts = [
     `Account: ${d.account} (rep ${d.repName})`,
-    `Rolldog: ${d.stageName ?? "unknown stage"}, forecast ${d.forecastCategory ?? "none"}, close ${dstr(d.closeDate) || "unset"}`,
+    // "close Sep 13" was being read as a meeting date. IFF US went to the CRO
+    // as "book the Sep 13 10:30am follow-up call": Sep 13 is the Rolldog
+    // FORECAST close date and the 10:30am came from the agreed next step, which
+    // named "Thursday the 13th" off an Aug 13 call. The model fused a forecast
+    // date and a time nobody attached to it into a meeting that does not exist.
+    `Rolldog: ${d.stageName ?? "unknown stage"}, forecast ${d.forecastCategory ?? "none"}, ` +
+      `forecast close date (NOT a meeting date, nobody has agreed to meet on it): ${dstr(d.closeDate) || "unset"}`,
     d.isNoShow ? `The last scheduled meeting was a NO-SHOW.` : d.lastConversationAt ? `Last call: ${dstr(d.lastConversationAt)}` : "",
     d.primaryContact ? `Main customer contact on the calls: ${d.primaryContact.name}${d.primaryContact.role ? `, ${d.primaryContact.role}` : ""}${d.primaryContact.relationship ? ` (${d.primaryContact.relationship})` : ""}` : "",
     `Movement this week: ${d.movement.summary}`,
