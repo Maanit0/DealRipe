@@ -147,6 +147,35 @@ export async function runRecapSync(
       continue;
     }
 
+    // CLAIM THE CALL BEFORE GENERATING.
+    //
+    // Snatek received two recaps twenty seconds apart on 2026-08-18. The
+    // idempotency check below reads sent_messages, and sendPostCallSummary
+    // writes that row only AFTER the email goes out. Generation takes minutes,
+    // so two overlapping runs both read "no recap yet", both generate, and both
+    // send. Checking is not reserving.
+    //
+    // The claim row closes the window from the length of a generation to the
+    // length of one insert. It is written with provider_id null, which the
+    // existing guard already treats as "not sent", so it cannot itself be
+    // mistaken for a delivered recap.
+    const claimed = await db
+      .from("sent_messages")
+      .select("id")
+      .eq("tenant_id", row.tenant_id)
+      .eq("call_id", row.id)
+      .eq("kind", "recap_claim")
+      .limit(1);
+    if (claimed.error) {
+      counts.failed += 1;
+      console.error(`[recap-sync] claim check failed for ${row.id}: ${claimed.error.message}`);
+      continue;
+    }
+    if ((claimed.data ?? []).length > 0) {
+      counts.skipped += 1;
+      continue;
+    }
+
     const already = await db
       .from("sent_messages")
       .select("id")
@@ -197,6 +226,26 @@ export async function runRecapSync(
     if (opts.dryRun) {
       console.log(`[recap-sync] would recap call ${row.id} (${transcript.length} chars)`);
       counts.recapped += 1;
+      continue;
+    }
+
+    // Written immediately before generation, never after. A crash between here
+    // and the send leaves the call unrecapped until someone clears the claim,
+    // which is the safe direction: a missing recap is visible in the coverage
+    // view, a duplicate one is already in a rep's inbox.
+    const claim = await db.from("sent_messages").insert({
+      tenant_id: row.tenant_id,
+      deal_id: row.deal_id,
+      call_id: row.id,
+      kind: "recap_claim",
+      to_email: "",
+      subject: "recap in progress",
+      body_html: "",
+      body_text: "",
+    });
+    if (claim.error) {
+      counts.failed += 1;
+      console.error(`[recap-sync] could not claim ${row.id}, skipping rather than risking a duplicate: ${claim.error.message}`);
       continue;
     }
 
