@@ -64,6 +64,15 @@ export async function sendPostCallSummary(args: {
   /** The call this recap is for. Stored on the archived recap (hard link) and
    *  used to attach generated tasks to the call. */
   callId?: string;
+  /**
+   * When the call happened.
+   *
+   * Bounds prior-call history and the stage the audit measures against. Without
+   * it buildRecap falls back to "now", which is how Mohawk Global's first intro
+   * call was audited for Signature and Legal Terms: the deal carries a Rolldog
+   * stage of SQL3 and nothing scoped the audit back to the call.
+   */
+  callAt?: string | null;
   /** Bypass the idempotency guard and re-send even if a recap was already
    *  emailed for this call. Manual recovery scripts set this; the automatic
    *  pipeline never does, so a re-ingest can't double-send. */
@@ -137,6 +146,7 @@ export async function sendPostCallSummary(args: {
     extraction: args.extraction,
     transcript: args.transcript,
     callId: args.callId ?? null,
+    callAt: args.callAt ?? null,
     meetingType: args.meetingType,
   });
   const meetingType = built.meetingType;

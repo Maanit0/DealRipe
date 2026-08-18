@@ -211,11 +211,38 @@ export async function runRecapSync(
       continue;
     }
 
+    // WAIT FOR EXTRACTION, do not race it.
+    //
+    // transcript-sync sets has_been_extracted BEFORE running extraction, on
+    // purpose: the transcript body is durable at that point and the flag stops
+    // the call being re-polled. But this cron filters on that same flag, so it
+    // can pick a call up in the gap between the mark and the rows landing.
+    //
+    // Mohawk Global is what that looks like. Ten fields were captured and
+    // correctly attributed to the call, and the recap still said "Nothing new
+    // was captured on this call" because it read field_extractions before they
+    // were written. The readout was rich, because it only needs the transcript.
+    // The audit was empty, which is the half a rep checks against the CRM.
+    //
+    // Zero rows is ambiguous: extraction may not have run yet, or it may have
+    // run and found nothing. The call's age separates them. Inside the grace
+    // window we defer and the next run picks it up; past it we accept that
+    // nothing was found and send the recap rather than withholding it forever.
     const fx = await db
       .from("field_extractions")
       .select("framework_field_key, status, answer, evidence, confidence")
       .eq("deal_id", row.deal_id)
       .eq("last_updated_from_call_id", row.id);
+    const EXTRACTION_GRACE_MS = 20 * 60_000;
+    const callAgeMs = row.scheduled_start ? Date.now() - Date.parse(row.scheduled_start) : Infinity;
+    if ((fx.data ?? []).length === 0 && callAgeMs < EXTRACTION_GRACE_MS) {
+      counts.skipped += 1;
+      console.warn(
+        `[recap-sync] deferring ${row.id}: no extraction rows yet and the call ended ` +
+          `${Math.round(callAgeMs / 60000)} min ago. Recapping now would report zero captured fields.`,
+      );
+      continue;
+    }
     const extraction = Object.fromEntries(
       (fx.data ?? []).map((x) => [
         String((x as { framework_field_key: string }).framework_field_key),
@@ -257,6 +284,10 @@ export async function runRecapSync(
         transcript,
         meetingType: (row.meeting_type as MeetingType | null) ?? undefined,
         callId: row.id,
+        // Without this the audit measures against where the deal stands today
+        // rather than where it stood on the call, and history can cite a later
+        // conversation than the one being recapped.
+        callAt: row.scheduled_start,
       });
       if (notify.sent) counts.recapped += 1;
       else {
@@ -293,8 +324,34 @@ export async function runRecapSync(
               callDate: d.scheduled_start ?? d.call_date,
               participants: d.participants,
             });
-            if (draft.created) counts.drafted += 1;
-            else console.warn(`[recap-sync] draft skipped for ${row.id}: ${draft.reason}`);
+            // RECORD THE OUTCOME, always.
+            //
+            // followup_draft_state existed and nothing ever wrote it, so every
+            // call in the database reads 'not_attempted' including the ones
+            // that demonstrably got a draft. The coverage view therefore falls
+            // back to sent_messages, which can say sent or not sent and can
+            // never say why. A rep looking at "never sent" on Kronos has no way
+            // to learn whether we held deliberately, failed, or could not read
+            // the mailbox, and those are three different answers.
+            //
+            // classifyDraftOutcome already knows the difference between held,
+            // failed and unavailable. It was written for this and was not
+            // reachable from here.
+            if (draft.created) {
+              counts.drafted += 1;
+              await db
+                .from("calls")
+                .update({ followup_draft_state: "drafted", followup_draft_reason: null })
+                .eq("id", row.id);
+            } else {
+              const { classifyDraftOutcome } = await import("./ingest-failure-class");
+              const d = classifyDraftOutcome(draft.reason ?? "no reason given");
+              await db
+                .from("calls")
+                .update({ followup_draft_state: d.state, followup_draft_reason: d.reason })
+                .eq("id", row.id);
+              console.warn(`[recap-sync] draft ${d.state} for ${row.id}: ${d.reason}`);
+            }
           }
           // The Salesforce call activity and the agreed next step, which carry
           // the recap body and therefore belong with the recap rather than with
