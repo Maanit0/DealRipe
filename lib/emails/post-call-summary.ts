@@ -85,7 +85,12 @@ export function renderPostCallSummaryEmail(
    * fields, which is what Eduardo called "a questionnaire kind of thing". The
    * audit stays exactly where it was, underneath, because he asked for it.
    */
-  readout?: { narrative: PassResult<Narrative>; demoStrategy: PassResult<DemoStrategy> },
+  readout?: {
+    narrative: PassResult<Narrative>;
+    demoStrategy: PassResult<DemoStrategy>;
+    /** What the CRM claims, when it disagrees with what the calls confirm. */
+    crmStageKey?: string | null;
+  },
 ): RenderedEmail {
   const stageLabel = STAGE_LABELS[summary.stageKey] ?? summary.stageKey;
   // The subject leads with the account and the call, not with a score. A rep
@@ -225,6 +230,18 @@ export function renderPostCallSummaryEmail(
         <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:0 0 18px 2px;">${escapeHtml(stageLabel)} &middot; ${summary.captured.length} captured &middot; ${summary.stillOpen.length} still open</div>
 
         ${readoutCards}
+
+        ${
+          readout?.crmStageKey && readout.crmStageKey !== summary.stageKey
+            ? card(
+                `${label("Where the CRM has this", MUTED)}${bodyText(
+                  `The calls confirm ${STAGE_LABELS[summary.stageKey] ?? summary.stageKey}. ` +
+                    `The CRM has this deal at ${STAGE_LABELS[readout.crmStageKey] ?? readout.crmStageKey}. ` +
+                    `The gaps below are measured against what the calls establish, not against the CRM.`,
+                )}`,
+              )
+            : ""
+        }
 
         ${card(`${label("What happened", MUTED)}${bodyText(summary.recap)}`)}
 

@@ -189,6 +189,7 @@ export type Database = {
           source: "gong" | "manual_paste" | "recall_ai" | null;
           transcript_id: string | null;
           has_been_extracted: boolean;
+          extraction_completed_at: string | null;
           recall_bot_id: string | null;
           ingest_error: string | null;
           briefing_sent_at: string | null;
@@ -244,6 +245,7 @@ export type Database = {
           source?: "gong" | "manual_paste" | "recall_ai" | null;
           transcript_id?: string | null;
           has_been_extracted?: boolean;
+          extraction_completed_at?: string | null;
           recall_bot_id?: string | null;
           ingest_error?: string | null;
           briefing_sent_at?: string | null;
@@ -299,6 +301,7 @@ export type Database = {
           source?: "gong" | "manual_paste" | "recall_ai" | null;
           transcript_id?: string | null;
           has_been_extracted?: boolean;
+          extraction_completed_at?: string | null;
           recall_bot_id?: string | null;
           ingest_error?: string | null;
           briefing_sent_at?: string | null;

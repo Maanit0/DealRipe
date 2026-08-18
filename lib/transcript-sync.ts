@@ -472,6 +472,10 @@ async function retryFailedExtractions(
           outcome: "captured",
           ingest_failure_class: null,
           ingest_retry_after: null,
+          // Set only once the fields actually exist. has_been_extracted was
+          // already true before extraction ran, as a durability marker, so it
+          // cannot answer "are the rows there". recap-sync gates on this one.
+          extraction_completed_at: new Date().toISOString(),
         })
         .eq("id", row.id);
       counts.retriesRecovered += 1;
@@ -911,6 +915,25 @@ async function processRow(
       });
       counts.extracted += 1;
       emit({ kind: "extracted", callId, recallBotId });
+
+      // The fields exist as of here. Recorded separately from
+      // has_been_extracted, which is set BEFORE extraction so the transcript
+      // body is durable and the call stops being re-polled. Two different facts
+      // were sharing that column and recap-sync read the wrong one, which is
+      // how Mohawk Global's recap said "nothing captured" while ten fields sat
+      // correctly attributed to the call.
+      // Tolerant: the column arrives in a migration and ingest must not fail
+      // before it is applied. A missing stamp degrades recap-sync to its age
+      // backstop, which is the behaviour it had before this existed.
+      {
+        const stamped = await db
+          .from("calls")
+          .update({ extraction_completed_at: new Date().toISOString() })
+          .eq("id", callId);
+        if (stamped.error) {
+          console.warn(`[transcript-sync] could not stamp extraction_completed_at for ${callId}: ${stamped.error.message}`);
+        }
+      }
 
       // ----- Yield guard. -----
       //

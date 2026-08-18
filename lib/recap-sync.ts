@@ -233,12 +233,30 @@ export async function runRecapSync(
       .select("framework_field_key, status, answer, evidence, confidence")
       .eq("deal_id", row.deal_id)
       .eq("last_updated_from_call_id", row.id);
+    // extraction_completed_at is the explicit signal and is preferred whenever
+    // it is present. It is read SEPARATELY and tolerantly rather than joined
+    // into the query above, because the column arrives in
+    // supabase/add-extraction-completed-at.sql and this cron is live: selecting
+    // a column that does not exist yet fails the whole query and stops every
+    // recap. A schema change must never be able to take down the thing it is
+    // meant to improve.
+    //
+    // The age check remains as the backstop, both for rows that predate the
+    // column and for the window before the migration is applied.
+    const stamp = await db
+      .from("calls")
+      .select("extraction_completed_at")
+      .eq("id", row.id)
+      .maybeSingle();
+    const completedAt = stamp.error ? null : (stamp.data?.extraction_completed_at ?? null);
     const EXTRACTION_GRACE_MS = 20 * 60_000;
     const callAgeMs = row.scheduled_start ? Date.now() - Date.parse(row.scheduled_start) : Infinity;
-    if ((fx.data ?? []).length === 0 && callAgeMs < EXTRACTION_GRACE_MS) {
+    const extractionPending =
+      completedAt === null && (fx.data ?? []).length === 0 && callAgeMs < EXTRACTION_GRACE_MS;
+    if (extractionPending) {
       counts.skipped += 1;
       console.warn(
-        `[recap-sync] deferring ${row.id}: no extraction rows yet and the call ended ` +
+        `[recap-sync] deferring ${row.id}: extraction has not completed and the call ended ` +
           `${Math.round(callAgeMs / 60000)} min ago. Recapping now would report zero captured fields.`,
       );
       continue;

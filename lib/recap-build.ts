@@ -57,6 +57,14 @@ export type RecapBuild =
       account: string;
       meetingType: MeetingType;
       stageKey: string;
+      /**
+       * The stage the CRM has this deal at, and whether we could read it.
+       *
+       * Reported beside the audit, never folded into it. A rep whose Rolldog
+       * opportunity says SQL3 while the calls confirm SQL0 should see both.
+       */
+      crmStageKey: string | null;
+      crmStageStatus: DealContext["crmStageStatus"] | "context_unavailable";
       summary: PostCallSummary;
       /** Pass 1. Written from the transcript alone; never sees the extraction. */
       narrative: PassResult<Narrative>;
@@ -246,18 +254,36 @@ export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
   // stage and the rest of it was thrown away. Dunavant has two captured calls,
   // so the history was real and available the whole time.
   let stageKey = input.fallbackStageKey;
+  /** What the CRM claims, for context. Never the basis of the audit. */
+  let crmStageKey: string | null = null;
+  let crmStageStatus: DealContext["crmStageStatus"] | "context_unavailable" = "context_unavailable";
   let history: string | null = null;
   let crmContext: string | null = null;
   let crmContextStatus: DealContext["crmContextStatus"] | "context_unavailable" = "context_unavailable";
   try {
     const ctx = await getDealContext(input.tenantId, input.dealId, { asOf: input.callAt ?? null });
     if (ctx) {
-      // effectiveStageKey is where the deal stands NOW. For a recap bounded to
-      // an older call, re-derive it from the as-of extraction so the audit
-      // measures gaps against the stage the call was actually at.
-      stageKey = input.callAt
-        ? inferStageKey(input.framework, gapExtraction as never, ctx.nominalStageKey)
-        : ctx.effectiveStageKey;
+      // THE AUDIT MEASURES THE CALLS, NEVER THE CRM's FLOOR.
+      //
+      // effectiveStageKey is calls-first with the CRM stage as a floor, which is
+      // right for a BRIEFING: a rep walking into a deal Rolldog has at SQL4
+      // should not be briefed as though it were discovery.
+      //
+      // It is wrong here. The audit answers "what did this call establish and
+      // what is still open", which is a statement about conversations. Taking a
+      // floor from Rolldog makes the audit inherit the rep's own claim, and the
+      // weekly digest exists precisely to disagree with that claim.
+      //
+      // Mohawk Global is what that looked like: a first intro call audited for
+      // Signature, Business Terms and Legal Terms, because the deal carried a
+      // Rolldog opportunity parked at SQL3 while its own stage_key was SQL0.
+      // The rep reads that as the software not understanding the deal.
+      //
+      // The CRM stage is still carried, as context beside the audit rather than
+      // as its basis. Where the two disagree that is worth seeing, not hiding.
+      stageKey = inferStageKey(input.framework, gapExtraction as never, ctx.nominalStageKey);
+      crmStageKey = ctx.crmStageKey;
+      crmStageStatus = ctx.crmStageStatus;
       history = ctx.history;
       crmContext = ctx.crmContext;
       // Carried through verbatim rather than collapsed to a boolean. "No
@@ -386,6 +412,8 @@ export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
     account: input.account,
     meetingType,
     stageKey,
+    crmStageKey,
+    crmStageStatus,
     summary,
     narrative: lintedNarrative,
     narrativeGrounding: narrativePass.grounding,

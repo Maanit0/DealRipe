@@ -298,5 +298,6 @@ export function renderRecapEmail(built: RecapBuild): ReturnType<typeof renderPos
   return renderPostCallSummaryEmail(built.summary, built.tasks, {
     narrative: built.narrative,
     demoStrategy: built.demoStrategy,
+    crmStageKey: built.crmStageKey,
   });
 }
