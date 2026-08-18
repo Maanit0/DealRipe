@@ -205,6 +205,10 @@ export type PipelineChanges = {
   headline: Headline;
   deals: DealChangeRecord[];
   window: { sinceIso: string; untilIso: string };
+  /** Deals excluded because they are resolved (outcome_label set), so a
+   *  consumer can say "6 closed this period" instead of silently showing
+   *  fewer rows than last week. */
+  closedOut: { account: string; outcome: "won" | "lost" }[];
 };
 
 // ---------------------------------------------------------------------------
@@ -269,8 +273,21 @@ function concise(a: string | null | undefined, max = 170): string {
   const cut = s.slice(0, max);
   const lastStop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
   if (lastStop >= max * 0.5) return s.slice(0, lastStop + 1).trim();
+  // A comma boundary keeps the clause whole; a bare word boundary is the last
+  // resort. Either way, never end on a word that promises more text: Alba Wheels
+  // Up rendered as "review the proposal and…" in the Aug 17 digest, which reads
+  // to a CRO as the product failing rather than as a summary. Dropping the
+  // dangling connector and closing the sentence costs one clause and buys a line
+  // that stands on its own.
+  const lastComma = cut.lastIndexOf(", ");
   const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim() + "…";
+  let head = lastComma >= max * 0.5 ? cut.slice(0, lastComma) : lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  head = head.replace(/[\s,;:]+$/, "");
+  const DANGLING =
+    /\s+(and|or|but|so|then|with|to|for|of|in|on|at|by|from|as|that|which|who|after|before|while|plus|including|about)$/i;
+  while (DANGLING.test(head)) head = head.replace(DANGLING, "");
+  head = head.trim();
+  return head ? (/[.!?]$/.test(head) ? head : `${head}.`) : "";
 }
 
 function dateShort(iso: string | null): string {
@@ -572,7 +589,7 @@ export async function getPipelineChanges(
   const untilMs = Date.parse(opts.untilIso);
 
   const [dealsRes, feRes, contactsRes, callsRes, snapsRes, framework] = await Promise.all([
-    db.from("deals").select("id, account, external_id, rep_email, rolldog_opportunity_id").eq("tenant_id", tenantId),
+    db.from("deals").select("id, account, external_id, rep_email, rolldog_opportunity_id, outcome_label").eq("tenant_id", tenantId),
     db.from("field_extractions").select("deal_id, framework_field_key, status, answer, last_updated_from_call_id").eq("tenant_id", tenantId),
     db.from("contacts").select("deal_id, name, role, relationship, last_contacted_at").eq("tenant_id", tenantId),
     db.from("calls").select("id, deal_id, outcome, scheduled_start, call_date, meeting_type, title, participants").eq("tenant_id", tenantId),
@@ -592,13 +609,29 @@ export async function getPipelineChanges(
   const callsBy = group((callsRes.data ?? []) as Array<Row & { deal_id: string }>);
   const snapsBy = group((snapsRes.data ?? []) as Array<Row & { deal_id: string }>);
 
-  const deals = ((dealsRes.data ?? []) as Array<{
+  const allDeals = ((dealsRes.data ?? []) as Array<{
     id: string;
     account: string;
     external_id: string | null;
     rep_email: string | null;
     rolldog_opportunity_id: string | null;
+    outcome_label: "won" | "lost" | null;
   }>).filter((d) => !isConsumerMailShell(d.external_id));
+
+  // A resolved deal is not pipeline.
+  //
+  // Six of Magaya's deals were closed in Salesforce (five of them lost, in one
+  // hygiene sweep on 2026-08-07) while Rolldog was never updated, so they sat
+  // at SQL0 in our own tables and would have reached Mark's Monday digest as
+  // live pipeline. They are excluded here rather than at the render layer so
+  // every consumer of getPipelineChanges (the digest cron AND /review) drops
+  // them together.
+  //
+  // The count is carried out rather than discarded: a deal disappearing from a
+  // CRO's pipeline with nothing saying why is the same failure this codebase
+  // keeps paying for, one layer up.
+  const closedOut = allDeals.filter((d) => d.outcome_label !== null);
+  const deals = allDeals.filter((d) => d.outcome_label === null);
 
   // Resolve each deal's Rolldog opportunity from the static pilot map OR the
   // stored column (statically-mapped pilot deals like Duty Free do not carry the
@@ -1156,5 +1189,13 @@ export async function getPipelineChanges(
     newOpportunities: records.filter((r) => r.changes.some((c) => c.kind === "new")).length,
   };
 
-  return { headline, deals: records, window: { sinceIso: opts.sinceIso, untilIso: opts.untilIso } };
+  return {
+    headline,
+    deals: records,
+    window: { sinceIso: opts.sinceIso, untilIso: opts.untilIso },
+    closedOut: closedOut.map((d) => ({
+      account: d.account,
+      outcome: d.outcome_label as "won" | "lost",
+    })),
+  };
 }

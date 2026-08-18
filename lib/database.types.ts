@@ -61,6 +61,10 @@ export type Database = {
           framework_id: string | null;
           outcome_label: "won" | "lost" | null;
           outcome_recorded_at: string | null;
+          outcome_opportunity_id: string | null;
+          outcome_close_date: string | null;
+          outcome_reason: string | null;
+          outcome_amount: number | null;
           dealripe_last_writeback_at: string | null;
           dealripe_last_write_hash: string | null;
           dealripe_last_next_step: string | null;
@@ -87,6 +91,10 @@ export type Database = {
           framework_id?: string | null;
           outcome_label?: "won" | "lost" | null;
           outcome_recorded_at?: string | null;
+          outcome_opportunity_id?: string | null;
+          outcome_close_date?: string | null;
+          outcome_reason?: string | null;
+          outcome_amount?: number | null;
           dealripe_last_writeback_at?: string | null;
           dealripe_last_write_hash?: string | null;
           dealripe_last_next_step?: string | null;
@@ -113,6 +121,10 @@ export type Database = {
           framework_id?: string | null;
           outcome_label?: "won" | "lost" | null;
           outcome_recorded_at?: string | null;
+          outcome_opportunity_id?: string | null;
+          outcome_close_date?: string | null;
+          outcome_reason?: string | null;
+          outcome_amount?: number | null;
           dealripe_last_writeback_at?: string | null;
           dealripe_last_write_hash?: string | null;
           dealripe_last_next_step?: string | null;
