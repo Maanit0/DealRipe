@@ -140,11 +140,55 @@ live deals briefed and scored as having no CRM stage. The ids run 200, 202
 (SQL2), 204 (SQL3), 208 (SQL5), with SQL0 apart on 773. That arithmetic implies
 206 is SQL4, which is why 206 is deliberately NOT mapped: nobody has seen it.
 
-**A stage of 0 or -1 with a null name means the rep never set a stage.** Nine
+**A stage of 0 or -1 with a null name is NOT "the rep never set a stage."** Nine
 linked opportunities are in that state (Best, Dpworld, Successchb, GUYWBD, Air
 Americas, Extrum, TW Customs, Shipping My Car, Loomis). It is a fact about their
-CRM, not a parse failure, and it is not SQL0, which is a real stage carrying id
-773. Mapping the number 0 to SQL0 would invent a stage for nine deals.
+CRM rather than a parse failure, and it is not SQL0, which is a real stage
+carrying id 773, so mapping the number 0 to SQL0 would invent a stage for nine
+deals. All of that still holds. The INTERPRETATION was wrong, and it was wrong
+in this codebase's signature direction.
+
+Checked against Salesforce 2026-08-18: seven of the nine are CLOSED. Best (won
+2026-06-30), TW Customs (won 2026-06-25), Dpworld (lost 2026-08-07), GUYWBD
+(lost 2026-08-07), Air Americas (lost 2026-08-07), Extrum (lost 2026-08-07),
+Successchb (lost 2026-08-11). The rep did not fail to set a Rolldog stage; the
+deal RESOLVED, in the other CRM, and nobody went back to maintain Rolldog. A
+null stage means "ask the system that actually knows", never "nothing has
+happened here". Loomis and Shipping My Car are the only two still unaccounted
+for.
+
+The live consequence, unfixed as of 2026-08-18: eleven deals whose Salesforce
+account carries only closed opportunities are still SQL0 in our pipeline, still
+accruing four-hourly snapshots (213 so far), and will appear in Mark's Monday
+digest as live pipeline. Six of them are LOST. Three of the won ones (Mollaxpanama,
+Treecorp, Eosits) took calls on 2026-08-18 that would have been briefed as new
+business.
+
+**Won/lost data EXISTS and outcome-sync has never once read it.** Two stacked
+bugs, both found 2026-08-18, and the pair is the reason "0 won, 0 lost" was
+believed for weeks.
+
+`lib/outcome-sync.ts` selects `deals.external_id` and passes it to
+`getOpportunityOutcome` as a Salesforce Opportunity id. In this pilot
+`external_id` is DealRipe's own auto-created key (`auto:cbxglobal.com`,
+`omniva`, `seino`). Zero of 108 deals carry a `006` Opportunity id there. The
+Salesforce link lives on `salesforce_account_id` (91 deals, all `confirmed`),
+and an account is not an opportunity: 45 of those 91 carry more than one, so
+the mapping has to CHOOSE, and a deal with several closed opportunities and no
+open one needs a rule rather than a first-row pick.
+
+Second, `getOpportunityOutcome` calls `assertScopedRead`, the Rolldog guard,
+against `SALESFORCE_PILOT_OPPORTUNITY_IDS`, which has **0 entries**. So even a
+correct Opportunity id is refused before any network call. The daily cron logs
+101 `allowed=false` reads every morning and reports them as `errors`, which is
+the honest signal nobody was reading.
+
+What is actually there, measured through the accounts: 215 opportunities on the
+91 linked accounts, 163 closed, **126 won and 37 lost**, 52 open. Twelve closed
+inside the pilot window (2026-07-01 on), six won and six lost. That is a real
+training substrate for the learning loop and for per-rep calibration, and it has
+been sitting behind a wrong identifier the whole time. Do not quote "no outcomes
+yet" again without re-running this query.
 
 **Rolldog's stage checklist lives at
 `/opportunities/{id}/opportunity-stages-requirement`.** Note the pluralization.
@@ -545,6 +589,10 @@ has looked closely enough to be specific.
   `lib/weekly-digest-data.ts`, plus `lib/snapshot.ts` earlier. Every path
   re-verified at 0 refused reads in `crm_access_log`. Recorded in full under
   hard-won facts, since the class of bug matters more than these instances.
+- Close the loop on dead deals. Eleven deals whose Salesforce account carries
+  only closed opportunities are still live SQL0 in our pipeline and in Mark's
+  digest, six of them lost. Needs the outcome mapping above, then a rule for
+  what a closed deal does to briefing, snapshotting and the digest.
 - Write to both CRMs when both are linked
 - Teams transcript access via Ernesto as the fallback when the bot never gets in
 - Salesforce Account field writes: blocked on their contractor exempting the
@@ -553,8 +601,12 @@ has looked closely enough to be specific.
 
 **The distance to what the decks promise**
 
-- The learning loop. `outcome-sync` runs daily and nothing consumes it. Until
-  this runs, "learns your winning sales motion" is a claim, not a feature.
+- The learning loop. `outcome-sync` runs daily, produces nothing, and nothing
+  consumes it. It is broken at the identifier (see the won/lost fact above): fix
+  the deal-to-Opportunity mapping and the empty allowlist FIRST, because 126 won
+  and 37 lost opportunities are already sitting there and every day of delay is
+  a day the loop is not learning. Until this runs, "learns your winning sales
+  motion" is a claim, not a feature.
   The prescription ledger (`prescribed_actions`, see
   `supabase/add-prescription-ledger.sql`) is the substrate: what the briefing
   told the rep, whether they did it, and what followed. Written on issue by
