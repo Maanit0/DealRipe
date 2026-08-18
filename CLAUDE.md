@@ -184,11 +184,34 @@ correct Opportunity id is refused before any network call. The daily cron logs
 the honest signal nobody was reading.
 
 What is actually there, measured through the accounts: 215 opportunities on the
-91 linked accounts, 163 closed, **126 won and 37 lost**, 52 open. Twelve closed
-inside the pilot window (2026-07-01 on), six won and six lost. That is a real
-training substrate for the learning loop and for per-rep calibration, and it has
-been sitting behind a wrong identifier the whole time. Do not quote "no outcomes
-yet" again without re-running this query.
+91 linked accounts, 163 closed, **126 won and 37 lost**, 52 open. So "no
+outcomes exist" is false and should not be repeated.
+
+**But almost none of it is DealRipe's.** 133 of the 163 closed before 2026 and
+the pilot only started mid-July. Closed opportunities whose DealRipe deal had a
+call ON OR BEFORE the close date: **7**. Carrying prescriptions as well: **3**.
+That is the entire DealRipe-observed outcome set, and it is far too small to
+calibrate or train on. Anyone reaching for these numbers wants one of two
+different things and should say which:
+
+- **A prior about Magaya's business** (what a won deal looks like, cycle length,
+  amount, loss reason). The 163 support that. They say nothing about DealRipe.
+- **Evidence DealRipe changed an outcome.** n=7. There is no such evidence yet
+  and claiming it would not survive one question from Mark.
+
+Worse, five of the seven are not independent losses. Mitch Nemmers closed
+Dpworld, GUYWBD, Air Americas and Extrum within 90 seconds of each other at
+2026-08-07T18:28, and Successchb on 08-11, every one of them reason
+`No Decision / Non-Responsive`. That is a VP running a hygiene sweep over deals
+that went dark about two weeks after creation, not five competitive losses. Read
+as sales outcomes they would make DealRipe-observed deals look like they lose at
+71%, against Magaya's historical 77% win rate. Both figures are noise at this n.
+
+`Opportunity.Loss_Reason__c` exists and is populated, and it is a much richer
+label than the won/lost boolean. Use it when the loop is finally built.
+
+Fixing outcome-sync is still worth doing NOW, but for the future rather than for
+a backlog: it is the only thing that will capture pilot deals as they close.
 
 **Rolldog's stage checklist lives at
 `/opportunities/{id}/opportunity-stages-requirement`.** Note the pluralization.
@@ -603,10 +626,11 @@ has looked closely enough to be specific.
 
 - The learning loop. `outcome-sync` runs daily, produces nothing, and nothing
   consumes it. It is broken at the identifier (see the won/lost fact above): fix
-  the deal-to-Opportunity mapping and the empty allowlist FIRST, because 126 won
-  and 37 lost opportunities are already sitting there and every day of delay is
-  a day the loop is not learning. Until this runs, "learns your winning sales
-  motion" is a claim, not a feature.
+  the deal-to-Opportunity mapping and the empty allowlist FIRST, but do it to
+  catch pilot deals as they close, NOT because a training backlog exists: only 7
+  closed opportunities have a DealRipe call before the close, and 5 of those are
+  one hygiene sweep. Until this runs, "learns your winning sales motion" is a
+  claim, not a feature, and it stays a claim for months after it runs.
   The prescription ledger (`prescribed_actions`, see
   `supabase/add-prescription-ledger.sql`) is the substrate: what the briefing
   told the rep, whether they did it, and what followed. Written on issue by
