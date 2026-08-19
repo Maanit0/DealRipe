@@ -33,10 +33,13 @@ stage-requirement checklist the reps maintain by hand.
 
 - Next.js 14 app router, TypeScript, Tailwind, deployed on Vercel
 - Supabase / Postgres. Types in `lib/database.types.ts`
-- Vercel crons in `vercel.json`: calendar-sync, transcript-sync, briefing-sync
-  every 5 min; rolldog-relink every 2h; snapshot every 4h; outcome-sync and
-  audit daily; prescription-scoring every 6h; digest Tuesdays 11:00;
-  link-escalation Mondays 14:00
+- Vercel crons in `vercel.json`, all UTC: calendar-sync, transcript-sync and
+  briefing-sync every 5 min, recap-sync on the offset `1-59/5`; rolldog-relink
+  every 2h, salesforce-relink on the `30` offset, link-resolver every 4h;
+  snapshot every 4h; outcome-sync `0 6` and audit `0 12` daily;
+  prescription-scoring every 6h; **digest `0 11 * * 1`, which is Monday 06:00
+  Central** while the US is on CDT and 05:00 once it is not, so check it in
+  November; link-escalation Mondays 14:00
 - Recall.ai for meeting bots
 - Microsoft Graph: delegated Calendars.Read per rep, app-only Mail.Read and
   Mail.ReadWrite. **Deliberately not Mail.Send.** Drafts are never sent.
