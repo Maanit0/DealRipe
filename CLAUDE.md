@@ -377,6 +377,29 @@ question is asked on the call or not at all; a commitment has two channels and
 scoring it from the transcript alone records reps who did the work as reps who
 did nothing.
 
+**A customer is decided by `Account.Type`, never by `outcome_label`.** They
+answer different questions and both are wired into `resolvePreCallType`.
+`outcome_label` says a deal closed WHILE WE WERE WATCHING, which is deliberately
+narrow: Treecorp closed won 2026-08-10 and Eosits 2026-07-29, both before
+DealRipe captured a first call, so outcome-sync leaves them unlabelled and
+correctly claims no credit. They are still customers, and both took calls on
+2026-08-18 that would have asked them what is driving them to look at a new
+solution.
+
+Customer standing is applied as a POST-PASS, not a first check, and only over a
+verdict that `allowsDiscoveryFraming` accepts. A customer taking a demo of a new
+module is still a demo, and that is more useful to the rep than "existing
+customer". Verified: Treecorp and Eosits route `existing_customer` via
+`standing`, Mollaxpanama via the cheaper `outcome` path with no Salesforce call,
+Oceanbridge stays `discovery`, Corelogistics stays `proposal`.
+
+`readCustomerStanding` is memoised for six hours because briefing-sync fires
+every five minutes across every calendar. An `unavailable` result is never
+cached: one transient Salesforce failure would otherwise tell every briefing for
+six hours that we did not check. The whole pass fails open, since inventing an
+existing-customer framing from a failed read is the same mistake as calling a
+customer a prospect, mirrored.
+
 **Follow-through on a briefing tracks the CALL TYPE, not the rep.** Measured
 across five reps: 25% on discovery, 8% on proposal, 0% on demo, follow-up and
 existing-customer calls. Cargoservicesgroup was an existing customer mid
@@ -644,12 +667,6 @@ has looked closely enough to be specific.
   what remains is running `supabase/add-outcome-detail.sql` then
   `scripts/run-outcome-sync.ts --apply`, and deciding what a closed deal does to
   BRIEFING and SNAPSHOTTING, which still treat them as live.
-- Route existing customers off `Account.Type`, not `outcome_label`. Won deals
-  DealRipe observed now route as existing_customer, but a deal won BEFORE our
-  first call stays unlabelled by design (`only_historical`), so Treecorp and
-  Eosits are paying customers still briefed as new business. `readCustomerStanding`
-  already reads the right field; it costs a Salesforce round trip inside
-  briefing-sync's five-minute loop, so it needs caching rather than a naive call.
 - Write to both CRMs when both are linked
 - Teams transcript access via Ernesto as the fallback when the bot never gets in
 - Salesforce Account field writes: blocked on their contractor exempting the

@@ -28,6 +28,7 @@
  *   of a signed customer, which is the exact failure being fixed.
  */
 
+import { readCustomerStanding, type CustomerStanding } from "./salesforce-context";
 import { supabaseAdmin } from "./supabase";
 
 export type PreCallType =
@@ -45,12 +46,13 @@ export type PreCallTypeRead = {
   /**
    * Where it came from, so a briefing that gets this wrong can be traced to the
    * evidence rather than to a guess.
+   *   standing Account.Type says they already buy from Magaya
    *   outcome  the deal is won in the CRM, so they are a customer
    *   history  the deal's own captured calls, already classified
    *   subject  the calendar title
    *   none     nothing to go on
    */
-  source: "outcome" | "history" | "subject" | "none";
+  source: "standing" | "outcome" | "history" | "subject" | "none";
   reason: string;
 };
 
@@ -125,7 +127,7 @@ export function preCallTypeFromSubject(subject: string | null | undefined): PreC
  * is explicit evidence about THIS meeting where history is evidence about
  * previous ones.
  */
-export async function resolvePreCallType(args: {
+async function resolveFromHistoryAndSubject(args: {
   tenantId: string;
   dealId: string;
   subject: string | null | undefined;
@@ -289,4 +291,101 @@ export async function resolvePreCallType(args: {
  */
 export function allowsDiscoveryFraming(type: PreCallType): boolean {
   return type === "discovery" || type === "unknown";
+}
+
+
+// ---------------------------------------------------------------------------
+// Customer standing
+// ---------------------------------------------------------------------------
+
+const STANDING_TTL_MS = 6 * 60 * 60 * 1000;
+const standingCache = new Map<string, { at: number; value: CustomerStanding }>();
+
+/**
+ * readCustomerStanding, memoised for six hours.
+ *
+ * briefing-sync fires every five minutes across every rep's calendar, and this
+ * would otherwise be a describe plus a query per event. Whether a company buys
+ * from Magaya does not change on a five-minute cadence.
+ *
+ * An `unavailable` result is deliberately NOT cached. Caching it would let one
+ * transient Salesforce failure tell every briefing for six hours that we did
+ * not check, which is the same absence-as-evidence trap one layer up.
+ */
+async function cachedStanding(accountId: string): Promise<CustomerStanding> {
+  const hit = standingCache.get(accountId);
+  if (hit && Date.now() - hit.at < STANDING_TTL_MS) return hit.value;
+  const value = await readCustomerStanding(accountId);
+  if (value.status !== "unavailable") standingCache.set(accountId, { at: Date.now(), value });
+  return value;
+}
+
+/**
+ * Resolve the call type, then refuse to frame a paying customer as a prospect.
+ *
+ * WHY THIS IS A POST-PASS RATHER THAN A FIRST CHECK. Account.Type answers "do
+ * they buy from us", not "what is this meeting". A customer taking a demo of a
+ * new module is still a demo, and that is more useful to the rep than
+ * "existing customer", so standing only overrides a verdict that would license
+ * first-discovery framing. allowsDiscoveryFraming is the existing definition of
+ * exactly that, and reusing it means the two cannot drift apart.
+ *
+ * WHY IT IS NEEDED AT ALL, given the won-deal check inside. outcome_label
+ * answers "did a deal close while we were watching", which is deliberately
+ * narrower. Treecorp closed won 2026-08-10 and Eosits 2026-07-29, both before
+ * DealRipe captured its first call, so outcome-sync leaves them unlabelled and
+ * correctly claims no credit. They are still customers, and both took calls on
+ * 2026-08-18 that would have asked them what is driving them to look at a new
+ * solution.
+ *
+ * Fails open: prospect, unavailable, no linked account and any thrown error all
+ * leave the original verdict alone. Telling a customer of six years that we
+ * think they are a prospect is the expensive error, but inventing an
+ * existing-customer framing from a failed read is the same mistake mirrored.
+ */
+export async function resolvePreCallType(args: {
+  tenantId: string;
+  dealId: string;
+  subject: string | null | undefined;
+  beforeIso?: string | null;
+}): Promise<PreCallTypeRead> {
+  const base = await resolveFromHistoryAndSubject(args);
+  if (!allowsDiscoveryFraming(base.type)) return base;
+
+  const db = supabaseAdmin();
+  const deal = await db
+    .from("deals")
+    .select("salesforce_account_id, salesforce_link_confidence")
+    .eq("tenant_id", args.tenantId)
+    .eq("id", args.dealId)
+    .maybeSingle();
+  if (deal.error) {
+    console.warn(
+      `[call-type] account read failed for deal ${args.dealId}, keeping ${base.type}: ${deal.error.message}`,
+    );
+    return base;
+  }
+  const accountId = deal.data?.salesforce_account_id;
+  // A link below `confirmed` may be the wrong account entirely, and this
+  // codebase already fails closed on that everywhere it writes.
+  if (!accountId || deal.data?.salesforce_link_confidence !== "confirmed") return base;
+
+  let standing: CustomerStanding;
+  try {
+    standing = await cachedStanding(accountId);
+  } catch (err) {
+    console.warn(
+      `[call-type] customer standing threw for deal ${args.dealId}, keeping ${base.type}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return base;
+  }
+  if (standing.status !== "customer") return base;
+
+  return {
+    type: "existing_customer",
+    source: "standing",
+    reason: `Salesforce says this account already buys from Magaya (${standing.detail}), so a first-discovery framing would be wrong`,
+  };
 }
