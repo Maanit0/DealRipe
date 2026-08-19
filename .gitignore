@@ -29,3 +29,7 @@ digest-generated.html
 
 # Local Claude Code tool permissions, per-machine.
 .claude/
+
+# Build cache and scratch dirs, never in a diff.
+.tmp-probe/
+*.tsbuildinfo
