@@ -310,7 +310,38 @@ export async function recordDealSnapshot(
  * Returns the number of deals written.
  */
 export async function recordAllDealSnapshots(tenantId: string): Promise<number> {
-  const deals = await getDealsForTenant(tenantId);
+  const all = await getDealsForTenant(tenantId);
+
+  // A resolved deal has no more moves to record.
+  //
+  // Eleven deals whose Salesforce account carried only closed opportunities
+  // accrued 213 four-hourly snapshots after they had already been won or lost,
+  // and the digest's movement detection read every one of them as a live deal
+  // that had not moved. The existing snapshots are kept: outcome-sync backfills
+  // outcome_label onto them and they are the calibration substrate. It is only
+  // the new ones that are pointless.
+  const db = supabaseAdmin();
+  const resolved = await db
+    .from("deals")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .not("outcome_label", "is", null);
+  let deals = all;
+  if (resolved.error) {
+    // Snapshot everything rather than nothing. Skipping the whole run on a
+    // failed read would lose a day of history to protect against a few extra
+    // rows, and a missing snapshot is far more expensive than a spare one.
+    console.warn(
+      `[snapshot] could not read outcome labels, snapshotting every deal: ${resolved.error.message}`,
+    );
+  } else {
+    const done = new Set((resolved.data ?? []).map((r) => (r as { id: string }).id));
+    deals = all.filter((d) => !done.has(d.id));
+    if (done.size > 0) {
+      console.log(`[snapshot] skipping ${all.length - deals.length} resolved deal(s)`);
+    }
+  }
+
   const rolldogByDeal = await resolveRolldogSnapshots(
     tenantId,
     deals.map((d) => d.id),

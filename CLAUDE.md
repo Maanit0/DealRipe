@@ -641,6 +641,12 @@ has looked closely enough to be specific.
   what remains is running `supabase/add-outcome-detail.sql` then
   `scripts/run-outcome-sync.ts --apply`, and deciding what a closed deal does to
   BRIEFING and SNAPSHOTTING, which still treat them as live.
+- Route existing customers off `Account.Type`, not `outcome_label`. Won deals
+  DealRipe observed now route as existing_customer, but a deal won BEFORE our
+  first call stays unlabelled by design (`only_historical`), so Treecorp and
+  Eosits are paying customers still briefed as new business. `readCustomerStanding`
+  already reads the right field; it costs a Salesforce round trip inside
+  briefing-sync's five-minute loop, so it needs caching rather than a naive call.
 - Write to both CRMs when both are linked
 - Teams transcript access via Ernesto as the fallback when the bot never gets in
 - Salesforce Account field writes: blocked on their contractor exempting the

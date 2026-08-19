@@ -58,6 +58,18 @@ export type BriefingSyncCounts = {
   skippedNoCall: number;
   /** Rows briefing-sync created itself because calendar-sync had not yet. */
   createdCallRow: number;
+  /**
+   * Connections whose mailbox does not exist (Graph MailboxNotEnabledForRESTAPI,
+   * or a 404 on calendarView). Counted apart from `errors` on purpose.
+   *
+   * admin@maanitdealripe.onmicrosoft.com is a dead dev connection and produced
+   * a permanent errors:1 on every run, five minutes apart, forever. A constant
+   * error is worse than no error: it becomes the baseline, and the next real
+   * failure arrives looking exactly like the one everyone has learned to
+   * ignore. `errors` now means "something unexpected", which is the only way it
+   * is worth alerting on.
+   */
+  deadConnections: number;
   errors: number;
 };
 
@@ -93,6 +105,7 @@ export async function runBriefingSync(
     skippedNoDeal: 0,
     skippedNoCall: 0,
     createdCallRow: 0,
+    deadConnections: 0,
     errors: 0,
   };
   const emit = opts.onDecision ?? (() => {});
@@ -125,12 +138,18 @@ export async function runBriefingSync(
     try {
       events = await listUpcomingMeetings(conn.id, SCAN_WINDOW_DAYS);
     } catch (err) {
-      counts.errors += 1;
-      console.error(
-        `[briefing-sync] skipping connection ${conn.user_principal_name ?? conn.id}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isDeadMailbox(msg)) {
+        counts.deadConnections += 1;
+        console.warn(
+          `[briefing-sync] connection ${conn.user_principal_name ?? conn.id} has no live mailbox, skipping: ${msg}`,
+        );
+      } else {
+        counts.errors += 1;
+        console.error(
+          `[briefing-sync] skipping connection ${conn.user_principal_name ?? conn.id}: ${msg}`,
+        );
+      }
       continue;
     }
     const autoJoin = isAutoJoinRep(conn.user_principal_name);
@@ -146,6 +165,21 @@ export async function runBriefingSync(
   }
 
   return counts;
+}
+
+/**
+ * A mailbox that does not exist, as opposed to a call that failed.
+ *
+ * Graph reports a deleted or on-premise mailbox as a 404 with
+ * MailboxNotEnabledForRESTAPI. That is a fact about the connection, not a
+ * transient fault, and retrying it every five minutes will never fix it.
+ */
+function isDeadMailbox(message: string): boolean {
+  return (
+    /MailboxNotEnabledForRESTAPI/i.test(message) ||
+    /ResourceNotFound/i.test(message) ||
+    (/\b404\b/.test(message) && /calendarView|\/me\b/i.test(message))
+  );
 }
 
 async function processEvent(

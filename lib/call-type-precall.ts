@@ -45,11 +45,12 @@ export type PreCallTypeRead = {
   /**
    * Where it came from, so a briefing that gets this wrong can be traced to the
    * evidence rather than to a guess.
+   *   outcome  the deal is won in the CRM, so they are a customer
    *   history  the deal's own captured calls, already classified
    *   subject  the calendar title
    *   none     nothing to go on
    */
-  source: "history" | "subject" | "none";
+  source: "outcome" | "history" | "subject" | "none";
   reason: string;
 };
 
@@ -145,6 +146,46 @@ export async function resolvePreCallType(args: {
   }
 
   const db = supabaseAdmin();
+
+  // A won deal is a customer, and that outranks anything the invite title says.
+  //
+  // Mollaxpanama, Treecorp and Eosits all closed won and then took calls on
+  // 2026-08-18 that would have been briefed as new business, asking a paying
+  // customer what is driving them to look at a new solution. Outcome is a
+  // recorded fact rather than an inference from a subject line, so it is read
+  // first.
+  //
+  // A LOST deal deliberately gets no special case: a dead opportunity taking a
+  // new call usually IS new business, and forcing existing_customer there would
+  // tell the rep they had a customer who never bought.
+  //
+  // KNOWN GAP: outcome_label answers "did a deal close while we were watching",
+  // which is a deliberately narrower question than "are they a customer".
+  // Treecorp closed won 2026-08-10 and Eosits 2026-07-29, both BEFORE DealRipe
+  // captured its first call on them, so outcome-sync leaves them unlabelled as
+  // only_historical (correctly: we did not influence those wins) and they still
+  // route as new business here. The right customer test is Account.Type, read
+  // through readCustomerStanding in lib/salesforce-context.ts, per the note in
+  // CLAUDE.md that Customer_Status__c does not mean what it says. That read is
+  // not wired in yet because it costs a Salesforce round trip inside
+  // briefing-sync's five-minute loop.
+  const dealOutcome = await db
+    .from("deals")
+    .select("outcome_label")
+    .eq("tenant_id", args.tenantId)
+    .eq("id", args.dealId)
+    .maybeSingle();
+  if (dealOutcome.error) {
+    console.warn(
+      `[call-type] outcome read failed for deal ${args.dealId}, continuing without it: ${dealOutcome.error.message}`,
+    );
+  } else if (dealOutcome.data?.outcome_label === "won") {
+    return {
+      type: "existing_customer",
+      source: "outcome",
+      reason: "the deal is recorded as won in the CRM, so this is a customer conversation",
+    };
+  }
   const prior = await db
     .from("calls")
     .select("meeting_type, call_subtype, scheduled_start, call_date")
