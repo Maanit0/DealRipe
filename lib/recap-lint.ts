@@ -27,6 +27,7 @@
  * section over a word.
  */
 
+import type { GeneralRecap } from "./meeting-classify";
 import type { DemoStrategy, Narrative, PassResult } from "./recap-passes";
 
 export type RecapFinding = {
@@ -221,5 +222,77 @@ export function applyRecapFixes(n: Narrative): Narrative {
       customerOwes: n.nextSteps.customerOwes.map(fixFact),
       weOwe: n.nextSteps.weOwe.map(fixFact),
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// General recap
+// ---------------------------------------------------------------------------
+
+/**
+ * Lint the fallback recap for a non-qualification call.
+ *
+ * This was the last generated artifact reaching a rep with no checks at all.
+ * It runs on renewals, support calls and internal meetings, which is exactly
+ * where sales-qualification language is most wrong: generateGeneralRecap is
+ * explicitly told not to use budget or close-plan framing, so finding that
+ * vocabulary here means the instruction did not take, not that the wording is
+ * merely off-register.
+ *
+ * Same three tiers as lintRecap and the same rule ids, so a caller can handle
+ * findings from either without special-casing.
+ */
+export function lintGeneralRecap(recap: GeneralRecap): RecapFinding[] {
+  const out: RecapFinding[] = [];
+
+  const scan = (text: string, where: string): void => {
+    if (!text) return;
+    if (/[—–]/.test(text)) {
+      out.push({ tier: "fix", rule: "dashes", detail: "em or en dash present", where });
+    }
+    const ph = text.match(PLACEHOLDER);
+    if (ph) {
+      out.push({ tier: "suppress", rule: "placeholder", detail: `unfilled token ${ph[0]}`, where });
+    }
+  };
+
+  scan(recap.summary, "summary");
+  recap.takeaways.forEach((t, i) => scan(t, `takeaways[${i}]`));
+  recap.nextSteps.forEach((t, i) => scan(t, `nextSteps[${i}]`));
+
+  const prose = [recap.summary, ...recap.takeaways, ...recap.nextSteps].join(" ").toLowerCase();
+  for (const w of FRAMEWORK_WORDS) {
+    if (prose.includes(w)) {
+      out.push({
+        tier: "regenerate",
+        rule: "framework-vocabulary",
+        detail: `a non-qualification recap used "${w}", which this call type should never be framed in`,
+        where: "generalRecap",
+      });
+    }
+  }
+
+  // A recap with no summary and nothing to say asserts that we listened and
+  // there was nothing, which is the no-show shape. Those are filtered on
+  // outcome upstream; anything reaching here with no content is a generation
+  // failure and should not be sent as if it were a record of the call.
+  if (!recap.summary.trim() && recap.takeaways.length === 0) {
+    out.push({
+      tier: "suppress",
+      rule: "empty-readout",
+      detail: "the recap has no summary and no takeaways",
+      where: "generalRecap",
+    });
+  }
+
+  return out;
+}
+
+/** Dash normalisation for the general recap. Lossless, so it never regenerates. */
+export function applyGeneralRecapFixes(recap: GeneralRecap): GeneralRecap {
+  return {
+    summary: normalizeDashes(recap.summary),
+    takeaways: recap.takeaways.map(normalizeDashes),
+    nextSteps: recap.nextSteps.map(normalizeDashes),
   };
 }

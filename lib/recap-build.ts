@@ -37,7 +37,14 @@ import {
   type Narrative,
   type PassResult,
 } from "./recap-passes";
-import { applyRecapFixes, describeRecapFindings, lintRecap, recapBlockers } from "./recap-lint";
+import {
+  applyGeneralRecapFixes,
+  applyRecapFixes,
+  describeRecapFindings,
+  lintGeneralRecap,
+  lintRecap,
+  recapBlockers,
+} from "./recap-lint";
 import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 import { generateTasksFromCall, type GeneratedTask } from "./tasks";
@@ -202,10 +209,46 @@ export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
     if (narrativePass.result.status !== "present") {
       // Only when the narrative produced nothing. Losing both is worse than
       // sending the old shallow shape.
-      fallback = await generateGeneralRecap({
-        account: input.account,
-        transcript: input.transcript,
-      });
+      //
+      // Linted on the same three tiers as the narrative, because until now this
+      // was the one generated artifact that reached a rep with no checks at
+      // all, on exactly the call types where sales framing is most wrong.
+      for (const attempt of [0, 1]) {
+        const candidate = await generateGeneralRecap({
+          account: input.account,
+          transcript: input.transcript,
+        });
+        if (!candidate) break;
+
+        const fixed = applyGeneralRecapFixes(candidate);
+        const findings = lintGeneralRecap(fixed);
+        const blockers = recapBlockers(findings);
+        if (blockers.length > 0) {
+          console.warn(
+            `[recap] general recap suppressed for ${input.account}: ${describeRecapFindings(blockers)}`,
+          );
+          fallback = null;
+          break;
+        }
+
+        const regen = findings.filter((f) => f.tier === "regenerate");
+        if (regen.length > 0 && attempt === 0) {
+          console.warn(
+            `[recap] general recap regenerating for ${input.account}: ${describeRecapFindings(regen)}`,
+          );
+          continue;
+        }
+        if (regen.length > 0) {
+          // Second attempt still off-register. Ship it and say so: the content
+          // is right and the wording is not, and suppressing would cost the rep
+          // the only record of the call to fix a noun.
+          console.warn(
+            `[recap] general recap shipped with findings for ${input.account}: ${describeRecapFindings(regen)}`,
+          );
+        }
+        fallback = fixed;
+        break;
+      }
     }
     return {
       kind: "general",

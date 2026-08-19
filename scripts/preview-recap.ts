@@ -31,6 +31,7 @@ import {
   renderRecapEmailBody,
   renderRecapNote,
 } from "../lib/recap-render";
+import { postRecapNote } from "../lib/salesforce-note";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 import type { ExtractionMap } from "../lib/briefing-magaya";
@@ -56,6 +57,10 @@ async function main(): Promise<void> {
   // a phone. Same generation, different readers.
   const asNote = process.argv.includes("--note");
   const asEmail = process.argv.includes("--email");
+  // --post-note is dry run unless --apply is also given, like every other
+  // writing script here.
+  const postNote = process.argv.includes("--post-note");
+  const applyNote = process.argv.includes("--apply");
   if (!dealArg && !callArg) {
     console.error("Pass --deal <name or external id fragment> or --call <call id>.");
     process.exit(1);
@@ -143,7 +148,7 @@ async function main(): Promise<void> {
 
   const deal = await db
     .from("deals")
-    .select("id, account, external_id, stage_key, framework_id, rep_forecast_close_date")
+    .select("id, account, external_id, stage_key, framework_id, rep_forecast_close_date, salesforce_account_id, salesforce_link_confidence")
     .eq("tenant_id", tenantId)
     .eq("id", callRow.deal_id)
     .maybeSingle();
@@ -236,21 +241,50 @@ async function main(): Promise<void> {
     return;
   }
 
-  if ((asNote || asEmail) && built.kind === "qualification") {
-    if (asNote) {
+  if ((asNote || asEmail || postNote) && built.kind === "qualification") {
+    const noteBody = renderRecapNote({
+      account: built.account,
+      callTitle: callRow.title,
+      callAt: formatMeetingTime(callRow.scheduled_start ?? undefined),
+      stageKey: built.stageKey,
+      narrative: built.narrative,
+      demoStrategy: built.demoStrategy,
+      captured: built.summary.captured,
+      stillOpen: built.summary.stillOpen,
+      history: built.history,
+    });
+
+    if (postNote) {
+      const acct = deal.data.salesforce_account_id;
+      const conf = deal.data.salesforce_link_confidence;
+      if (!acct || conf !== "confirmed") {
+        // Same fail-closed rule as every other Salesforce write: a link below
+        // confirmed may be an entirely different company's record.
+        console.error(
+          `refusing to post: deal ${built.account} has salesforce_account_id=${acct ?? "null"} ` +
+            `confidence=${conf ?? "null"}, and a note only writes on a confirmed link`,
+        );
+        process.exit(1);
+      }
+      const res = await postRecapNote({
+        tenantSlug: "magaya",
+        accountId: acct,
+        account: built.account,
+        callAt: callRow.scheduled_start,
+        body: noteBody,
+        apply: applyNote,
+      });
       console.log(
-        renderRecapNote({
-          account: built.account,
-          callTitle: callRow.title,
-          callAt: formatMeetingTime(callRow.scheduled_start ?? undefined),
-          stageKey: built.stageKey,
-          narrative: built.narrative,
-          demoStrategy: built.demoStrategy,
-          captured: built.summary.captured,
-          stillOpen: built.summary.stillOpen,
-          history: built.history,
-        }),
+        res.posted
+          ? `posted ContentNote ${res.contentNoteId} linked to ${res.linkedTo}`
+          : `not posted: ${res.reason}${res.alreadyThere ? ` (existing ${res.alreadyThere})` : ""}`,
       );
+      if (!applyNote) console.log("Dry run. Nothing was written. Add --apply to post.");
+      return;
+    }
+
+    if (asNote) {
+      console.log(noteBody);
     }
     if (asEmail) {
       if (asNote) console.log(`\n${"=".repeat(78)}\nEMAIL BODY\n${"=".repeat(78)}`);

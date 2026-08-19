@@ -599,8 +599,10 @@ has looked closely enough to be specific.
   `renderPostCallSummaryEmail`. The general path already uses the new
   `renderRecapEmailBody`, so a renewal gets the new artifact and a discovery
   call does not. Close that asymmetry first.
-- The recap has never been linted. `lintBriefing` is called from exactly one
-  place, `generate-briefing.ts`. Extend it before the Note ships, since that
+- ~~The recap has never been linted~~ The three-pass recap and the general
+  recap both lint now (`lintRecap`, `lintGeneralRecap`), on the three tiers
+  below. `lintBriefing` is still called from exactly one place,
+  `generate-briefing.ts`. Extend it before the Note ships, since that
   writes generated copy into a customer's CRM. Three tiers, because the failures
   are not alike:
     - AUTO-FIX, never regenerate: em-dashes and en-dashes. Substitution is exact
@@ -620,8 +622,15 @@ has looked closely enough to be specific.
   detectable and it is worth detecting, because ranking categories as pains
   pushed the one paragraph the doc calls "worth more than the whole gap audit"
   down to fourth.
-- Recap as a Salesforce **Note**. `renderRecapNote` produces the body; nothing
-  posts it.
+- Recap as a Salesforce **Note**. `lib/salesforce-note.ts` posts it as a
+  ContentNote plus a ContentDocumentLink (the legacy `Note` sobject is not what
+  the Lightning Notes related list shows, so posting there looks like nothing
+  happened). Idempotent on the title `DealRipe recap: <account> <YYYY-MM-DD>`,
+  which is built from the CALL date so a re-run cannot leave a second note. A
+  failed duplicate lookup refuses to write rather than falling through. Drive it
+  with `preview-recap.ts --deal X --post-note`, dry run by default, `--apply`
+  **writes**. NOT yet wired into recap-sync, and never applied against Magaya:
+  the first real post is a customer-visible change.
 - Follow-up draft recipients from the call's external attendees, not from
   Graph's `createReply`, which addresses the last sender and therefore the BDR.
   `customerEmails` is already computed and correct and never used on the reply
