@@ -53,6 +53,19 @@ export const CRM_CROSSWALK: Readonly<Record<string, CrosswalkEntry>> = Object.fr
     rolldogOpportunityId: "81491",
     note: "Rolldog account 'EWI', opportunity 'EWI - ABI & Accounting - 6/30/2026', owner asuntrup, created 2026-07-01. Sibling 75084 from April on the same account. MS 2026-08-09",
   },
+  // Rolldog files this opportunity under ACCOUNT "EXTRUM" while the
+  // opportunity itself is named "LOOMIS - NAVPRO SUBSCRIPTION". The reconciler
+  // matches on the account column, so no automatic search for "Loomis" can ever
+  // reach it: searching Rolldog for "Loomis" returns exactly this row and its
+  // account reads EXTRUM. Owner sjohnson, SQL3 Proposal Validation, created
+  // 2026-07-16, which lines up with Steven's Aug 18 and Aug 20 sessions.
+  //
+  // The deal previously carried 26915, which belongs to neither Loomis nor
+  // Cartainer and is returned by no search for either. Cleared 2026-08-16.
+  "loomis.com": {
+    rolldogOpportunityId: "82355",
+    note: "Rolldog account 'EXTRUM', opportunity 'LOOMIS - NAVPRO SUBSCRIPTION', owner sjohnson, SQL3, created 2026-07-16. Account column does not say Loomis, which is why automatic matching abstains. MS 2026-08-16",
+  },
   "iffusa.com": {
     salesforceAccountId: "001RN00000iG0abYAC",
     rolldogOpportunityId: "80018",

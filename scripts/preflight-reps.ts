@@ -20,8 +20,16 @@
  * cannot tell you whether a rep has no external meetings or whether Graph
  * returned no attendee data to judge them by.
  *
- * READ ONLY. Queries the database, Microsoft Graph and the env, and writes
- * nothing anywhere. Safe to run against production, which is the point.
+ * The meetings check asks the same question production asks, through the same
+ * code: resolveMeetingDeal, then the join gate. It does not compare domains of
+ * its own. A diagnostic that can disagree with production eventually will, and
+ * it will disagree confidently.
+ *
+ * READ ONLY. Queries the database, Microsoft Graph, Salesforce, the invite
+ * classifier and the env, and writes nothing anywhere. Safe to run against
+ * production, which is the point. The join gate costs a Salesforce lookup and
+ * sometimes an Anthropic call per external candidate, so a full six-rep run is
+ * slower than it used to be. Internal-only meetings never reach the gate.
  */
 
 import { config } from "dotenv";
@@ -29,8 +37,9 @@ config({ path: ".env.local" });
 
 import { formatMeetingTime } from "../lib/graph-time";
 import { allowedMailboxes } from "../lib/graph-mail";
+import { shouldJoinAutoMeeting } from "../lib/join-gate";
 import { listUpcomingMeetings, type NormalizedMeeting } from "../lib/microsoft-graph";
-import { isAutoJoinRep } from "../lib/pilot-config";
+import { INTERNAL_DOMAINS, isAutoJoinRep, resolveMeetingDeal } from "../lib/pilot-config";
 import { REP_UID } from "../lib/rolldog-reconcile";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
@@ -56,7 +65,7 @@ const TEAM: ReadonlyArray<{ name: string; email: string }> = [
 /** Who should receive the Monday digest. */
 const DIGEST_EXPECTED = ["mbuman@magaya.com", "mnemmers@magaya.com", "ebencomo@magaya.com"];
 
-type Check = { ok: boolean; note: string };
+type Check = { ok: boolean; note: string; unknown?: boolean };
 type Row = {
   name: string;
   email: string;
@@ -72,6 +81,32 @@ type Row = {
 const OK = "ok  ";
 const NO = "FAIL";
 const WARN = "warn";
+/** Neither pass nor fail: the check could not reach an answer. */
+const UNK = "??  ";
+
+/**
+ * What a meeting is, in three states rather than two.
+ *
+ * The two-state version asked "does any attendee have a domain that is not
+ * magaya.com", which answers false both for a room full of colleagues and for
+ * a meeting Graph returned with no attendees at all. Daniel Blitstein's week
+ * read "11 meetings, none external" while six of the eleven had never been
+ * judged by anything. That is the failure this codebase forbids: absence of
+ * evidence rendered as evidence of absence.
+ *
+ * `unknown` is never folded into `internal`. It is a statement about our
+ * information, not about the meeting.
+ */
+type Counterparty = "external" | "internal" | "unknown";
+
+type Classified = {
+  state: Counterparty;
+  /** The join gate's own reason where it ran, otherwise why it did not need to. */
+  reason: string;
+  detail: string;
+  /** Production briefs and joins only these. Cancelled or no join url: no. */
+  briefable: boolean;
+};
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -91,14 +126,123 @@ function matchesRep(rep: { name: string; email: string }, filter: string): boole
 }
 
 /**
- * One meeting, rendered exactly as Graph handed it over.
+ * Is there a customer on this invite, and would DealRipe act on it?
+ *
+ * Every judgement here is production's. `resolveMeetingDeal` decides whether a
+ * counterparty exists and which deal it belongs to; `shouldJoinAutoMeeting`
+ * decides whether an auto-created one is commercial. This function only sorts
+ * their answers into three buckets and never forms an opinion of its own.
+ *
+ * autoJoin is passed as true on purpose, the same way meeting-readiness.ts does
+ * it. The question this row answers is "is there a customer meeting on this
+ * calendar at all"; whether DealRipe is switched on for the rep is the separate
+ * auto-join row directly above it, and conflating the two would report a real
+ * customer call as an internal one for any rep not yet enrolled.
+ */
+async function classifyMeeting(m: NormalizedMeeting, tenantId: string): Promise<Classified> {
+  const briefable = !m.isCancelled && Boolean(m.joinUrl);
+  const skipNote = m.isCancelled ? "cancelled" : m.joinUrl ? null : "no join url";
+
+  // An attendee entry with no address, or with an address Graph truncated to
+  // something without a domain, carries no information either way.
+  const emails = m.attendees
+    .map((a) => a.email)
+    .filter((e): e is string => typeof e === "string" && e.trim().length > 0);
+  const parseable = emails.filter((e) => {
+    const at = e.lastIndexOf("@");
+    return at > 0 && e.slice(at + 1).trim().length > 0;
+  });
+
+  if (parseable.length === 0) {
+    const organiser = m.organizerEmail ? `; organiser ${m.organizerEmail}` : "";
+    return {
+      state: "unknown",
+      reason: "no_attendee_data",
+      detail:
+        m.attendees.length === 0
+          ? `Graph returned no attendees, so nothing judged this meeting${organiser}`
+          : `${m.attendees.length} attendee(s), none with a parseable address${organiser}`,
+      briefable,
+    };
+  }
+
+  // From here on, pass the same list production passes: `emails`, not the
+  // parseable subset. The subset exists only to answer "was there anything to
+  // judge", and handing the resolver a different list from the one calendar-sync
+  // hands it is how a diagnostic starts drifting.
+  const resolved = resolveMeetingDeal(emails, m.subject, true);
+  if (!resolved) {
+    // The resolver returns null for a room full of colleagues and for a meeting
+    // whose only outside attendee is on the auto-join exclusion list. Both are
+    // correctly skipped, but they are skipped for different reasons, and the
+    // second is one env var away from hiding a real customer.
+    const outside = [
+      ...new Set(
+        parseable
+          .map((e) => e.slice(e.lastIndexOf("@") + 1).toLowerCase())
+          .filter((d) => !INTERNAL_DOMAINS.includes(d)),
+      ),
+    ];
+    return outside.length > 0
+      ? {
+          state: "internal",
+          reason: "excluded_domain",
+          detail: `outside attendees are all on the auto-join exclusion list: ${outside.join(", ")}`,
+          briefable,
+        }
+      : {
+          state: "internal",
+          reason: "no_external_counterparty",
+          detail: `${parseable.length} attendee(s), all on ${INTERNAL_DOMAINS.join(", ")}`,
+          briefable,
+        };
+  }
+  if (!resolved.isAuto || !resolved.domain || !resolved.address) {
+    // A hand-seeded pilot deal. Production never consults the gate for these.
+    return {
+      state: "external",
+      reason: "pilot_deal",
+      detail: `pilot deal ${resolved.dealExternalId}${skipNote ? `; ${skipNote}` : ""}`,
+      briefable,
+    };
+  }
+
+  const verdict = await shouldJoinAutoMeeting({
+    tenantId,
+    dealExternalId: resolved.dealExternalId,
+    domain: resolved.domain,
+    address: resolved.address,
+    isFreeMail: resolved.isFreeMail === true,
+    subject: m.subject,
+    attendeeEmails: emails,
+    sellerName: "Magaya",
+  });
+
+  const detail = `${verdict.detail} [crm: ${verdict.crmCheck}]${skipNote ? `; ${skipNote}` : ""}`;
+
+  if (verdict.join) {
+    return { state: "external", reason: verdict.reason, detail, briefable };
+  }
+  // A decline is only "internal" when production actually read something and
+  // judged it. The gate distinguishes these itself, in crmCheck and in reason;
+  // all this does is respect the distinction. `no_evidence` means the invite was
+  // never classified, and `unavailable` means Salesforce, the strongest evidence
+  // source, went unread. Both are "did not check", not "no".
+  if (verdict.crmCheck === "unavailable" || verdict.reason === "no_evidence") {
+    return { state: "unknown", reason: verdict.reason, detail, briefable };
+  }
+  return { state: "internal", reason: verdict.reason, detail, briefable };
+}
+
+/**
+ * One meeting, rendered exactly as Graph handed it over, with the verdict.
  *
  * The attendee list is printed raw and unfiltered, including the case where it
  * is empty. "no external attendee" and "Graph returned no attendee data" are
  * different findings with different fixes, and no summary count can separate
  * them for you.
  */
-function describeMeeting(m: NormalizedMeeting): string[] {
+function describeMeeting(m: NormalizedMeeting, c: Classified): string[] {
   const lines: string[] = [];
   const flags = [
     m.isCancelled ? "CANCELLED" : null,
@@ -109,6 +253,7 @@ function describeMeeting(m: NormalizedMeeting): string[] {
       flags.length > 0 ? `  [${flags.join(", ")}]` : ""
     }`,
   );
+  lines.push(`         verdict    ${c.state.toUpperCase()} · ${c.reason} · ${c.detail}`);
   lines.push(`         organiser  ${m.organizerEmail ?? "(none on the event)"}`);
   if (m.attendees.length === 0) {
     lines.push(`         attendees  (none returned by Graph)`);
@@ -198,24 +343,56 @@ async function main(): Promise<void> {
     } else {
       try {
         const upcoming = await listUpcomingMeetings(conn.id, days);
+        const classified: Array<{ meeting: NormalizedMeeting; c: Classified }> = [];
+        for (const m of upcoming) {
+          classified.push({ meeting: m, c: await classifyMeeting(m, tenantId) });
+        }
         if (verbose) {
           if (upcoming.length === 0) {
             meetingDetail.push(`      (Graph returned no meetings in the next ${days} days)`);
           }
-          for (const m of upcoming) meetingDetail.push(...describeMeeting(m));
+          for (const { meeting, c } of classified) meetingDetail.push(...describeMeeting(meeting, c));
         }
-        const external = upcoming.filter((m) =>
-          (m.attendees ?? []).some((a) => {
-            const d = (a.email ?? "").split("@")[1]?.toLowerCase() ?? "";
-            return d && d !== "magaya.com";
-          }),
-        );
-        meetings =
-          external.length > 0
-            ? { ok: true, note: `${external.length} external of ${upcoming.length} total` }
-            : { ok: false, note: `${upcoming.length} meetings, none external; nothing to brief` };
+
+        const external = classified.filter((x) => x.c.state === "external");
+        const internal = classified.filter((x) => x.c.state === "internal");
+        const unknown = classified.filter((x) => x.c.state === "unknown");
+        const briefable = external.filter((x) => x.c.briefable).length;
+        // An unknown meeting production would never have joined anyway is still
+        // unknown, but it is not a missed customer call. Daniel's six were all
+        // self-organised blocks with no online meeting attached.
+        const unknownNoJoin = unknown.filter((x) => !x.c.briefable).length;
+
+        const counts = `${external.length} external (${briefable} briefable), ${internal.length} internal, ${unknown.length} unknown of ${upcoming.length}`;
+        // Say which kind of unknown. "Graph gave us no attendees" sends someone
+        // to the calendar; "the gate could not read its evidence" sends them to
+        // Salesforce or to ANTHROPIC_API_KEY.
+        const noData = unknown.filter((x) => x.c.reason === "no_attendee_data").length;
+        const unread = unknown.length - noData;
+        const why: string[] = [];
+        if (noData > 0) why.push(`${noData} with no parseable attendee address`);
+        if (unread > 0) why.push(`${unread} where the join gate could not read its evidence`);
+        if (unknownNoJoin > 0) why.push(`${unknownNoJoin} with no join url, which no bot could join anyway`);
+        const unknownTail = unknown.length === 0 ? "" : `  · unknown: ${why.join(", ")}`;
+
+        if (upcoming.length === 0) {
+          meetings = { ok: false, note: `no meetings in the next ${days} days` };
+        } else if (external.length > 0) {
+          meetings = { ok: briefable > 0, note: `${counts}${unknownTail}` };
+        } else if (unknown.length > 0) {
+          // Not "none external". We do not know that.
+          meetings = { ok: false, unknown: true, note: `${counts}${unknownTail}` };
+        } else {
+          meetings = { ok: false, note: `${counts}; all internal, nothing to brief` };
+        }
       } catch (e) {
-        meetings = { ok: false, note: `Graph error: ${e instanceof Error ? e.message : String(e)}` };
+        // Graph failing is a third thing again: not "no meetings", not "no
+        // external meetings", but no answer at all.
+        meetings = {
+          ok: false,
+          unknown: true,
+          note: `Graph error, meetings unknown: ${e instanceof Error ? e.message : String(e)}`,
+        };
       }
     }
 
@@ -230,11 +407,24 @@ async function main(): Promise<void> {
   }
 
   // ---- Render -------------------------------------------------------------
-  const label = (c: Check, warnOnly = false) => (c.ok ? OK : warnOnly ? WARN : NO);
+  // A check that could not reach an answer gets its own mark. Rendering it as
+  // FAIL sends someone to fix a thing that may not be broken; rendering it as
+  // ok hides it entirely.
+  const label = (c: Check, warnOnly = false) => (c.ok ? OK : c.unknown ? UNK : warnOnly ? WARN : NO);
+  const blockingOf = (r: Row) =>
+    [r.calendar, r.autoJoin, r.mailbox, r.meetings].filter((c) => !c.ok && !c.unknown).length;
+  const unknownOf = (r: Row) =>
+    [r.calendar, r.autoJoin, r.mailbox, r.meetings].filter((c) => c.unknown).length;
 
   for (const r of rows) {
-    const blocking = [r.calendar, r.autoJoin, r.mailbox, r.meetings].filter((c) => !c.ok).length;
-    const head = blocking === 0 ? "READY" : `${blocking} BLOCKING`;
+    const blocking = blockingOf(r);
+    const unknown = unknownOf(r);
+    const head =
+      blocking === 0 && unknown === 0
+        ? "READY"
+        : [blocking > 0 ? `${blocking} BLOCKING` : null, unknown > 0 ? `${unknown} UNKNOWN` : null]
+            .filter(Boolean)
+            .join(", ");
     console.log(`${r.name}  <${r.email}>   ${head}`);
     console.log(`   ${label(r.calendar)}  calendar        ${r.calendar.note}`);
     console.log(`   ${label(r.autoJoin)}  auto-join       ${r.autoJoin.note}`);
@@ -275,19 +465,26 @@ async function main(): Promise<void> {
 
   console.log("");
 
-  const blockingTotal = rows.reduce(
-    (s, r) => s + [r.calendar, r.autoJoin, r.mailbox, r.meetings].filter((c) => !c.ok).length,
-    0,
-  );
+  const blockingTotal = rows.reduce((s, r) => s + blockingOf(r), 0);
+  const unknownTotal = rows.reduce((s, r) => s + unknownOf(r), 0);
   const unmappedRolldog = rows.filter((r) => !r.rolldog.ok).length;
 
-  if (blockingTotal === 0 && missingDigest.length === 0) {
+  if (blockingTotal === 0 && unknownTotal === 0 && missingDigest.length === 0) {
     console.log(`All ${rows.length} reps ready.${unmappedRolldog > 0 ? `  (${unmappedRolldog} without a Rolldog id, non-blocking)` : ""}`);
     console.log("");
     return;
   }
 
-  console.log(`${blockingTotal} blocking issue(s) across ${rows.length} reps.`);
+  if (blockingTotal > 0) {
+    console.log(`${blockingTotal} blocking issue(s) across ${rows.length} reps.`);
+  }
+  if (unknownTotal > 0) {
+    // Fail closed, the same way the join gate does. An unresolved question is
+    // not a pass, and a launch gate that treats it as one is worse than no gate.
+    console.log(
+      `${unknownTotal} check(s) could not be determined. Not the same as failing: go and look before you call it either.`,
+    );
+  }
   console.log("Env vars set only in .env.local do nothing in production. Check Vercel too.");
   console.log("");
   process.exit(1);
