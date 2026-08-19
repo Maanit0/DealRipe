@@ -218,7 +218,13 @@ async function main(): Promise<void> {
   console.log(`when         ${formatMeetingTime(callRow.scheduled_start ?? undefined)}`);
   console.log(`stored type  ${callRow.meeting_type ?? "(none recorded)"}`);
   console.log(`transcript   ${body.length} characters`);
-  console.log(`\nGenerating. This makes live Anthropic calls and writes nothing.`);
+  // The banner has to tell the truth about --apply. It said "writes nothing"
+  // on the run that put a note into Magaya's Salesforce.
+  console.log(
+    postNote && applyNote
+      ? `\nGenerating. Live Anthropic calls, and this WILL WRITE A NOTE into the customer's Salesforce.`
+      : `\nGenerating. This makes live Anthropic calls and writes nothing.`,
+  );
 
   const built = await buildRecap({
     tenantId,

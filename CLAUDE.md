@@ -635,9 +635,16 @@ has looked closely enough to be specific.
   Graph's `createReply`, which addresses the last sender and therefore the BDR.
   `customerEmails` is already computed and correct and never used on the reply
   path.
-- Recap written as a Salesforce **Note** on the opportunity as well as the Task.
-  He pasted ours into a Note by hand the day after the call, then shares that
-  Note with the solution engineer to prep the demo. That is the real consumer.
+- Recap written as a Salesforce **Note**. He pasted ours into a Note by hand the
+  day after the call and shares it to prep the demo, which is the real consumer.
+  An earlier version of this line said "on the opportunity as well as the Task".
+  Nothing sourced that: `docs/recap-target-eduardo.md` never mentions a Note,
+  and "solution engineer" appears nowhere except that sentence. Measured
+  2026-08-19 instead: both hand-written notes on the Dunavant account, one by
+  Steven and one by Eduardo, are attached to the ACCOUNT, and org-wide it is
+  10,503 ContentDocumentLinks to Accounts against 6,221 to Opportunities. The
+  account is also what `assertScopedAccountWrite` authorises. So the account is
+  the default, and switching to the opportunity needs Eduardo to ask for it.
 - Briefing enrichment: the account's own numbers, any prior proposal amount, and
   the person. He does the LinkedIn and website pass by hand every morning.
 
