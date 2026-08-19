@@ -210,7 +210,7 @@ as sales outcomes they would make DealRipe-observed deals look like they lose at
 `Opportunity.Loss_Reason__c` exists and is populated, and it is a much richer
 label than the won/lost boolean. Use it when the loop is finally built.
 
-FIXED 2026-08-18 (`e59fc67`), for the future rather than for a backlog: it is
+FIXED and APPLIED 2026-08-18, for the future rather than for a backlog: it is
 the only thing that will capture pilot deals as they close. Resolution moved off
 `external_id` and onto `salesforce_account_id`, in `lib/salesforce-outcome.ts`.
 Two rules do the choosing, and both exist because getting them wrong invents an
@@ -225,6 +225,13 @@ with no opportunity on the account. Drive it with
 `getPipelineChanges` now drops deals carrying an `outcome_label` and returns
 `closedOut`, so the digest and /review stop counting resolved deals as live
 pipeline without silently showing fewer rows.
+
+Applied 2026-08-18: six deals labelled (Dpworld, Successchb, GUYWBD, Airamericas
+and Extrum lost, Mollaxpanama won), 160 snapshots and 11 prescriptions
+backfilled with an outcome, and all six verified absent from the pipeline view
+with `closedOut` carrying them instead. Five of the six losses are the single
+`No Decision / Non-Responsive` sweep, so treat that as one event and not as five
+independent losses when the learning loop reads them.
 
 **Rolldog's stage checklist lives at
 `/opportunities/{id}/opportunity-stages-requirement`.** Note the pluralization.
@@ -501,6 +508,11 @@ All read-only unless noted. Run with `npx tsx scripts/<name>.ts`.
   followed versus not followed; `--deal Y` every prescription with its evidence
 - `backfill-prescriptions.ts` recovers prescriptions from briefings already
   sent. Dry run by default, `--apply` **writes**
+- `run-outcome-sync.ts` resolves each deal's Salesforce outcome from its
+  account, not from `external_id`. Dry run by default, `--apply` **writes** the
+  labels and backfills the calibration tables, `--refill-detail` fills the
+  opportunity id, close date, loss reason and amount onto deals labelled before
+  those columns existed and reports rather than overwrites a disagreement
 - `link-deal.ts --deal X --opp N --apply` **writes**
 - `mine-plays.ts [--rep X] [--days 30] [--top N]` the specific moves the reps
   made, verbatim, grouped by what the move was doing, with whether a next

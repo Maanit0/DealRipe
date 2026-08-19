@@ -65,8 +65,22 @@ export type OutcomeSyncOptions = {
   /** When false, resolve and report but write nothing. */
   apply?: boolean;
   /** Called once per deal with the verdict, for scripts that want a table. */
-  onDeal?: (row: { account: string; outcome: DealOutcome }) => void;
+  onDeal?: (row: {
+    account: string;
+    outcome: DealOutcome;
+    /** What actually happened to the row. "skipped" covers every status that
+     *  is deliberately not labelled. A caller must never print "written" off
+     *  the outcome alone: the write can still fail after the verdict. */
+     write: "dry-run" | "written" | "failed" | "skipped";
+  }) => void;
 };
+
+/** PostgREST reports an unknown column as PGRST204 with a schema-cache
+ *  message, not as Postgres's "column ... does not exist". Accept both. */
+function isMissingColumn(err: { code?: string; message: string }): boolean {
+  if (err.code === "PGRST204") return true;
+  return /could not find the '.*' column|column .* does not exist/i.test(err.message);
+}
 
 export async function syncOutcomes(
   tenantSlug: string,
@@ -147,12 +161,14 @@ export async function syncOutcomes(
       firstCallDate: firstCall.get(row.id) ?? null,
       opportunitiesByAccount: oppsByAccount,
     });
-    opts.onDeal?.({ account: row.account, outcome });
+    const report = (write: "dry-run" | "written" | "failed" | "skipped") =>
+      opts.onDeal?.({ account: row.account, outcome, write });
 
     switch (outcome.status) {
       case "open":
         counts.resolved++;
         counts.stillOpen++;
+        report("skipped");
         continue;
       case "open_with_recent_close":
         // Deliberately NOT labelled. The relationship is live, so telling the
@@ -161,6 +177,7 @@ export async function syncOutcomes(
         counts.resolved++;
         counts.stillOpen++;
         counts.openWithRecentClose++;
+        report("skipped");
         console.log(
           `[outcome-sync] ${row.account}: ${describeOutcome(outcome)} (left unlabelled, still live)`,
         );
@@ -168,14 +185,17 @@ export async function syncOutcomes(
       case "only_historical":
         counts.resolved++;
         counts.onlyHistorical++;
+        report("skipped");
         continue;
       case "no_account":
       case "no_opportunity":
         counts.resolved++;
         counts.noTarget++;
+        report("skipped");
         continue;
       case "unavailable":
         counts.unavailable++;
+        report("skipped");
         console.warn(`[outcome-sync] ${row.account}: ${outcome.reason}`);
         continue;
     }
@@ -184,7 +204,10 @@ export async function syncOutcomes(
     const label: "won" | "lost" = outcome.status;
     if (label === "won") counts.closedWon++;
     else counts.closedLost++;
-    if (!apply) continue;
+    if (!apply) {
+      report("dry-run");
+      continue;
+    }
 
     const core = {
       outcome_label: label,
@@ -199,17 +222,25 @@ export async function syncOutcomes(
     };
 
     let stamp = await db.from("deals").update(detail).eq("id", row.id);
-    if (stamp.error && /column .* does not exist|outcome_opportunity_id/i.test(stamp.error.message)) {
+    if (stamp.error && isMissingColumn(stamp.error)) {
       // The detail migration has not been run. Still record the label, and say
       // loudly what was dropped rather than failing the deal.
+      //
+      // Match on PostgREST's own code, not on prose. The first version of this
+      // tested the message against /column .* does not exist/, which is the
+      // Postgres wording; PostgREST actually returns PGRST204 "Could not find
+      // the 'outcome_amount' column of 'deals' in the schema cache", so the
+      // fallback never fired and six deals failed instead of degrading.
       counts.detailColumnsMissing = true;
       stamp = await db.from("deals").update(core).eq("id", row.id);
     }
     if (stamp.error) {
       counts.errors++;
+      report("failed");
       console.error(`[outcome-sync] deal stamp failed for ${row.account}: ${stamp.error.message}`);
       continue;
     }
+    report("written");
     console.log(`[outcome-sync] ${row.account}: ${describeOutcome(outcome)}`);
 
     // Backfill calibration tables. Failures do not block the deal stamp; the
@@ -247,4 +278,121 @@ export async function syncOutcomes(
     );
   }
   return counts;
+}
+
+/**
+ * Fill outcome detail onto deals that were labelled before
+ * supabase/add-outcome-detail.sql existed.
+ *
+ * syncOutcomes is idempotent on outcome_label, so a deal labelled during the
+ * window when the detail columns were missing would keep its won/lost and
+ * never gain the opportunity id, close date, loss reason or amount. This is
+ * the recovery path for exactly that ordering.
+ *
+ * Re-resolves from Salesforce rather than trusting the stored label, and
+ * reports a disagreement instead of overwriting: if the account now says
+ * something different from what we recorded, that is worth a human look, not a
+ * silent correction.
+ */
+export async function refillOutcomeDetail(tenantSlug: string): Promise<{
+  candidates: number;
+  filled: number;
+  disagreed: { account: string; stored: string; resolved: string }[];
+  columnsMissing: boolean;
+  errors: number;
+}> {
+  const out = {
+    candidates: 0,
+    filled: 0,
+    disagreed: [] as { account: string; stored: string; resolved: string }[],
+    columnsMissing: false,
+    errors: 0,
+  };
+  const tenantId = await resolveTenantId(tenantSlug);
+  const db = supabaseAdmin();
+
+  const res = await db
+    .from("deals")
+    .select("id, account, salesforce_account_id, outcome_label, outcome_opportunity_id")
+    .eq("tenant_id", tenantId)
+    .not("outcome_label", "is", null)
+    .is("outcome_opportunity_id", null)
+    .not("salesforce_account_id", "is", null);
+  if (res.error) {
+    if (isMissingColumn(res.error)) {
+      out.columnsMissing = true;
+      return out;
+    }
+    throw new Error(`[outcome-sync] refill list failed: ${res.error.message}`);
+  }
+  const rows = (res.data ?? []) as Array<{
+    id: string;
+    account: string;
+    salesforce_account_id: string | null;
+    outcome_label: "won" | "lost";
+  }>;
+  out.candidates = rows.length;
+  if (rows.length === 0) return out;
+
+  const firstCall = new Map<string, string>();
+  const calls = await db
+    .from("calls")
+    .select("deal_id, scheduled_start")
+    .in("deal_id", rows.map((r) => r.id))
+    .not("scheduled_start", "is", null);
+  if (calls.error) throw new Error(`[outcome-sync] refill call read failed: ${calls.error.message}`);
+  for (const c of (calls.data ?? []) as Array<{ deal_id: string; scheduled_start: string }>) {
+    const d = c.scheduled_start.slice(0, 10);
+    const prev = firstCall.get(c.deal_id);
+    if (!prev || d < prev) firstCall.set(c.deal_id, d);
+  }
+
+  const opps = await loadOpportunitiesForAccounts(
+    rows.map((r) => r.salesforce_account_id).filter((x): x is string => Boolean(x)),
+  );
+
+  for (const row of rows) {
+    const outcome = resolveDealOutcome({
+      salesforceAccountId: row.salesforce_account_id,
+      firstCallDate: firstCall.get(row.id) ?? null,
+      opportunitiesByAccount: opps,
+    });
+    if (outcome.status !== "won" && outcome.status !== "lost") {
+      out.disagreed.push({
+        account: row.account,
+        stored: row.outcome_label,
+        resolved: describeOutcome(outcome),
+      });
+      continue;
+    }
+    if (outcome.status !== row.outcome_label) {
+      out.disagreed.push({
+        account: row.account,
+        stored: row.outcome_label,
+        resolved: describeOutcome(outcome),
+      });
+      continue;
+    }
+    const upd = await db
+      .from("deals")
+      .update({
+        outcome_opportunity_id: outcome.opportunityId,
+        outcome_close_date: outcome.closeDate,
+        outcome_reason: outcome.lossReason,
+        outcome_amount: outcome.amount,
+      })
+      .eq("id", row.id);
+    if (upd.error) {
+      if (isMissingColumn(upd.error)) {
+        out.columnsMissing = true;
+        return out;
+      }
+      out.errors++;
+      console.error(`[outcome-sync] refill failed for ${row.account}: ${upd.error.message}`);
+      continue;
+    }
+    out.filled++;
+    console.log(`[outcome-sync] refilled ${row.account}: ${describeOutcome(outcome)}`);
+  }
+  return out;
 }
