@@ -730,6 +730,66 @@ export type Database = {
         };
         Relationships: [];
       };
+      model_runs: {
+        Row: {
+          id: string;
+          /** Nullable: join-gate and meeting-classify run before a deal exists. */
+          tenant_id: string | null;
+          deal_id: string | null;
+          call_id: string | null;
+          /** Stable slug, dotted for families ("recap.narrative"). */
+          task: string;
+          prompt_version: string;
+          model: string;
+          input_tokens: number | null;
+          output_tokens: number | null;
+          cache_read_tokens: number | null;
+          cache_write_tokens: number | null;
+          duration_ms: number;
+          /** "max_tokens" means truncated, which is a quality fact not a failure. */
+          stop_reason: string | null;
+          ok: boolean;
+          error: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id?: string | null;
+          deal_id?: string | null;
+          call_id?: string | null;
+          task: string;
+          prompt_version?: string;
+          model: string;
+          input_tokens?: number | null;
+          output_tokens?: number | null;
+          cache_read_tokens?: number | null;
+          cache_write_tokens?: number | null;
+          duration_ms: number;
+          stop_reason?: string | null;
+          ok: boolean;
+          error?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string | null;
+          deal_id?: string | null;
+          call_id?: string | null;
+          task?: string;
+          prompt_version?: string;
+          model?: string;
+          input_tokens?: number | null;
+          output_tokens?: number | null;
+          cache_read_tokens?: number | null;
+          cache_write_tokens?: number | null;
+          duration_ms?: number;
+          stop_reason?: string | null;
+          ok?: boolean;
+          error?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       deal_messages: {
         Row: {
           id: string;

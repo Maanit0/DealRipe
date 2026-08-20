@@ -5,7 +5,7 @@
  * DealRipe itself did). Generation is best-effort and never blocks ingest.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 
 export type TaskStatus = "todo" | "in_progress" | "done";
@@ -79,14 +79,14 @@ Rules:
     .join("\n");
 
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 800,
+    const resp = await runModel({
+      task: "tasks",
+      maxTokens: 800,
       temperature: 0.2,
       system,
       messages: [{ role: "user", content: user }],
     });
-    const block = resp.content.find((b) => b.type === "text");
+    const block = resp.message.content.find((b) => b.type === "text");
     const text = block && "text" in block ? block.text : "";
     const s = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
     const arr = JSON.parse(s) as unknown[];

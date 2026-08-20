@@ -27,7 +27,7 @@
  *                 answer".
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import type { Tristate } from "./database.types";
 import {
   readCallOutcomes,
@@ -305,9 +305,9 @@ export async function scoreCallPrescriptions(args: {
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     let raw: string;
     try {
-      const resp = await getAnthropicClient().messages.create({
-        model: getAnthropicModel(),
-        max_tokens: 2000,
+      const resp = await runModel({
+        task: "prescription.scoring",
+        maxTokens: 2000,
         temperature: 0,
         system: SYSTEM,
         messages: [
@@ -324,9 +324,9 @@ export async function scoreCallPrescriptions(args: {
           },
         ],
       });
-      const block = resp.content.find((b) => b.type === "text");
+      const block = resp.message.content.find((b) => b.type === "text");
       raw = block && "text" in block ? block.text : "";
-      if (resp.stop_reason === "max_tokens") {
+      if (resp.truncated) {
         lastError = "model ran out of output tokens before finishing the verdicts";
       }
     } catch (err) {
@@ -426,9 +426,9 @@ export async function scoreCommitmentInEmail(args: {
 
   let raw: string;
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 700,
+    const resp = await runModel({
+      task: "prescription.commitment_email",
+      maxTokens: 700,
       temperature: 0,
       system: EMAIL_SYSTEM,
       messages: [
@@ -448,7 +448,7 @@ export async function scoreCommitmentInEmail(args: {
         },
       ],
     });
-    const block = resp.content.find((b) => b.type === "text");
+    const block = resp.message.content.find((b) => b.type === "text");
     raw = block && "text" in block ? block.text : "";
   } catch (err) {
     return { status: "unavailable", error: err instanceof Error ? err.message : String(err) };

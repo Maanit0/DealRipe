@@ -14,7 +14,7 @@
  * is direction, who is selling to whom, and nothing currently asks that.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 
 export type CommercialDirection =
@@ -50,14 +50,14 @@ internal: only ${seller} employees are present, OR it is a job interview with a 
 When genuinely unsure, answer we_are_selling.`;
 
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 8,
+    const resp = await runModel({
+      task: "call_quarantine",
+      maxTokens: 8,
       temperature: 0,
       system,
       messages: [{ role: "user", content: `Transcript:\n\n${transcript.slice(0, MAX_CHARS)}` }],
     });
-    const text = resp.content
+    const text = resp.message.content
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("")
       .toLowerCase();

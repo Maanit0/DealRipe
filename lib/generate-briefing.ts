@@ -11,7 +11,7 @@
  * read is live, pass the actual upcoming-call attendees instead.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import {
   briefingErrors,
   describeFindings,
@@ -157,15 +157,15 @@ export async function generateBriefingFromState(
       });
     }
 
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 2000,
+    const resp = await runModel({
+      task: "briefing",
+      maxTokens: 2000,
       temperature: 0.1,
       system: buildMagayaBriefingSystemPrompt(framework),
       messages,
     });
 
-    const block = resp.content.find((b) => b.type === "text");
+    const block = resp.message.content.find((b) => b.type === "text");
     const text = block && "text" in block ? block.text : "";
     const parsed = parseJson(text);
     if (!parsed) continue;

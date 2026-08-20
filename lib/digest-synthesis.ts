@@ -6,7 +6,7 @@
  * is unavailable, and never throws.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import type { DealChangeRecord } from "./pipeline-changes";
 
 function dstr(iso: string | null): string {
@@ -103,15 +103,14 @@ async function synthDeal(d: DealChangeRecord): Promise<Synth> {
     .filter(Boolean)
     .join("\n");
 
-  const resp = await getAnthropicClient().messages.create({
-    model: getAnthropicModel(),
-    max_tokens: 400,
+  const resp = await runModel({
+    task: "digest.synthesis",
+    maxTokens: 400,
     temperature: 0.2,
     system: SYSTEM,
     messages: [{ role: "user", content: facts }],
   });
-  const block = resp.content.find((b) => b.type === "text");
-  const text = block && "text" in block ? block.text : "";
+  const text = resp.text;
   const parsed = parseSynth(text);
   return {
     action: parsed?.action?.trim() || fallback(d),

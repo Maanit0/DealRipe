@@ -47,7 +47,8 @@
  * code change that touches the transcript variable must preserve them.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { mergeExtraction } from "./extraction-merge";
 import { buildExtractionSystemPrompt } from "./extraction-prompt";
 import { enforceGrounding } from "./grounding";
@@ -355,25 +356,28 @@ export async function extractAndStore(
   const modelName = getAnthropicModel();
 
   try {
-    const response = await getAnthropicClient().messages.create(
-      {
-        model: modelName,
-        max_tokens: 4000,
-        temperature: 0.1,
-        system: buildExtractionSystemPrompt(framework),
-        messages: [
-          {
-            role: "user",
-            content: `<transcript>\n${args.transcript}\n</transcript>`,
-          },
-        ],
-      },
-      { signal: controller.signal },
-    );
+    const response = await runModel({
+      task: "extraction",
+      promptVersion: PROMPT_VERSION,
+      model: modelName,
+      maxTokens: 4000,
+      temperature: 0.1,
+      // transcript-sync runs inside a 300s ceiling and owns this deadline, so
+      // the wrapper must not add retries on top of it.
+      retries: 0,
+      system: buildExtractionSystemPrompt(framework),
+      messages: [
+        {
+          role: "user",
+          content: `<transcript>\n${args.transcript}\n</transcript>`,
+        },
+      ],
+      signal: controller.signal,
+    });
 
     clearTimeout(timeout);
 
-    const text = response.content
+    const text = response.message.content
       .filter((b) => b.type === "text")
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("");
@@ -398,8 +402,8 @@ export async function extractAndStore(
       );
     }
     const duration = Date.now() - start;
-    const inputTokens = response.usage?.input_tokens ?? 0;
-    const outputTokens = response.usage?.output_tokens ?? 0;
+    const inputTokens = response.message.usage?.input_tokens ?? 0;
+    const outputTokens = response.message.usage?.output_tokens ?? 0;
 
     // Note: token counts and duration are logged. Transcript content is
     // not (DPA section 3.6, commitment 3).

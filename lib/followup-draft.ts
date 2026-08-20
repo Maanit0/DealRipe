@@ -24,7 +24,7 @@
  *    the rep's habits, so we do not scale one rep's ceiling to the team.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
 import { repName } from "./display-names";
 import { listMeetingsBetween } from "./microsoft-graph";
@@ -772,16 +772,16 @@ export async function generateFollowUpDraft(
   }
   const booked = bookedRead.meeting;
 
-  const resp = await getAnthropicClient().messages.create({
-    model: getAnthropicModel(),
+  const resp = await runModel({
+    task: "followup_draft",
     // Generous headroom. A truncated draft is the one failure mode a rep cannot
     // work around: they see an email cut off mid-sentence and stop trusting it.
-    max_tokens: 3000,
+    maxTokens: 3000,
     temperature: 0.3, // a shade of variation so it reads human, not templated
     system: SYSTEM,
     messages: [{ role: "user", content: buildUserMessage(input, samples, Boolean(thread), slots, booked) }],
   });
-  const block = resp.content.find((b) => b.type === "text");
+  const block = resp.message.content.find((b) => b.type === "text");
   const raw = block && "text" in block ? block.text : "";
   if (process.env.DRAFT_DEBUG === "1") {
     console.log(`\n----- RAW MODEL OUTPUT (${raw.length} chars) -----\n${raw}\n----- END RAW -----\n`);
@@ -801,10 +801,10 @@ export async function generateFollowUpDraft(
   // a sound body was thrown away whenever the signature did not. Both halves of
   // that showed up in production.
   const modelTail = parsed.body.trimEnd().slice(-1);
-  if (resp.stop_reason === "max_tokens" || !/[.!?"')\dA-Za-z]/.test(modelTail)) {
+  if (resp.truncated || !/[.!?"')\dA-Za-z]/.test(modelTail)) {
     console.warn(
       `[followup-draft] discarding truncated draft for ${input.account} ` +
-        `(stop_reason=${resp.stop_reason}, body ends "${parsed.body.trimEnd().slice(-24)}")`,
+        `(stop_reason=${resp.message.stop_reason}, body ends "${parsed.body.trimEnd().slice(-24)}")`,
     );
     return null;
   }

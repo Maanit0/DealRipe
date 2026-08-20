@@ -21,7 +21,7 @@
  * invite itself is unreadable, this abstains.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { rolldogOppIdForDeal } from "./pilot-config";
 import { getAccountContextByDomain } from "./salesforce-context";
 import { supabaseAdmin } from "./supabase";
@@ -242,14 +242,14 @@ External attendee domain: ${args.domain}
 Attendees: ${args.attendeeEmails.slice(0, 12).join(", ") || "(none listed)"}`;
 
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 5,
+    const resp = await runModel({
+      task: "join_gate",
+      maxTokens: 5,
       temperature: 0,
       system,
       messages: [{ role: "user", content: user }],
     });
-    const text = resp.content
+    const text = resp.message.content
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("")
       .toLowerCase();

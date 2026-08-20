@@ -8,7 +8,7 @@
  * never affect the ingest pipeline.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 
 export type ContactRelationship =
@@ -89,14 +89,14 @@ Rules:
 - If there are no named individuals, return [].`;
 
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 1500,
+    const resp = await runModel({
+      task: "contacts_extract",
+      maxTokens: 1500,
       temperature: 0.1,
       system,
       messages: [{ role: "user", content: `Transcript:\n\n${args.transcript}` }],
     });
-    const text = resp.content
+    const text = resp.message.content
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("");
     return normalize(parseJsonArray(text));

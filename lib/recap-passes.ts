@@ -38,7 +38,7 @@
  *    hidden inside a paragraph that passes as a whole.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { groundingScore } from "./grounding";
 
 /**
@@ -387,9 +387,9 @@ export async function buildNarrative(args: {
   for (const attempt of [0, 1]) {
     let text: string;
     try {
-      const resp = await getAnthropicClient().messages.create({
-        model: getAnthropicModel(),
-        max_tokens: attempt === 0 ? 8000 : 16000,
+      const resp = await runModel({
+        task: "recap.narrative",
+        maxTokens: attempt === 0 ? 8000 : 16000,
         temperature: 0.2,
         system: NARRATIVE_SYSTEM,
         messages: [
@@ -401,7 +401,7 @@ export async function buildNarrative(args: {
           },
         ],
       });
-      const block = resp.content.find((b) => b.type === "text");
+      const block = resp.message.content.find((b) => b.type === "text");
       text = block && "text" in block ? block.text : "";
     } catch (err) {
       // A thrown call is not a parse problem and retrying it here would race
@@ -593,9 +593,9 @@ export async function buildDemoStrategy(args: {
 
   let text: string;
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 4000,
+    const resp = await runModel({
+      task: "recap.demo_strategy",
+      maxTokens: 4000,
       // Zero, unlike the narrative.
       //
       // The narrative is anchored: every fact carries a quote that is verified
@@ -616,7 +616,7 @@ export async function buildDemoStrategy(args: {
         },
       ],
     });
-    const block = resp.content.find((b) => b.type === "text");
+    const block = resp.message.content.find((b) => b.type === "text");
     text = block && "text" in block ? block.text : "";
   } catch (err) {
     return {

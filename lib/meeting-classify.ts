@@ -12,7 +12,7 @@
  * sales recap, so a classification hiccup never blocks a rep's recap.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 
 export type MeetingType = "new_opportunity" | "existing_customer" | "internal";
 
@@ -74,14 +74,14 @@ Do NOT answer existing_customer for this deal.`
 - existing_customer: a call with a CURRENT customer already using or implementing the product (support, account management, onboarding, expansion of an already-won deal).
 - internal: a call among the seller's own team with no customer/prospect present.`;
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 10,
+    const resp = await runModel({
+      task: "meeting_classify.type",
+      maxTokens: 10,
       temperature: 0,
       system,
       messages: [{ role: "user", content: `Transcript:\n\n${transcript.slice(0, MAX_CHARS)}` }],
     });
-    const text = resp.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
+    const text = resp.message.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
     if (text.includes("internal")) return "internal";
     if (!tracked && text.includes("existing_customer")) return "existing_customer";
     return "new_opportunity";
@@ -139,14 +139,14 @@ export async function classifyCallSubtype(args: {
 - follow_up: a follow-up or check-in on an already-progressing opportunity (recap, next steps, waiting on the customer), not primarily discovery, demo, or proposal.
 Pick the label that best fits what the call was mostly about.`;
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 10,
+    const resp = await runModel({
+      task: "meeting_classify.subtype",
+      maxTokens: 10,
       temperature: 0,
       system,
       messages: [{ role: "user", content: `Transcript:\n\n${args.transcript.slice(0, MAX_CHARS)}` }],
     });
-    const text = resp.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
+    const text = resp.message.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
     if (text.includes("demo")) return "demo";
     if (text.includes("proposal")) return "proposal";
     if (text.includes("follow")) return "follow_up";
@@ -191,14 +191,14 @@ export async function generateGeneralRecap(args: {
 }
 Ground everything strictly in the transcript. If there are no clear next steps, return an empty array for nextSteps.`;
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 1200,
+    const resp = await runModel({
+      task: "meeting_classify.detail",
+      maxTokens: 1200,
       temperature: 0.2,
       system,
       messages: [{ role: "user", content: `Account: ${args.account}\n\nTranscript:\n\n${args.transcript.slice(0, MAX_CHARS)}` }],
     });
-    const text = resp.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+    const text = resp.message.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start === -1 || end === -1) return null;
@@ -324,14 +324,14 @@ Judge from the wording of the subject and the context given. "Kickoff" after a s
     .join("\n");
 
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 12,
+    const resp = await runModel({
+      task: "meeting_classify.d",
+      maxTokens: 12,
       temperature: 0,
       system,
       messages: [{ role: "user", content: context }],
     });
-    const text = resp.content
+    const text = resp.message.content
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("")
       .toLowerCase();

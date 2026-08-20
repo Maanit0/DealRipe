@@ -14,7 +14,7 @@
  * No em-dashes in any output (project convention).
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import {
   nextStageOf,
   openGapsForStage,
@@ -260,14 +260,14 @@ export async function generatePostCallSummary(
     input.stageKey,
   );
 
-  const resp = await getAnthropicClient().messages.create({
-    model: getAnthropicModel(),
-    max_tokens: 1000,
+  const resp = await runModel({
+    task: "post_call_summary",
+    maxTokens: 1000,
     temperature: 0.2,
     system: buildSystemPrompt(input.framework),
     messages: [{ role: "user", content: buildUserMessage(input) }],
   });
-  const block = resp.content.find((b) => b.type === "text");
+  const block = resp.message.content.find((b) => b.type === "text");
   const text = block && "text" in block ? block.text : "";
   const parsed: ParsedSummary = parseJson(text) ?? {
     recap: "Recap unavailable. See the captured fields and open items below.",

@@ -13,7 +13,7 @@
  * placeholders never generate a draft.
  */
 
-import { getAnthropicClient, getAnthropicModel } from "./anthropic";
+import { runModel } from "./model-run";
 import { renderNoShowDraftEmail } from "./emails/no-show-draft";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { repEmailForDeal } from "./pilot-config";
@@ -65,14 +65,14 @@ Return a single JSON object, no prose, no markdown fences:
     .join("\n");
 
   try {
-    const resp = await getAnthropicClient().messages.create({
-      model: getAnthropicModel(),
-      max_tokens: 500,
+    const resp = await runModel({
+      task: "no_show_draft",
+      maxTokens: 500,
       temperature: 0.4,
       system,
       messages: [{ role: "user", content: user }],
     });
-    const block = resp.content.find((b) => b.type === "text");
+    const block = resp.message.content.find((b) => b.type === "text");
     const text = block && "text" in block ? block.text : "";
     const s = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
     const o = JSON.parse(s) as { subject?: string; body?: string };
