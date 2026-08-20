@@ -23,6 +23,7 @@ import {
   type MailMessage,
 } from "./graph-mail";
 import { repEmailForDeal } from "./pilot-config";
+import type { SalesforceReadStatus, SalesforceSnapshot } from "./salesforce-stage";
 import type { RolldogReadStatus, RolldogSnapshot } from "./snapshot";
 import { supabaseAdmin } from "./supabase";
 
@@ -52,7 +53,10 @@ export type OutcomeCall = {
 export type CallOutcomes = {
   nextMeeting: OutcomeRead;
   draftSent: OutcomeRead;
+  /** The customer's CRM said so. Proof. Safe to show a CRO. */
   stageMoved: OutcomeRead;
+  /** Our own evidence said so. Learning only. Never shown as proof. */
+  qualificationAdvanced: OutcomeRead;
 };
 
 /** Call outcomes with no content of their own. Mirrors lib/briefing-history.ts. */
@@ -293,6 +297,12 @@ export async function readDraftSent(
 type SnapshotSignals = {
   rolldog?: RolldogSnapshot | null;
   rolldogRead?: RolldogReadStatus;
+  salesforce?: SalesforceSnapshot | null;
+  salesforceRead?: SalesforceReadStatus;
+  /** DealRipe's own stage, inferred from the extraction. */
+  stage?: string;
+  /** Framework fields the calls have answered Yes. The learning signal. */
+  answered?: string[];
 };
 
 /**
@@ -317,17 +327,57 @@ function stageOf(snap: RolldogSnapshot): string | null {
 }
 
 /**
+ * The same question of a Salesforce block, and the same refusal to guess.
+ *
+ * `salesforceRead === undefined` means the snapshot predates this field, so we
+ * genuinely do not know whether Salesforce was read that day. It returns null
+ * and the caller reports unknown, exactly as it does for an old rolldog-less
+ * snapshot. There is deliberately no `s.salesforce` fallback for the undefined
+ * case: unlike the rolldog block, this one never existed before the status
+ * field did, so a block with no status cannot occur and inventing a path for
+ * it would be dead code that looks like a rule.
+ */
+function salesforceOf(signals: unknown): SalesforceSnapshot | null {
+  const s = (signals ?? {}) as SnapshotSignals;
+  return s.salesforceRead === "read" ? (s.salesforce ?? null) : null;
+}
+
+/**
+ * Which opportunity a Salesforce stage belongs to, so two snapshots are only
+ * compared when they describe the SAME opportunity.
+ *
+ * 45 of Magaya's 91 linked accounts carry more than one opportunity and the
+ * snapshot records the most recently created open one. If a new opportunity is
+ * created between two snapshots, the chosen opportunity flips and the stage
+ * changes with it. That is not the deal advancing, it is us looking at a
+ * different record, and reporting it as movement would manufacture exactly the
+ * outcome this ledger exists to measure honestly.
+ */
+function sameOpportunity(a: SalesforceSnapshot, b: SalesforceSnapshot): boolean {
+  return a.opportunityId === b.opportunityId;
+}
+
+/**
  * Source: deal_signal_snapshots, written every 4 hours by lib/snapshot.ts,
  * holding Rolldog's own stage verbatim in signals.rolldog.
  *
  * Deliberately NOT signals.stage, which is DealRipe's stage inferred from the
  * extraction. That moves when a call confirms a field, which would make this
- * column measure our own extraction rather than the customer's CRM.
+ * column measure our own extraction rather than the customer's CRM. That
+ * refusal still stands and is the whole point of this column: it is the PROOF
+ * column, and it is worth having precisely because it does not depend on
+ * anything DealRipe reports about itself. The self-referential view lives
+ * beside it in readQualificationAdvanced and is never quoted as proof.
  *
- * A Salesforce-only deal has no Rolldog opportunity and therefore reports
- * unknown, permanently. That is correct: we do not read a Salesforce stage on
- * this path, and reporting its absence as "no movement" would be an invented
- * negative about a deal that may well have moved.
+ * BOTH CRMs, since 2026-08-20. Rolldog first, then the Salesforce opportunity
+ * stage. Before that this path read Rolldog alone, so a Salesforce-only deal
+ * reported unknown permanently: 59 of 111 Magaya deals are Salesforce-only and
+ * 15 have no link, so 74 of 111 could never report movement and
+ * outcome_stage_moved was unknown on 243 of 283 prescriptions. Kiddom is
+ * Salesforce throughout and would have been unknown on every row.
+ *
+ * What has NOT changed is the refusal to report an unreadable CRM as "no". A
+ * deal we could not read is a deal we did not check.
  */
 export async function readStageMoved(call: OutcomeCall): Promise<OutcomeRead> {
   const db = supabaseAdmin();
@@ -370,31 +420,177 @@ export async function readStageMoved(call: OutcomeCall): Promise<OutcomeRead> {
     return { value: "unknown", reason: `no snapshot after ${day} yet` };
   }
 
-  const before = rolldogOf(beforeRes.data.signals);
-  const after = rolldogOf(afterRes.data.signals);
-  if (!before || !after) {
-    const which = !before && !after ? "neither snapshot" : !before ? "the earlier snapshot" : "the later snapshot";
+  const wasOn = beforeRes.data.snapshot_date;
+  const nowOn = afterRes.data.snapshot_date;
+
+  // --- Rolldog, where the deal has an opportunity there.
+  const rdBefore = rolldogOf(beforeRes.data.signals);
+  const rdAfter = rolldogOf(afterRes.data.signals);
+  if (rdBefore && rdAfter) {
+    const from = stageOf(rdBefore);
+    const to = stageOf(rdAfter);
+    if (from !== null && to !== null) {
+      return from === to
+        ? { value: "no", reason: `Rolldog stage was ${from} on ${wasOn} and still ${to} on ${nowOn}` }
+        : { value: "yes", reason: `Rolldog stage moved ${from} to ${to} by ${nowOn}` };
+    }
+    // A reading with no stage is the nine linked opportunities sitting at 0 or
+    // -1 with a null name. That is a fact about their CRM, not a parse
+    // failure, and it is not "did not move": fall through to Salesforce, which
+    // for seven of those nine is the system that actually knows.
+  }
+
+  // --- Salesforce, which is the only CRM for 59 of 111 deals.
+  const sfBefore = salesforceOf(beforeRes.data.signals);
+  const sfAfter = salesforceOf(afterRes.data.signals);
+  if (sfBefore && sfAfter) {
+    if (!sameOpportunity(sfBefore, sfAfter)) {
+      return {
+        value: "unknown",
+        reason:
+          `the Salesforce opportunity changed between ${wasOn} and ${nowOn} ` +
+          `(${sfBefore.opportunityId} to ${sfAfter.opportunityId}), so the two stages describe ` +
+          `different records and comparing them would invent a move`,
+      };
+    }
+    return sfBefore.stageName === sfAfter.stageName
+      ? {
+          value: "no",
+          reason: `Salesforce stage was ${sfBefore.stageName} on ${wasOn} and still ${sfAfter.stageName} on ${nowOn}`,
+        }
+      : {
+          value: "yes",
+          reason: `Salesforce stage moved ${sfBefore.stageName} to ${sfAfter.stageName} by ${nowOn}`,
+        };
+  }
+
+  // --- Neither CRM answered on both sides. Say which, so the row explains
+  // itself without anyone re-running the read against a CRM that has since
+  // moved on.
+  const describe = (
+    label: string,
+    b: unknown | null,
+    a: unknown | null,
+  ): string | null => (b && a ? null : !b && !a ? `no ${label} reading on either side` : !b ? `no ${label} reading on ${wasOn}` : `no ${label} reading on ${nowOn}`);
+
+  const why = [describe("Rolldog", rdBefore, rdAfter), describe("Salesforce", sfBefore, sfAfter)]
+    .filter(Boolean)
+    .join("; ");
+
+  return {
+    value: "unknown",
+    reason: `${why}. We did not check, which is not the same as the stage not moving`,
+  };
+}
+
+/**
+ * Did DealRipe's OWN read of the deal advance across this call?
+ *
+ * THE COMPANION TO readStageMoved, AND DELIBERATELY A DIFFERENT INSTRUMENT.
+ *
+ * readStageMoved asks what the customer's CRM said. It is the proof column,
+ * it is worth having because it is independent of us, and it is silent
+ * whenever a rep has not touched their CRM. Reps at Magaya frequently have
+ * not: nine linked opportunities sit at stage 0 or -1 with a null name, and
+ * seven of those deals had already closed in the other system.
+ *
+ * This asks a question we can always answer: did the call produce qualification
+ * evidence that was not there before. It is self-referential by construction,
+ * so it TRAINS the loop and is never shown to a customer as evidence a deal
+ * moved. Anything reporting to a CRO uses readStageMoved. Anything learning
+ * uses this. A caller that wants "did the deal move" without saying which kind
+ * of evidence it means has not finished thinking.
+ *
+ * The primitive is the answered-field set rather than the inferred stage.
+ * signals.stage is itself derived from the extraction, so a stage change is a
+ * lossy summary of the thing we actually care about: WHICH fields this call
+ * newly evidenced. A call can answer four fields without crossing a stage
+ * boundary, and that call did work the ledger should record.
+ *
+ * A shrinking set is reported as no rather than yes. Fields go from Yes back
+ * to Unknown when lib/grounding.ts cannot find the evidence quote in the
+ * transcript, which is a correction to a previous read and not the deal
+ * going backwards.
+ */
+export async function readQualificationAdvanced(call: OutcomeCall): Promise<OutcomeRead> {
+  const db = supabaseAdmin();
+  const day = call.at.slice(0, 10);
+
+  const [beforeRes, afterRes] = await Promise.all([
+    db
+      .from("deal_signal_snapshots")
+      .select("snapshot_date, signals")
+      .eq("tenant_id", call.tenantId)
+      .eq("deal_id", call.dealId)
+      .lt("snapshot_date", day)
+      .order("snapshot_date", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    db
+      .from("deal_signal_snapshots")
+      .select("snapshot_date, signals")
+      .eq("tenant_id", call.tenantId)
+      .eq("deal_id", call.dealId)
+      .gt("snapshot_date", day)
+      .order("snapshot_date", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (beforeRes.error || afterRes.error) {
+    const msg = beforeRes.error?.message ?? afterRes.error?.message ?? "unknown error";
+    return { value: "unknown", reason: `snapshot lookup failed: ${msg}` };
+  }
+  if (!beforeRes.data) return { value: "unknown", reason: `no snapshot before ${day}` };
+  if (!afterRes.data) return { value: "unknown", reason: `no snapshot after ${day} yet` };
+
+  const before = (beforeRes.data.signals ?? {}) as SnapshotSignals;
+  const after = (afterRes.data.signals ?? {}) as SnapshotSignals;
+
+  // An absent array is not an empty one. A snapshot written before `answered`
+  // existed would otherwise read as "this deal had answered nothing", making
+  // every field on the later side look newly gained.
+  if (!Array.isArray(before.answered) || !Array.isArray(after.answered)) {
+    const which =
+      !Array.isArray(before.answered) && !Array.isArray(after.answered)
+        ? "neither snapshot"
+        : !Array.isArray(before.answered)
+          ? `the ${beforeRes.data.snapshot_date} snapshot`
+          : `the ${afterRes.data.snapshot_date} snapshot`;
     return {
       value: "unknown",
-      reason: `${which} carries a Rolldog reading, so we did not check, which is not the same as the stage not moving`,
+      reason: `${which} records an answered-field set, so there is nothing to compare`,
     };
   }
 
-  const from = stageOf(before);
-  const to = stageOf(after);
-  if (from === null || to === null) {
-    return { value: "unknown", reason: "a Rolldog reading carries no stage" };
+  const had = new Set(before.answered);
+  const gained = after.answered.filter((f) => !had.has(f));
+  const stageNote =
+    before.stage && after.stage && before.stage !== after.stage
+      ? `, and our stage read moved ${before.stage} to ${after.stage}`
+      : "";
+
+  if (gained.length > 0) {
+    const shown = gained.slice(0, 4).join(", ");
+    const rest = gained.length > 4 ? ` and ${gained.length - 4} more` : "";
+    return {
+      value: "yes",
+      reason: `the calls newly evidenced ${gained.length} field(s) by ${afterRes.data.snapshot_date}: ${shown}${rest}${stageNote}`,
+    };
   }
-  if (from === to) {
-    return { value: "no", reason: `stage was ${from} on ${beforeRes.data.snapshot_date} and still ${to} on ${afterRes.data.snapshot_date}` };
-  }
-  return { value: "yes", reason: `stage moved ${from} to ${to} by ${afterRes.data.snapshot_date}` };
+
+  const lost = before.answered.filter((f) => !new Set(after.answered).has(f));
+  const lostNote = lost.length > 0 ? ` (${lost.length} field(s) went back to unproven, which is a correction rather than a reversal)` : "";
+  return {
+    value: "no",
+    reason: `no field moved to answered between ${beforeRes.data.snapshot_date} and ${afterRes.data.snapshot_date}${lostNote}`,
+  };
 }
 
 // =====================================================================
 
 /**
- * All three, run together. Independent of each other by design: a deal can
+ * All four, run together. Independent of each other by design: a deal can
  * book a next meeting without an email, and move stage without either.
  *
  * Returns the mailbox read alongside them so the caller can reuse it for the
@@ -404,10 +600,11 @@ export async function readCallOutcomes(
   call: OutcomeCall,
 ): Promise<CallOutcomes & { mail: PostCallMailRead }> {
   const mail = await readPostCallCustomerMail(call);
-  const [nextMeeting, draftSent, stageMoved] = await Promise.all([
+  const [nextMeeting, draftSent, stageMoved, qualificationAdvanced] = await Promise.all([
     readNextMeeting(call),
     readDraftSent(call, mail),
     readStageMoved(call),
+    readQualificationAdvanced(call),
   ]);
-  return { nextMeeting, draftSent, stageMoved, mail };
+  return { nextMeeting, draftSent, stageMoved, qualificationAdvanced, mail };
 }

@@ -64,6 +64,8 @@ type Row = {
   outcome_next_meeting: Tristate;
   outcome_draft_sent: Tristate;
   outcome_stage_moved: Tristate;
+  outcome_qualification_advanced: Tristate;
+  outcome_reasons: Record<string, string> | null;
   framework_field_keys: string[] | null;
   email_checked_at: string | null;
 };
@@ -96,7 +98,8 @@ function callType(c: CallRow | undefined): string {
 
 const SELECT =
   "id, deal_id, call_id, issued_at, kind, text, source, followed, followed_evidence, scored_at, " +
-  "email_checked_at, outcome_next_meeting, outcome_draft_sent, outcome_stage_moved, framework_field_keys";
+  "email_checked_at, outcome_next_meeting, outcome_draft_sent, outcome_stage_moved, " +
+  "outcome_qualification_advanced, outcome_reasons, framework_field_keys";
 
 /**
  * A rate that reports its own denominator, and never counts an unknown as a
@@ -292,7 +295,11 @@ function printRep(
   const outcomes: Array<[string, (r: Row) => Tristate]> = [
     ["next meeting", (r) => r.outcome_next_meeting],
     ["rep emailed", (r) => r.outcome_draft_sent],
+    // Two stage columns, never one. The first is what the customer's CRM
+    // said and is the only one safe to quote outside the building. The
+    // second is our own extraction and exists to train the loop.
     ["CRM stage moved", (r) => r.outcome_stage_moved],
+    ["qualification advanced", (r) => r.outcome_qualification_advanced],
   ];
   for (const [label, get] of outcomes) {
     console.log(
@@ -376,7 +383,7 @@ async function printDeal(
     const head = callRows[0];
     console.log(
       `\n  outcomes: next meeting ${head.outcome_next_meeting}, rep emailed ${head.outcome_draft_sent}, ` +
-        `CRM stage moved ${head.outcome_stage_moved}`,
+        `CRM stage moved ${head.outcome_stage_moved}, qualification advanced ${head.outcome_qualification_advanced}`,
     );
 
     if (why && c) {

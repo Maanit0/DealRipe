@@ -668,7 +668,13 @@ export type Database = {
           email_checked_at: string | null;
           outcome_next_meeting: Tristate;
           outcome_draft_sent: Tristate;
+          /** PROOF: the customer's CRM said the stage moved. Safe to show a CRO. */
           outcome_stage_moved: Tristate;
+          /** LEARNING: our own extraction newly evidenced fields. Never shown as proof. */
+          outcome_qualification_advanced: Tristate;
+          /** Why each outcome is what it is, keyed by column name. Null on rows
+           *  scored before reasons were persisted. */
+          outcome_reasons: Json | null;
           /** Null on rows recovered by parsing a sent briefing email. */
           framework_field_keys: string[] | null;
           created_at: string;
@@ -692,6 +698,8 @@ export type Database = {
           outcome_next_meeting?: Tristate;
           outcome_draft_sent?: Tristate;
           outcome_stage_moved?: Tristate;
+          outcome_qualification_advanced?: Tristate;
+          outcome_reasons?: Json | null;
           framework_field_keys?: string[] | null;
           created_at?: string;
           outcome_label?: string | null;
@@ -713,6 +721,8 @@ export type Database = {
           outcome_next_meeting?: Tristate;
           outcome_draft_sent?: Tristate;
           outcome_stage_moved?: Tristate;
+          outcome_qualification_advanced?: Tristate;
+          outcome_reasons?: Json | null;
           framework_field_keys?: string[] | null;
           created_at?: string;
           outcome_label?: string | null;

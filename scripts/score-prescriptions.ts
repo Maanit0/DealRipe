@@ -5,6 +5,19 @@
  *   npx tsx scripts/score-prescriptions.ts
  *   npx tsx scripts/score-prescriptions.ts --rep ebencomo@magaya.com
  *   npx tsx scripts/score-prescriptions.ts --rescore     # overwrites verdicts
+ *   npx tsx scripts/score-prescriptions.ts --refresh-days 60
+ *
+ * --refresh-days widens the window in which an already-scored row has its
+ * DETERMINISTIC outcomes recomputed. It defaults to OUTCOME_REFRESH_DAYS (21),
+ * which is right for the cron: past that, a next meeting that has not been
+ * booked is not going to be. It is the wrong default after the reader itself
+ * changes. When outcome_qualification_advanced was added on 2026-08-20 the
+ * pilot was 35 days old, so two thirds of the ledger sat outside the window
+ * holding 'unknown' for rows whose answer was already in deal_signal_snapshots.
+ *
+ * It does NOT touch `followed`, which is the model's verdict on the rep. Only
+ * the deterministic reads are recomputed, so widening it cannot change what a
+ * rep is recorded as having done. Use --rescore for that, deliberately.
  *
  * Same entry point the cron route uses, so this cannot drift from production.
  *
@@ -34,15 +47,29 @@ async function main(): Promise<void> {
   const dryRun = flag("--dry-run");
   const rescore = flag("--rescore");
   const rep = arg("--rep");
+  const refreshRaw = arg("--refresh-days");
+  const refreshDays = refreshRaw === undefined ? undefined : Number(refreshRaw);
+  if (refreshDays !== undefined && (!Number.isFinite(refreshDays) || refreshDays <= 0)) {
+    console.error(`--refresh-days must be a positive number, got "${refreshRaw}"`);
+    process.exit(1);
+  }
 
   console.log(
-    `\n${dryRun ? "DRY RUN" : "SCORING"}${rescore ? ", rescoring rows that already have a verdict" : ""}\n`,
+    `\n${dryRun ? "DRY RUN" : "SCORING"}${rescore ? ", rescoring rows that already have a verdict" : ""}` +
+      `${refreshDays !== undefined ? `, refreshing outcomes back ${refreshDays} days` : ""}\n`,
   );
 
   const counts = await runPrescriptionScoring({
     tenantSlug: TENANT_SLUG,
     dryRun,
     rescore,
+    // ScoringOptions takes an ISO floor, not a day count. The flag is in days
+    // because that is how the window is reasoned about everywhere else
+    // (OUTCOME_REFRESH_DAYS, OUTCOME_SETTLE_DAYS).
+    since:
+      refreshDays === undefined
+        ? undefined
+        : new Date(Date.now() - refreshDays * 86_400_000).toISOString(),
     repEmails: rep ? [rep] : undefined,
     onDecision: (d) => {
       if (d.kind === "scored") {

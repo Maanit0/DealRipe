@@ -906,6 +906,20 @@ export async function runPrescriptionScoring(
               outcome_next_meeting: outcomes.nextMeeting.value,
               outcome_draft_sent: outcomes.draftSent.value,
               outcome_stage_moved: outcomes.stageMoved.value,
+              outcome_qualification_advanced: outcomes.qualificationAdvanced.value,
+              // The reason each value is what it is, carried to the row.
+              // OutcomeRead has always produced these and they have only ever
+              // reached a console line, so the table could say a row was
+              // unknown and could not say why, and answering "why" meant
+              // re-reading a CRM that had since moved on. That is this
+              // codebase's own failure mode: the work of distinguishing "no"
+              // from "did not check" was done and then not recorded.
+              outcome_reasons: {
+                next_meeting: outcomes.nextMeeting.reason,
+                draft_sent: outcomes.draftSent.reason,
+                stage_moved: outcomes.stageMoved.reason,
+                qualification_advanced: outcomes.qualificationAdvanced.reason,
+              },
             })
             .in("id", callRows.map((r) => r.id));
           if (upd.error) {
@@ -922,7 +936,7 @@ export async function runPrescriptionScoring(
             callId,
             account,
             rows: callRows.length,
-            detail: `next meeting ${outcomes.nextMeeting.value} (${outcomes.nextMeeting.reason}); email ${outcomes.draftSent.value} (${outcomes.draftSent.reason}); stage ${outcomes.stageMoved.value} (${outcomes.stageMoved.reason})`,
+            detail: `next meeting ${outcomes.nextMeeting.value} (${outcomes.nextMeeting.reason}); email ${outcomes.draftSent.value} (${outcomes.draftSent.reason}); CRM stage ${outcomes.stageMoved.value} (${outcomes.stageMoved.reason}); qualification ${outcomes.qualificationAdvanced.value} (${outcomes.qualificationAdvanced.reason})`,
           });
         }
 

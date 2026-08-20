@@ -26,6 +26,12 @@ import {
 import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { rolldogOppIdForDeal } from "./pilot-config";
 import { readRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
+import {
+  resolveSalesforceSnapshots,
+  type SalesforceRead,
+  type SalesforceReadStatus,
+  type SalesforceSnapshot,
+} from "./salesforce-stage";
 import type { Deal } from "./seed-data";
 import { supabaseAdmin } from "./supabase";
 import { getDealsForTenant } from "./supabase-queries";
@@ -94,6 +100,22 @@ export type DealSignals = {
   // unaffected, and anything that needs to tell "no opportunity" from "the
   // read failed" now can.
   rolldogRead?: RolldogReadStatus;
+  /**
+   * Salesforce's own current state this day, the mirror of `rolldog`.
+   *
+   * Added because 59 of 111 Magaya deals are Salesforce-only and snapshotted
+   * with no CRM stage at all, so readStageMoved reported `unknown` for them
+   * permanently and outcome_stage_moved was unknown on 243 of 283
+   * prescriptions. Kiddom is Salesforce throughout.
+   *
+   * Additive, exactly as `rolldog` was: nothing that reads the rolldog block
+   * is affected, and anything wanting a CRM stage for a Salesforce-only deal
+   * now has one.
+   */
+  salesforce?: SalesforceSnapshot | null;
+  /** Why `salesforce` is what it is. Absent on snapshots written before this
+   *  shipped, which callers must treat as unknown rather than as `read`. */
+  salesforceRead?: SalesforceReadStatus;
   // Per-field answered state (Yes only; for diffing what newly answered).
   answered: string[];
   // Coarse risk flags computed from the signals.
@@ -229,6 +251,7 @@ export function buildSignals(
   deal: Deal,
   framework: Framework,
   rolldog?: RolldogRead | null,
+  salesforce?: SalesforceRead | null,
 ): DealSignals {
   const stages = frameworkStages(framework);
   const gatesDealripe: Record<string, StageGateSnapshot> = {};
@@ -256,6 +279,11 @@ export function buildSignals(
     // rolldog block alone, and guessing the generous answer is how "no CRM
     // movement" gets reported for a deal nobody managed to read.
     rolldogRead: rolldog?.status ?? "unavailable",
+    // Same rule as the rolldog block above and for the same reason: a caller
+    // that passed no Salesforce read did not check, which is not the same as
+    // the deal having no Salesforce account.
+    salesforce: salesforce?.snapshot ?? null,
+    salesforceRead: salesforce?.status ?? "unavailable",
     answered,
     risks: computeRisks(deal, framework),
     capturedAt: new Date().toISOString(),
@@ -271,11 +299,12 @@ export async function recordDealSnapshot(
   deal: Deal,
   framework: Framework,
   rolldog?: RolldogRead | null,
+  salesforce?: SalesforceRead | null,
 ): Promise<void> {
   const db = supabaseAdmin();
   const { confirmed, total } = frameworkProgress(framework, deal.extraction);
   const completion = total > 0 ? confirmed / total : 0;
-  const signals = buildSignals(deal, framework, rolldog);
+  const signals = buildSignals(deal, framework, rolldog, salesforce);
   const snapshotDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
   const res = await db.from("deal_signal_snapshots").upsert(
@@ -342,15 +371,30 @@ export async function recordAllDealSnapshots(tenantId: string): Promise<number> 
     }
   }
 
-  const rolldogByDeal = await resolveRolldogSnapshots(
-    tenantId,
-    deals.map((d) => d.id),
-  );
+  const dealIds = deals.map((d) => d.id);
+
+  // Both CRMs, resolved together, because a deal linked to both should snapshot
+  // both and 74 of 111 deals would otherwise record no CRM stage at all.
+  //
+  // Note the difference in cost, which is the argument for reading Salesforce
+  // on every snapshot: resolveRolldogSnapshots makes one HTTP call per linked
+  // deal, resolveSalesforceSnapshots makes one SOQL call per 120 accounts.
+  const [rolldogByDeal, salesforceByDeal] = await Promise.all([
+    resolveRolldogSnapshots(tenantId, dealIds),
+    resolveSalesforceSnapshots(tenantId, dealIds),
+  ]);
+
   let written = 0;
   for (const deal of deals) {
     const framework = await getFrameworkForDeal(deal.id);
     if (!framework) continue;
-    await recordDealSnapshot(tenantId, deal, framework, rolldogByDeal.get(deal.id) ?? null);
+    await recordDealSnapshot(
+      tenantId,
+      deal,
+      framework,
+      rolldogByDeal.get(deal.id) ?? null,
+      salesforceByDeal.get(deal.id) ?? null,
+    );
     written += 1;
   }
   return written;
