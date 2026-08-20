@@ -39,6 +39,7 @@
  */
 
 import { getDealAttendanceHistory, type CallAttendance } from "./attendance";
+import type { SlipVerdict } from "./salesforce-stage-history";
 import { supabaseAdmin } from "./supabase";
 
 /** A reading that knows whether it is a reading. */
@@ -115,6 +116,16 @@ export async function computeBuyerSignals(args: {
   tenantId: string;
   dealId: string;
   now?: Date;
+  /**
+   * Close-date movement, prefetched by the caller.
+   *
+   * Passed in rather than read here because it costs a Salesforce round trip
+   * and the caller is almost always looping over many deals: one SOQL per 120
+   * accounts against one per deal. Same shape as readDraftSent taking a
+   * prefetched mailbox read. Omitting it reports unavailable, which is honest,
+   * rather than silently reporting zero slips.
+   */
+  closeDateSlips?: SlipVerdict;
 }): Promise<BuyerSignals> {
   const db = supabaseAdmin();
   const nowMs = (args.now ?? new Date()).getTime();
@@ -137,9 +148,12 @@ export async function computeBuyerSignals(args: {
     daysSinceCustomerReply: unread<number>(
       "no email event log yet; mail is read per call and discarded, so silence cannot be distinguished from an unread channel",
     ),
-    closeDateSlips: unread<number>(
-      "Salesforce CloseDate history is readable but not wired into this aggregator yet",
-    ),
+    closeDateSlips:
+      args.closeDateSlips === undefined
+        ? unread<number>("the caller did not prefetch close-date history for this deal")
+        : args.closeDateSlips.status === "read"
+          ? read(args.closeDateSlips.slips, args.closeDateSlips.evidence)
+          : unread<number>(args.closeDateSlips.reason),
   };
 
   // ---- calls -------------------------------------------------------------
@@ -594,6 +608,9 @@ export function assessDeal(
   if (s.silentInvitees.status === "read" && s.silentInvitees.value > 0) {
     risks.push(s.silentInvitees.evidence);
   }
+  if (s.closeDateSlips.status === "read") {
+    (s.closeDateSlips.value > 0 ? risks : strengths).push(s.closeDateSlips.evidence);
+  }
 
   // ---- band ---------------------------------------------------------------
   //
@@ -623,8 +640,15 @@ export function assessDeal(
     const committed = s.commitmentSecured.status === "read" && s.commitmentSecured.value;
     const threaded = s.distinctCustomerSpeakers.status === "read" && s.distinctCustomerSpeakers.value >= 2;
 
+    // Two or more pushes is a standing objection to any confident band. The
+    // date has been wrong twice already; the third estimate is not evidence.
+    const slipped = s.closeDateSlips.status === "read" && s.closeDateSlips.value >= 2;
+
     if (momentum === "stalling") {
       band = "Pipeline";
+    } else if (slipped) {
+      band = "Expect";
+      risks.push("the close date has moved at least twice, so a confident band is not supportable");
     } else if (buyerIn && decisiveClear && (committed || momentum === "advancing")) {
       band = "Commit";
     } else if (momentum === "advancing" && threaded && (buyerIn || committed)) {

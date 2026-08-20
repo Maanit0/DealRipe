@@ -363,3 +363,160 @@ export async function loadOpportunityCreationForAccounts(
   }
   return out;
 }
+
+// =====================================================================
+// Close date movement
+// =====================================================================
+
+/**
+ * A close date that keeps moving is one of the strongest negative signals in
+ * any forecast, and Magaya has 15,206 tracked CloseDate changes going back to
+ * 2025-02-19. A deal whose date has been pushed three times is not a Commit
+ * whoever says otherwise.
+ *
+ * Only PUSHES count. Pulling a date forward is a rep tightening a forecast, and
+ * counting it as a slip would punish exactly the behaviour a leader wants.
+ */
+export type CloseDateMove = {
+  opportunityId: string;
+  accountId: string | null;
+  from: string | null;
+  to: string | null;
+  /** Positive when the date moved later. Negative when it was pulled in. */
+  daysMoved: number | null;
+  at: string;
+};
+
+export type CloseDateLoad =
+  | { status: "read"; byAccount: Map<string, CloseDateMove[]> }
+  | { status: "unavailable"; error: string };
+
+function asDate(v: unknown): string | null {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
+}
+
+export async function loadCloseDateHistoryForAccounts(
+  accountIds: string[],
+  sinceIso: string,
+): Promise<CloseDateLoad> {
+  const byAccount = new Map<string, CloseDateMove[]>();
+  const unique = [...new Set(accountIds.filter(Boolean))];
+  if (unique.length === 0) return { status: "read", byAccount };
+
+  let client: { instanceUrl: string; token: string };
+  try {
+    client = await getSalesforceClient();
+  } catch (err) {
+    return {
+      status: "unavailable",
+      error: `auth failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  for (const id of unique) byAccount.set(id, []);
+
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const inList = chunk.map((id) => `'${id.replace(/[^a-zA-Z0-9]/g, "")}'`).join(",");
+    const soql =
+      `SELECT OpportunityId, Opportunity.AccountId, OldValue, NewValue, CreatedDate ` +
+      `FROM OpportunityFieldHistory ` +
+      `WHERE Field = 'CloseDate' AND CreatedDate >= ${sinceIso} ` +
+      `AND Opportunity.AccountId IN (${inList}) ORDER BY CreatedDate ASC`;
+    let url: string | null =
+      `${client.instanceUrl}/services/data/${API}/query?q=${encodeURIComponent(soql)}`;
+    while (url) {
+      const r: Response = await fetch(url, { headers: { Authorization: `Bearer ${client.token}` } });
+      if (!r.ok) {
+        return {
+          status: "unavailable",
+          error: `SOQL ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`,
+        };
+      }
+      const page = (await r.json()) as {
+        records?: HistoryRow[];
+        nextRecordsUrl?: string;
+        done?: boolean;
+      };
+      for (const rec of page.records ?? []) {
+        const accountId = rec.Opportunity?.AccountId ?? null;
+        if (!accountId) continue;
+        const list = byAccount.get(accountId);
+        if (!list) continue;
+        const from = asDate(rec.OldValue);
+        const to = asDate(rec.NewValue);
+        list.push({
+          opportunityId: rec.OpportunityId,
+          accountId,
+          from,
+          to,
+          daysMoved:
+            from && to ? Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) : null,
+          at: rec.CreatedDate,
+        });
+      }
+      url = page.done === false && page.nextRecordsUrl
+        ? `${client.instanceUrl}${page.nextRecordsUrl}`
+        : null;
+    }
+  }
+  return { status: "read", byAccount };
+}
+
+export type SlipVerdict =
+  | { status: "read"; slips: number; totalDaysPushed: number; evidence: string }
+  | { status: "unavailable"; reason: string };
+
+/**
+ * How many times this deal's close date has been pushed out.
+ *
+ * Same attribution discipline as stageMovedAfterCall, and for the same reason:
+ * an account is not an opportunity. When several opportunities on the account
+ * moved their dates and the caller cannot say which one is the deal, this
+ * reports unavailable rather than summing across them, because a renewal
+ * slipping is not this deal slipping.
+ */
+export function closeDateSlipsFor(args: {
+  moves: CloseDateMove[];
+  opportunities: Array<{ id: string; createdAt: string }>;
+  dealOpportunityId?: string | null;
+}): SlipVerdict {
+  if (args.opportunities.length === 0) {
+    return { status: "unavailable", reason: "no opportunity on this deal's account" };
+  }
+  const target =
+    args.dealOpportunityId ??
+    (args.opportunities.length === 1 ? args.opportunities[0].id : null);
+
+  if (!target) {
+    const moved = new Set(args.moves.map((m) => m.opportunityId));
+    if (moved.size === 0) {
+      // Nothing moved anywhere on the account, so nothing moved on this deal
+      // whichever opportunity it is. Safe at any opportunity count, the same
+      // asymmetry that makes a "no" trustworthy in stageMovedAfterCall.
+      return {
+        status: "read",
+        slips: 0,
+        totalDaysPushed: 0,
+        evidence: "no close date on this account has been pushed",
+      };
+    }
+    return {
+      status: "unavailable",
+      reason: `the account carries ${args.opportunities.length} opportunities and ${moved.size} of them moved a close date, so we cannot say which is this deal`,
+    };
+  }
+
+  const pushes = args.moves.filter(
+    (m) => m.opportunityId === target && m.daysMoved !== null && m.daysMoved > 0,
+  );
+  const total = pushes.reduce((n, m) => n + (m.daysMoved ?? 0), 0);
+  return {
+    status: "read",
+    slips: pushes.length,
+    totalDaysPushed: total,
+    evidence:
+      pushes.length === 0
+        ? "the close date has never been pushed"
+        : `the close date has been pushed ${pushes.length} time(s), ${total} days in total, most recently on ${pushes[pushes.length - 1].at.slice(0, 10)}`,
+  };
+}

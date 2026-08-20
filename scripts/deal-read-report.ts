@@ -26,6 +26,12 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { assessDeal, computeBuyerSignals, type DealAssessment } from "../lib/deal-signals-buyer";
+import {
+  closeDateSlipsFor,
+  HISTORY_BEGINS,
+  loadCloseDateHistoryForAccounts,
+  loadOpportunityCreationForAccounts,
+} from "../lib/salesforce-stage-history";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
@@ -52,7 +58,7 @@ async function main(): Promise<void> {
 
   const res = await db
     .from("deals")
-    .select("id, account, rep_email, outcome_label")
+    .select("id, account, rep_email, outcome_label, salesforce_account_id, salesforce_link_confidence")
     .eq("tenant_id", tenantId);
   if (res.error) throw new Error(`deals read failed: ${res.error.message}`);
 
@@ -61,6 +67,8 @@ async function main(): Promise<void> {
     account: string;
     rep_email: string | null;
     outcome_label: string | null;
+    salesforce_account_id: string | null;
+    salesforce_link_confidence: string | null;
   }>;
   // A resolved deal has no read worth making.
   deals = deals.filter((d) => !d.outcome_label);
@@ -72,9 +80,34 @@ async function main(): Promise<void> {
   console.log(`Computed from buyer behaviour only. The rep's own band is not an input.`);
   console.log(`${"=".repeat(88)}`);
 
+  // Close-date history, batched once for every confirmed-linked account rather
+  // than once per deal: one SOQL per 120 accounts against 114 round trips.
+  const accountIds = [
+    ...new Set(
+      deals
+        .filter((d) => d.salesforce_link_confidence === "confirmed" && d.salesforce_account_id)
+        .map((d) => d.salesforce_account_id as string),
+    ),
+  ];
+  const since = `${HISTORY_BEGINS}T00:00:00Z`;
+  const [cd, opps] = await Promise.all([
+    loadCloseDateHistoryForAccounts(accountIds, since),
+    loadOpportunityCreationForAccounts(accountIds),
+  ]);
+  if (cd.status === "unavailable") console.log(`\n  close-date history unavailable: ${cd.error}`);
+  if ("error" in opps) console.log(`\n  opportunity read unavailable: ${opps.error}`);
+
   const rows: Array<{ account: string; rep: string; a: DealAssessment }> = [];
   for (const d of deals) {
-    const signals = await computeBuyerSignals({ tenantId, dealId: d.id });
+    const acc = d.salesforce_link_confidence === "confirmed" ? d.salesforce_account_id : null;
+    const slips =
+      acc && cd.status === "read" && !("error" in opps)
+        ? closeDateSlipsFor({
+            moves: cd.byAccount.get(acc) ?? [],
+            opportunities: opps.get(acc) ?? [],
+          })
+        : undefined;
+    const signals = await computeBuyerSignals({ tenantId, dealId: d.id, closeDateSlips: slips });
     const a = assessDeal(signals);
     if (onlyStalling && a.momentum !== "stalling") continue;
     rows.push({ account: d.account, rep: (d.rep_email ?? "").split("@")[0] || "?", a });
