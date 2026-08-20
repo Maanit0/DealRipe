@@ -4,9 +4,15 @@
 
 A qualification execution layer for B2B sales teams. Reps run customer calls,
 DealRipe joins them, extracts answers to the company's qualification framework
-from the transcript, and writes structured field updates back to their CRM. The
-wedge is the write: Gong produces notes and activity records, it does not
-populate qualification fields.
+from the transcript, and writes structured field updates back to their CRM.
+
+**The wedge is the action outcome dataset**, not the field write. For a given
+deal at a given moment: what DealRipe told the rep to do, whether they did it,
+what the buyer did next, and how the deal ended. Proprietary per customer,
+compounding, and not reconstructible from a transcript archive. Gong observes
+and never prescribes, so it holds an outcome column and has no action column;
+the day it adds one it starts at zero. The field write is a distribution
+channel for the asset, not the asset.
 
 ## Where the product actually is, August 2026
 
@@ -83,7 +89,7 @@ outside `PILOT_OPPORTUNITY_IDS` throws unless the call is wrapped in
 failed read rather than as a refusal.
 
 `lib/snapshot.ts` was the first: 5,464 refusals between 2026-07-17 and
-2026-08-16, and 21 live deals recording a month of four-hourly snapshots with
+2026-08-16, and 21 live deals recording a month of daily snapshots with
 no CRM stage at all. The digest's movement detection, `readStageMoved` and the
 per-rep calibration were all reading our own refusal as a deal that had not
 moved.
@@ -162,12 +168,12 @@ for.
 
 The live consequence, unfixed as of 2026-08-18: eleven deals whose Salesforce
 account carries only closed opportunities are still SQL0 in our pipeline, still
-accruing four-hourly snapshots (213 so far), and will appear in Mark's Monday
+accruing daily snapshots (213 so far), and will appear in Mark's Monday
 digest as live pipeline. Six of them are LOST. Three of the won ones (Mollaxpanama,
 Treecorp, Eosits) took calls on 2026-08-18 that would have been briefed as new
 business.
 
-**Won/lost data EXISTS and outcome-sync has never once read it.** Two stacked
+**Won/lost data EXISTS. outcome-sync could not read it until 2026-08-19, and now can.** Two stacked
 bugs, both found 2026-08-18, and the pair is the reason "0 won, 0 lost" was
 believed for weeks.
 
@@ -593,8 +599,7 @@ has looked closely enough to be specific.
 
 **Before Monday**
 
-- Deploy. `recap-sync` exists in `vercel.json` but until it ships NOTHING
-  produces recaps: transcript-sync no longer does.
+- ~~Deploy recap-sync~~ DONE. It ships and produces every recap.
 - The qualification email still renders through the OLD
   `renderPostCallSummaryEmail`. The general path already uses the new
   `renderRecapEmailBody`, so a renewal gets the new artifact and a discovery
@@ -704,9 +709,18 @@ has looked closely enough to be specific.
   `briefing-sync`, scored by `lib/prescription-scoring.ts`. Nothing consumes it
   yet either, but it now accumulates several rows per call instead of one row
   per deal per quarter.
-- Per-rep commit calibration. The four-hourly snapshots already accumulate the
-  data. Nothing computes it. This is the single reason Ashlee Horn trusted Clari
-  within 5%.
+- ~~Per-rep commit calibration~~ BUILT 2026-08-20, and not from snapshots.
+  Salesforce already holds 13,112 ForecastCategoryName changes back to
+  2025-02-19, joinable to 10,873 closed opportunities, for every rep rather
+  than the six in the pilot. `lib/forecast-calibration.ts`. New-business Commit
+  ranges 64% to 94% across 16 reps, so per-rep weighting genuinely moves a
+  roll-up. Nothing consumes it yet.
+
+  NOTE ON THE SNAPSHOT SERIES, since it was cited here as the substrate: the
+  cron runs every four hours but `unique (deal_id, snapshot_date)` plus an
+  upsert on that key means only the LAST reading of each day survives. Five of
+  six are destroyed and the table has no `updated_at`, so nothing records that
+  it happened.
 - The waterfall view over those same snapshots
 - Slack delivery. Ashlee said flatly she does not like email as a channel.
 - The manager layer. Outputs go to rep, leader and CRM. In an org this size the

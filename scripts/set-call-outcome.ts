@@ -5,7 +5,12 @@
  * overrides a captured call. Read-only unless --apply.
  *
  *   npx tsx scripts/set-call-outcome.ts --deal dutyfreeamericas --to no_conversation
- *   npx tsx scripts/set-call-outcome.ts --deal dutyfreeamericas --to no_conversation --apply
+ *   npx tsx scripts/set-call-outcome.ts --call <uuid> --to rescheduled --apply
+ *
+ * --call targets ONE call. Without it every changeable call on the deal moves,
+ * which is wrong whenever two calls failed for different reasons: Dunavant has
+ * a lobby timeout on 2026-08-19 that is a real miss and a refusal on 08-20 that
+ * was a reschedule, and they must not be corrected together.
  */
 
 import { config } from "dotenv";
@@ -15,6 +20,26 @@ import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
 const NO_CONTENT = ["no_conversation", "no_show", "rescheduled", "placeholder"];
+
+/**
+ * Outcomes this tool may change FROM.
+ *
+ * The no-content set plus capture_failed. A capture failure has no transcript
+ * and no extraction behind it, so correcting one destroys nothing, and it is
+ * the case that actually needs correcting: the bot's own evidence cannot tell
+ * a lost demo from a meeting that was rescheduled in the first minute.
+ *
+ * Dunavant, 2026-08-20, is the example. The bot was denied 44 seconds after
+ * joining and the call recorded as capture_failed / lobby_refused, which counts
+ * against capture rate as a lost recording. Eduardo: "The call was rescheduled
+ * on the spot per their request so no recording is needed." A human knew; the
+ * status changes could not.
+ *
+ * `captured` is still never overridden. A call with a transcript has downstream
+ * state (extraction, recap, prescriptions) and changing its outcome would
+ * orphan all of it.
+ */
+const CHANGEABLE_FROM = [...NO_CONTENT, "capture_failed"];
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -52,10 +77,11 @@ async function main(): Promise<void> {
     .select("id, scheduled_start, outcome")
     .eq("tenant_id", tenantId)
     .eq("deal_id", deal.data.id)
-    .in("outcome", NO_CONTENT);
-  const targets = calls.data ?? [];
+    .in("outcome", CHANGEABLE_FROM);
+  const onlyCall = arg("--call");
+  const targets = (calls.data ?? []).filter((c) => !onlyCall || (c as { id: string }).id === onlyCall);
   if (targets.length === 0) {
-    console.log(`No no-content calls on ${deal.data.account} to change.`);
+    console.log(`No changeable calls on ${deal.data.account}. Only ${CHANGEABLE_FROM.join(", ")} can be corrected; a captured call is never overridden.`);
     return;
   }
 
@@ -71,7 +97,10 @@ async function main(): Promise<void> {
     .update({ outcome: to })
     .eq("tenant_id", tenantId)
     .eq("deal_id", deal.data.id)
-    .in("outcome", NO_CONTENT);
+    .in("outcome", CHANGEABLE_FROM)
+    // Without this the update ignores --call and rewrites every changeable
+    // row on the deal, which is exactly the mistake the flag exists to avoid.
+    .in("id", targets.map((c) => (c as { id: string }).id));
   if (upd.error) {
     console.error(`Update failed: ${upd.error.message}`);
     process.exit(1);

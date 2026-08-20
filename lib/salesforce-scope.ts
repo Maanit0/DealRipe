@@ -30,11 +30,18 @@
  * is the intended policy, so every rep's discovery calls write back without
  * anyone maintaining a list of ids by hand.
  *
- * Known external blocker, 2026-08-12: a validation rule on Account requires
- * 'Date of Software Acquisition' before any update saves, so every PATCH is
- * rejected with FIELD_CUSTOM_VALIDATION_EXCEPTION regardless of what we send.
- * Magaya's Salesforce admin has to exempt the integration user. Nothing in this
- * codebase can satisfy it without inventing a date, which it will not do.
+ * RESOLVED 2026-08-20. The blocker was a record-triggered flow,
+ * Record_Triggered_ACCOUNT_Before_Save, whose decision on "Is Date of Software
+ * Acquisition empty?" routed to Show Error Message, so every PATCH was rejected
+ * with FIELD_CUSTOM_VALIDATION_EXCEPTION regardless of what we sent. Magaya's
+ * provider added a custom permission bypass for the integration user.
+ *
+ * Verified by an attempted WRITE, not by reading metadata, because metadata
+ * lied about this once already: the Tooling API reported the Account validation
+ * rule Active=false while every PATCH was still bouncing, because the logic had
+ * moved into the flow. scripts/salesforce-write-probe.ts writes a changed value
+ * to an account with a blank Date of Software Acquisition, which is the exact
+ * condition the flow branches on, and restores it within a second.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
