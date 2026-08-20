@@ -730,6 +730,69 @@ export type Database = {
         };
         Relationships: [];
       };
+      deal_messages: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          /** RFC 5322 Message-ID, stable across mailboxes. The dedupe key. */
+          internet_message_id: string;
+          /** Graph's own id, which is PER-MAILBOX. Kept only to fetch a body. */
+          graph_message_id: string;
+          mailbox: string;
+          conversation_id: string | null;
+          direction: "inbound" | "outbound";
+          from_email: string | null;
+          from_domain: string | null;
+          to_emails: string[];
+          cc_emails: string[];
+          subject: string | null;
+          sent_at: string | null;
+          /** "Accepted:" / "Declined:". A mail client answering, not a person. */
+          is_calendar_response: boolean;
+          customer_side: boolean;
+          first_seen_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          internet_message_id: string;
+          graph_message_id: string;
+          mailbox: string;
+          conversation_id?: string | null;
+          direction: "inbound" | "outbound";
+          from_email?: string | null;
+          from_domain?: string | null;
+          to_emails?: string[];
+          cc_emails?: string[];
+          subject?: string | null;
+          sent_at?: string | null;
+          is_calendar_response?: boolean;
+          customer_side?: boolean;
+          first_seen_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          internet_message_id?: string;
+          graph_message_id?: string;
+          mailbox?: string;
+          conversation_id?: string | null;
+          direction?: "inbound" | "outbound";
+          from_email?: string | null;
+          from_domain?: string | null;
+          to_emails?: string[];
+          cc_emails?: string[];
+          subject?: string | null;
+          sent_at?: string | null;
+          is_calendar_response?: boolean;
+          customer_side?: boolean;
+          first_seen_at?: string;
+        };
+        Relationships: [];
+      };
       app_users: {
         Row: {
           id: string;

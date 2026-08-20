@@ -154,6 +154,16 @@ async function getAppOnlyToken(tenantId: string): Promise<string> {
  */
 export type MailMessage = {
   id: string;
+  /**
+   * RFC 5322 Message-ID, stable ACROSS mailboxes.
+   *
+   * `id` above is Graph's own key and is per-mailbox, the same trap as
+   * calendar events where iCalUId is stable and id is not. A co-sold thread
+   * read from two reps' mailboxes yields two different `id` values for one
+   * message, so anything deduping or counting has to key on this instead.
+   * Null when Graph omits it, which happens on some drafts.
+   */
+  internetMessageId: string | null;
   /** Graph's thread key. Groups a reply chain without parsing References. */
   conversationId: string | null;
   subject: string;
@@ -171,6 +181,7 @@ export type MailMessage = {
 type GraphRecipient = { emailAddress?: { address?: string | null } };
 type GraphMessage = {
   id: string;
+  internetMessageId?: string | null;
   conversationId?: string | null;
   subject?: string | null;
   receivedDateTime?: string | null;
@@ -184,6 +195,7 @@ type GraphMessage = {
 
 const MESSAGE_SELECT = [
   "id",
+  "internetMessageId",
   "conversationId",
   "subject",
   "receivedDateTime",
@@ -279,6 +291,7 @@ export async function listMailboxMessages(args: {
       }
       out.push({
         id: m.id,
+        internetMessageId: m.internetMessageId ?? null,
         conversationId: m.conversationId ?? null,
         subject: m.subject ?? "",
         at: m.receivedDateTime ?? m.sentDateTime ?? null,

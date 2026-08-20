@@ -39,6 +39,7 @@
  */
 
 import { getDealAttendanceHistory, type CallAttendance } from "./attendance";
+import { readEmailEngagement } from "./email-log";
 import type { SlipVerdict } from "./salesforce-stage-history";
 import { supabaseAdmin } from "./supabase";
 
@@ -78,9 +79,18 @@ export type BuyerSignals = {
   // ---- Commitment: did anyone agree to anything --------------------------
   commitmentSecured: Signal<boolean>;
 
-  // ---- Channels DealRipe does not yet persist ----------------------------
-  /** Needs the email event log. Reads `unavailable` until that ships. */
+  // ---- Email, from the deal_messages log ---------------------------------
+  /** Days since the CUSTOMER last wrote. Unavailable when the log is empty. */
   daysSinceCustomerReply: Signal<number>;
+  /**
+   * We wrote after their last message and they have not answered.
+   *
+   * Kiddom's ops lead named this as one of the most predictive flags they
+   * cannot build, because "emailing without reply needs the mailbox" and
+   * Salesforce does not hold the evidence. It is the clearest negative in the
+   * set and it is invisible to any CRM-only tool.
+   */
+  awaitingReply: Signal<boolean>;
   /** Needs Salesforce CloseDate history, wired separately. */
   closeDateSlips: Signal<number>;
 };
@@ -138,16 +148,25 @@ export async function computeBuyerSignals(args: {
     .maybeSingle();
   const account = (dealRes.data as { account?: string } | null)?.account ?? args.dealId;
 
+  // The email log, when it holds anything for this deal. A null return means
+  // we have no email record, which is NOT the customer being silent, and the
+  // two must not collapse into one absence.
+  const mail = await readEmailEngagement({ tenantId: args.tenantId, dealId: args.dealId, now: args.now });
+
   const base = {
     dealId: args.dealId,
     account,
-    // Two channels DealRipe reads transiently and never stores. Saying so is
-    // the point: readPostCallCustomerMail exists and runs, but nothing
-    // persists an inbound message, so "the customer has not replied" and "we
-    // have no email log" are currently the same absence. They must not be.
-    daysSinceCustomerReply: unread<number>(
-      "no email event log yet; mail is read per call and discarded, so silence cannot be distinguished from an unread channel",
-    ),
+    daysSinceCustomerReply:
+      mail && mail.daysSinceCustomerMessage !== null
+        ? read(mail.daysSinceCustomerMessage, mail.evidence)
+        : unread<number>(
+            mail
+              ? `${mail.total} message(s) logged on this deal and the customer has never written`
+              : "no email logged for this deal, so silence on this channel cannot be distinguished from an unread channel",
+          ),
+    awaitingReply: mail
+      ? read(mail.awaitingReply, mail.evidence)
+      : unread<boolean>("no email logged for this deal"),
     closeDateSlips:
       args.closeDateSlips === undefined
         ? unread<number>("the caller did not prefetch close-date history for this deal")
@@ -527,6 +546,7 @@ export function assessDeal(
     ["economic buyer", s.economicBuyerEngaged],
     ["commitment", s.commitmentSecured],
     ["customer email replies", s.daysSinceCustomerReply],
+    ["awaiting a reply", s.awaitingReply],
     ["close date slips", s.closeDateSlips],
   ];
   for (const [label, sig] of all) {
@@ -553,25 +573,43 @@ export function assessDeal(
     strengths.push(nextMtg.evidence);
   } else if (nextMtg.status === "read" && since.status === "read") {
     const rhythm = cadence.status === "read" && cadence.value > 0 ? cadence.value : null;
+    // Silence means no contact on ANY channel. A customer who wrote three days
+    // ago has not gone quiet just because no meeting is booked, and calling
+    // that stalling is the error the "counts calls only" caveat was warning
+    // about. Contact is the more recent of the last call and the last customer
+    // message.
+    const mailDays = s.daysSinceCustomerReply.status === "read" ? s.daysSinceCustomerReply.value : null;
+    const contactDays = mailDays !== null ? Math.min(since.value, mailDays) : since.value;
     // A deal with its own rhythm is judged against it. A deal with only one
     // conversation has no rhythm, and is judged against how fast deals move at
     // this company. Judging the second group against nothing is what reported
     // eleven stale deals as steady.
     const limit = rhythm !== null ? rhythm * SILENCE_MULTIPLE : (opts.orgCadenceDays ?? NO_RHYTHM_SILENCE_DAYS);
-    if (since.value > limit) {
+    const channel = mailDays !== null && mailDays < since.value ? "email" : "call";
+    if (contactDays > limit) {
       momentum = "stalling";
-      momentumReason =
+      const spine =
         rhythm !== null
-          ? `no next meeting, and ${since.value} days since the last conversation on a deal that had been ` +
-            `meeting every ${rhythm} days. That is ${(since.value / rhythm).toFixed(1)}x its own rhythm`
-          : `no next meeting, and ${since.value} days since the only conversation on this deal, against a ` +
+          ? `no next meeting, and ${contactDays} days since any contact on a deal that had been meeting ` +
+            `every ${rhythm} days. That is ${(contactDays / rhythm).toFixed(1)}x its own rhythm`
+          : `no next meeting, and ${contactDays} days since any contact on this deal, against a ` +
             `${limit}-day norm for this company`;
+      // Unanswered outbound is a stronger statement than mutual silence: we
+      // are the ones waiting, and the customer has chosen not to answer.
+      const unanswered =
+        s.awaitingReply.status === "read" && s.awaitingReply.value
+          ? ". We wrote last and they have not answered"
+          : "";
+      momentumReason = spine + unanswered;
       risks.push(momentumReason);
     } else {
       momentum = "steady";
-      momentumReason = rhythm
-        ? `no next meeting booked, but ${since.value} days is within this deal's ${rhythm}-day rhythm`
-        : `no next meeting booked; ${since.value} days since the only conversation, inside the ${limit}-day norm`;
+      momentumReason =
+        channel === "email"
+          ? `no next meeting booked, but the customer wrote ${contactDays} day(s) ago`
+          : rhythm
+            ? `no next meeting booked, but ${contactDays} days is within this deal's ${rhythm}-day rhythm`
+            : `no next meeting booked; ${contactDays} days since contact, inside the ${limit}-day norm`;
       risks.push("no next meeting is on the calendar");
     }
   }
@@ -579,8 +617,15 @@ export function assessDeal(
   // Silence here means "no CALL". Until the email log exists we cannot say the
   // customer has gone quiet, only that no meeting has happened, and those are
   // different facts about a deal.
-  if (momentum === "stalling" && s.daysSinceCustomerReply.status === "unavailable") {
-    momentumReason += ". This counts calls only: there is no email log yet, so the customer may have been in touch";
+  if (momentum === "stalling" && s.daysSinceCustomerReply.status === "unavailable" && s.awaitingReply.status === "unavailable") {
+    momentumReason += ". This counts calls only: nothing is logged on the email channel for this deal, so the customer may have been in touch";
+  }
+
+  // Unanswered outbound is a risk in its own right even on a deal that is
+  // otherwise moving, because it is the flag Kiddom named as most predictive
+  // and least available: a CRM cannot see it.
+  if (s.awaitingReply.status === "read" && s.awaitingReply.value && momentum !== "stalling") {
+    risks.push(s.awaitingReply.evidence);
   }
 
   // ---- strengths and risks from the rest ---------------------------------
