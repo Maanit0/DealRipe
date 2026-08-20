@@ -427,6 +427,45 @@ export async function runRecapSync(
               if (!nextStep.created) {
                 console.warn(`[recap-sync] salesforce next step skipped for ${row.id}: ${nextStep.reason}`);
               }
+
+              // The recap as a Salesforce Note.
+              //
+              // lib/salesforce-note.ts has existed and worked for a while and
+              // was called by exactly one thing: scripts/preview-recap.ts
+              // --post-note. So every Note in Magaya's CRM was posted by hand,
+              // one at a time, which is what Eduardo meant on 2026-08-20 by
+              // "still missing the notes in some deals".
+              //
+              // The Note is the artifact a second person reads: he pasted one
+              // in by hand the day after a call, then shared it with the
+              // solution engineer to prep the demo. The email is for the rep;
+              // the Note is for the team.
+              //
+              // postRecapNote is idempotent on a title carrying the CALL date
+              // rather than a run timestamp, so a recap-sync retry cannot leave
+              // a second Note on a customer's record. Its own try: a Note
+              // failure must not cost the activity that just succeeded.
+              if (notify.noteBody) {
+                try {
+                  const { postRecapNote } = await import("./salesforce-note");
+                  const note = await postRecapNote({
+                    tenantSlug: "magaya",
+                    accountId: link.accountId,
+                    account: mm?.deals.account ?? externalId,
+                    callAt: row.scheduled_start,
+                    body: notify.noteBody,
+                    apply: true,
+                  });
+                  if (!note.posted) {
+                    console.warn(`[recap-sync] salesforce note not posted for ${row.id}: ${note.reason}`);
+                  }
+                } catch (noteErr) {
+                  console.error(
+                    `[recap-sync] salesforce note threw for ${row.id}:`,
+                    noteErr instanceof Error ? noteErr.message : noteErr,
+                  );
+                }
+              }
             }
           } catch (sfErr) {
             console.error(

@@ -16,7 +16,8 @@ import { renderPostCallSummaryEmail, renderReadoutOnlyEmail } from "./emails/pos
 import { loadFramework } from "./framework";
 import { type MeetingType } from "./meeting-classify";
 import { buildRecap, type RecapBuild } from "./recap-build";
-import { renderRecapEmailBody } from "./recap-render";
+import { formatMeetingTime } from "./graph-time";
+import { renderRecapEmailBody, renderRecapNote } from "./recap-render";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
@@ -46,6 +47,19 @@ export type NotifyResult = {
    * behind it.
    */
   agreed?: { weOwe: string[]; customerOwes: string[] };
+  /**
+   * The recap rendered as a Salesforce Note body.
+   *
+   * Handed back rather than re-derived, because the caller has neither the
+   * narrative nor the demo strategy: those live inside the RecapBuild that
+   * never leaves this function. renderRecapNote needs both, so the choice is
+   * to return the body or to build the whole recap a second time.
+   *
+   * Set only for qualification recaps. A renewal or support call gets a
+   * readout and no qualification record, per docs/recap-target-eduardo.md, so
+   * there is no Note to write.
+   */
+  noteBody?: string;
 };
 
 export async function sendPostCallSummary(args: {
@@ -136,6 +150,7 @@ export async function sendPostCallSummary(args: {
   // every call is a new-opportunity sales call. A customer or internal meeting
   // gets a plain takeaways + next-steps recap instead of the qualification one
   // (which would be the wrong shape and read as noise, per Eduardo's feedback).
+  let noteBody: string | undefined;
   const built = await buildRecap({
     tenantId: args.tenantId,
     dealId: dealRow.data.id,
@@ -181,6 +196,22 @@ export async function sendPostCallSummary(args: {
 
     nextAction = built.summary.nextStepCommitment ?? built.summary.suggestedNextStep;
     qualSummary = built.summary;
+    // The Note body, for recap-sync to post to Salesforce. Eduardo pasted one
+    // in by hand the day after a call and then shared it with the solution
+    // engineer to prep the demo, so the Note is the artifact a second person
+    // actually reads. Rendered here because this is the only place the
+    // narrative and demo strategy exist.
+    noteBody = renderRecapNote({
+      account: built.account,
+      callTitle: null,
+      callAt: args.callAt ? formatMeetingTime(args.callAt) : null,
+      stageKey: built.stageKey,
+      narrative: built.narrative,
+      demoStrategy: built.demoStrategy,
+      captured: built.summary.captured,
+      stillOpen: built.summary.stillOpen,
+      history: built.history,
+    });
     if (built.narrative.status === "present") {
       agreed = {
         weOwe: built.narrative.value.nextSteps.weOwe.map((f) => f.statement),
@@ -239,7 +270,7 @@ export async function sendPostCallSummary(args: {
       text: email.text,
       providerId: res.id || null,
     });
-    return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary, agreed };
+    return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary, agreed, noteBody };
   } catch (err) {
     if (err instanceof MailerConfigError) {
       return { sent: false, to, reason: `mailer not configured: ${err.message}` };
