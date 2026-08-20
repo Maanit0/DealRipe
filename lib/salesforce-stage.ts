@@ -54,6 +54,15 @@ export type SalesforceSnapshot = {
   closeDate: string | null;
   amount: number | null;
   /**
+   * The rep's own forecast band on this opportunity.
+   *
+   * Carried so a caller can flag the CONTRADICTION between what the rep claims
+   * and what the evidence supports, which is a different and more useful thing
+   * than either alone. "Commit with no economic buyer" is a sentence; "no
+   * economic buyer" is a checkbox.
+   */
+  forecastCategory: string | null;
+  /**
    * How many open opportunities the account carried when this was read.
    *
    * Greater than 1 means this stage is a CHOICE, not the account's only
@@ -106,6 +115,7 @@ type OppRow = {
   IsClosed: boolean;
   CloseDate: string | null;
   Amount: number | null;
+  ForecastCategoryName: string | null;
   CreatedDate: string;
 };
 
@@ -201,7 +211,7 @@ export async function resolveSalesforceSnapshots(
     const chunk = accountIds.slice(i, i + CHUNK);
     const inList = chunk.map((id) => `'${id.replace(/[^a-zA-Z0-9]/g, "")}'`).join(",");
     const soql =
-      `SELECT Id, Name, AccountId, StageName, IsClosed, CloseDate, Amount, CreatedDate ` +
+      `SELECT Id, Name, AccountId, StageName, IsClosed, CloseDate, Amount, ForecastCategoryName, CreatedDate ` +
       `FROM Opportunity WHERE AccountId IN (${inList})`;
     const r = await fetch(
       `${client.instanceUrl}/services/data/${API}/query?q=${encodeURIComponent(soql)}`,
@@ -261,6 +271,7 @@ export async function resolveSalesforceSnapshots(
           stageName: chosen.StageName,
           closeDate: chosen.CloseDate,
           amount: chosen.Amount,
+          forecastCategory: chosen.ForecastCategoryName,
           openCount: open.length,
         },
       });

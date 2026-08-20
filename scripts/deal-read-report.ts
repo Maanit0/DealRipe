@@ -25,7 +25,9 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+import { computeDealFlags, type Flag } from "../lib/deal-flags";
 import { assessDeal, computeBuyerSignals, type DealAssessment } from "../lib/deal-signals-buyer";
+import { resolveSalesforceSnapshots } from "../lib/salesforce-stage";
 import {
   closeDateSlipsFor,
   HISTORY_BEGINS,
@@ -97,7 +99,11 @@ async function main(): Promise<void> {
   if (cd.status === "unavailable") console.log(`\n  close-date history unavailable: ${cd.error}`);
   if ("error" in opps) console.log(`\n  opportunity read unavailable: ${opps.error}`);
 
-  const rows: Array<{ account: string; rep: string; a: DealAssessment }> = [];
+  // The CRM's own state, batched, so band-versus-evidence contradictions are
+  // computable at all.
+  const crmByDeal = await resolveSalesforceSnapshots(tenantId, deals.map((d) => d.id));
+
+  const rows: Array<{ account: string; rep: string; a: DealAssessment; flags: Flag[] }> = [];
   for (const d of deals) {
     const acc = d.salesforce_link_confidence === "confirmed" ? d.salesforce_account_id : null;
     const slips =
@@ -110,7 +116,13 @@ async function main(): Promise<void> {
     const signals = await computeBuyerSignals({ tenantId, dealId: d.id, closeDateSlips: slips });
     const a = assessDeal(signals);
     if (onlyStalling && a.momentum !== "stalling") continue;
-    rows.push({ account: d.account, rep: (d.rep_email ?? "").split("@")[0] || "?", a });
+    const crmRead = crmByDeal.get(d.id);
+    const flags = computeDealFlags({
+      signals,
+      assessment: a,
+      crm: crmRead?.status === "read" ? crmRead.snapshot : null,
+    });
+    rows.push({ account: d.account, rep: (d.rep_email ?? "").split("@")[0] || "?", a, flags });
   }
 
   // ---- the table ---------------------------------------------------------
@@ -152,6 +164,36 @@ async function main(): Promise<void> {
       console.log(`\n  ${r.account}  (${r.rep})`);
       console.log(`    ${r.a.momentumReason}`);
       for (const risk of r.a.risks.slice(0, 3)) console.log(`    risk: ${risk}`);
+    }
+  }
+
+  // ---- flags, which is what a leader actually opens ----------------------
+  const allFlags = rows.flatMap((r) => r.flags.map((f) => ({ ...f, account: r.account, rep: r.rep })));
+  const byId = new Map<string, number>();
+  for (const f of allFlags) byId.set(f.id, (byId.get(f.id) ?? 0) + 1);
+  console.log(`\n  flags     ${allFlags.length} across ${rows.filter((r) => r.flags.length > 0).length} deal(s)`);
+  for (const [id, n] of [...byId.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${String(n).padStart(3)}  ${id}`);
+  }
+
+  const critical = allFlags.filter((f) => f.severity === "critical");
+  if (critical.length > 0) {
+    console.log(`\n${"-".repeat(88)}`);
+    console.log(`CRITICAL (${critical.length}) - each is a contradiction, not a score`);
+    console.log(`${"-".repeat(88)}`);
+    // Show a spread across flag TYPES rather than the first N, or one noisy
+    // family (losing_momentum fires ten times) crowds out the contradictions
+    // that are the point of the engine.
+    const perType = new Map<string, number>();
+    const spread = critical.filter((f) => {
+      const n = perType.get(f.id) ?? 0;
+      perType.set(f.id, n + 1);
+      return n < 3;
+    });
+    for (const f of spread) {
+      console.log(`\n  ${f.account}  (${f.rep})  ${f.title}`);
+      console.log(`    why:  ${f.evidence}`);
+      console.log(`    move: ${f.move}`);
     }
   }
 
