@@ -291,6 +291,28 @@ export function renderDemoStrategyProse(d: DemoStrategy): string {
   }
   out.push("");
 
+  // The customer's goals come FIRST, before anything about our product.
+  //
+  // That order is the motion, not a layout preference. Eduardo's Aqua Gulf deck
+  // opens on slide 4 with the customer's strategic goals and only then reaches
+  // Magaya's company overview, and six of its seven lines are this section
+  // verbatim. A reader building that deck should find this at the top.
+  if (d.strategicGoals.length > 0) {
+    out.push("STRATEGIC GOALS, IN THEIR TERMS");
+    out.push(para(d.strategicGoals.map((g) => `- ${g}`)));
+    out.push("");
+  }
+
+  // Deliberately separate, and deliberately labelled as not drivers. An
+  // interest sitting in the goals list is how a demo gets built around
+  // something nobody will pay for.
+  if (d.interests.length > 0) {
+    out.push("INTERESTS, NOT YET DRIVERS");
+    out.push("Raised with no pain behind them. Worth showing, not worth building the session around.");
+    out.push(para(d.interests.map((g) => `- ${g}`)));
+    out.push("");
+  }
+
   for (const [i, s] of d.sessions.entries()) {
     out.push(`Session ${i + 1}: ${s.name}${s.minutes ? ` (${s.minutes} minutes)` : ""}`);
     out.push(para(s.cover.map((c) => `  - ${c}`)));

@@ -131,6 +131,45 @@ export type DemoSession = {
 };
 
 export type DemoStrategy = {
+  /**
+   * The customer's own initiatives, reframed from what hurts.
+   *
+   * THIS IS THE SEAM BETWEEN THE RECAP AND THE DECK. Eduardo's own Aqua Gulf
+   * output has a "Strategic Goals (Reframed from Pain Points)" section, and six
+   * of its seven lines are slide 4 of the Magaya deck he then presented,
+   * verbatim. The deck opens with the customer's goals BEFORE Magaya's company
+   * overview, which is the motion: mirror their goals back first.
+   *
+   * A pain and a goal are not the same object and the difference is the whole
+   * point of the reframe:
+   *
+   *   pain  "a fragmented multi-system environment creates cross-training
+   *          burden, manual re-keying and reporting inconsistency"
+   *   goal  "Consolidate onto fewer, standardized systems"
+   *
+   * A pain is a problem you describe back to a customer. A goal is an
+   * initiative they would fund, in their language, that can go on a slide with
+   * their logo on it.
+   *
+   * Structured rather than prose, deliberately, so a deck generator can consume
+   * it later without re-parsing English.
+   */
+  strategicGoals: string[];
+  /**
+   * Appetite with no pain behind it yet.
+   *
+   * A third category, and it earns its place mostly as a COUNTERWEIGHT. Eduardo's
+   * own Dunavant strategy guards against it in writing: "confirm Ocean + Air AMS
+   * (note: Air AMS was a 'just in case' ask, not a current need, don't
+   * over-index on it)." Interests are the most common reason a demo goes wide
+   * and lands soft, so they are labelled as interests and never promoted into
+   * strategicGoals.
+   *
+   * An interest becomes a goal when it acquires a number or an owner. Aqua
+   * Gulf's AMS started as curiosity and became a funded goal the moment "~350
+   * shipments/year currently turned away" attached to it.
+   */
+  interests: string[];
   sessions: DemoSession[];
   /**
    * What to resolve internally before the session.
@@ -495,9 +534,13 @@ HARD RULES:
 6. No praise, no marketing language.
 7. "strengths" and "recommendation" are the read on the deal itself. Strengths are the concrete facts that make this winnable (an incumbent contract ending, a stated urgency, a budget already validated), not adjectives. The recommendation is ONE paragraph a sales manager could act on, naming what to do first and what not to do.
 8. Name the session for what it covers. Do NOT prefix it with "Session 1" or a number; the reader's software numbers them.
+9. "strategicGoals" REFRAMES the ranked pain points as initiatives the customer would fund, in their language, one line each. A pain describes what is broken ("manual re-keying across seven disconnected systems"); a goal names what they are trying to achieve ("Consolidate onto fewer, standardized systems"). Write goals a customer would recognise as their own words on their own slide. Never copy a pain across unchanged, and never invent a goal the call does not support. Order them the way the customer weighted them.
+10. "interests" is appetite the customer showed with NO pain behind it: curiosity, a "just in case" ask, something they leaned toward because we showed it rather than because they walked in wanting it. Keep these OUT of strategicGoals. They are the most common reason a demo goes wide and lands soft, so listing them separately is a warning, not a wish list. Empty array when the call showed none.
 
 Return a single JSON object, no prose, no markdown fences:
 {
+  "strategicGoals": [string],
+  "interests": [string],
   "sessions": [{"name": string, "cover": [string], "why": string, "minutes": number|null}],
   "validateInternally": [string],
   "risks": [string],
@@ -607,21 +650,35 @@ export async function buildDemoStrategy(args: {
       })
     : [];
 
-  if (sessions.length === 0) {
-    return {
-      status: "absent",
-      reason: "the call did not establish enough about what to show to plan a session",
-    };
-  }
-
   const strings = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
+
+  const strategicGoals = strings(o.strategicGoals);
+  const validateInternally = strings(o.validateInternally);
+
+  // Absent only when there is nothing at all.
+  //
+  // This used to key on sessions alone, which threw the whole pass away on any
+  // call too narrow to warrant splitting a demo. Two things worth keeping
+  // survive that shape: the strategic goals, which are the deck material and
+  // exist whether or not a demo needs planning, and validateInternally, which
+  // rule 5 calls the most important field in the object. The Protrans call is
+  // the case: one reporting mechanism, no sessions to plan, and a genuine
+  // contradiction to resolve before the session.
+  if (sessions.length === 0 && strategicGoals.length === 0 && validateInternally.length === 0) {
+    return {
+      status: "absent",
+      reason: "the call did not establish goals, sessions or anything to resolve before a demo",
+    };
+  }
 
   return {
     status: "present",
     value: {
+      strategicGoals,
+      interests: strings(o.interests),
       sessions,
-      validateInternally: strings(o.validateInternally),
+      validateInternally,
       risks: strings(o.risks),
       strengths: strings(o.strengths),
       recommendation: typeof o.recommendation === "string" ? o.recommendation.trim() : "",
