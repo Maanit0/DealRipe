@@ -274,12 +274,42 @@ export async function listMailboxMessages(args: {
   let url =
     `${GRAPH_BASE}/users/${user}/messages` +
     `?$select=${MESSAGE_SELECT}` +
-    `&$top=100&$orderby=receivedDateTime desc` +
+    // 25, not 100. Measured against Alexandra Suntrup's mailbox on 2026-08-20:
+    // $top=25 with the same filter and orderby returns in ~700ms, $top=50 hits
+    // Graph's 30 second ceiling and returns a bare 504 with an empty message.
+    // Her mailbox failed on every run while the other five succeeded, so the
+    // ingest was silently losing one rep's entire email rather than one page.
+    // More pages at a size Graph can actually serve beats fewer that time out.
+    `&$top=25&$orderby=receivedDateTime desc` +
     `&$filter=receivedDateTime ge ${args.since.toISOString()}`;
 
-  for (let page = 0; page < (args.maxPages ?? 10) && url; page++) {
-    const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new GraphMailError(res.status, await res.text());
+  for (let page = 0; page < (args.maxPages ?? 20) && url; page++) {
+    // Graph times out on a busy mailbox and says so with a bare 504 carrying
+    // an empty message. Alexandra Suntrup's mailbox failed that way on every
+    // run while the other five succeeded, so the whole ingest silently lost one
+    // rep's email rather than one page of it.
+    //
+    // The domain filter is applied CLIENT-side below, so this pages through
+    // every message in the window before narrowing, which is why a high-volume
+    // mailbox is the one that dies. Retrying the same page usually succeeds:
+    // the timeout is Graph's, not ours.
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+      if (res.ok) break;
+      // 429 and 5xx are worth retrying. A 401 or 403 is a permission fact and
+      // retrying it just delays an honest error.
+      if (res.status !== 429 && res.status < 500) break;
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 1000 * 2 ** attempt;
+      console.warn(
+        `[graph-mail] ${args.mailbox} page ${page} returned ${res.status}, retrying in ${waitMs}ms (attempt ${attempt + 1} of 4)`,
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    if (!res || !res.ok) throw new GraphMailError(res?.status ?? 0, res ? await res.text() : "no response");
     const json = (await res.json()) as { value?: GraphMessage[]; "@odata.nextLink"?: string };
     for (const m of json.value ?? []) {
       const from = addr(m.from ?? m.sender);
