@@ -65,9 +65,19 @@ export type Flag = {
 
 /**
  * Bands ordered weakest to strongest, matching Magaya's own picklist.
- * `Closed` and `Omitted` are terminal and are not forecasts.
+ *
+ * `Omitted` is listed EXPLICITLY at -1 rather than left to fall out of the
+ * lookup as undefined. Both produce the same behaviour today, and only one of
+ * them says which behaviour was intended: a rep who omits a deal has made a
+ * decision not to forecast it, so there is no forecast for the band-versus-
+ * evidence rules below to contradict. An unlisted band and a deliberately
+ * terminal one must not be indistinguishable, which is this codebase's own
+ * governing rule applied to a lookup table.
+ *
+ * `Closed` never reaches here: a deal carrying an outcome_label is dropped
+ * upstream in loadPortfolioRead.
  */
-const BAND_ORDER: Record<string, number> = { Pipeline: 0, Expect: 1, Commit: 2 };
+const BAND_ORDER: Record<string, number> = { Omitted: -1, Pipeline: 0, Expect: 1, Commit: 2 };
 
 /**
  * Inside this many days, an open decisive gate stops being a gap and becomes
@@ -204,6 +214,22 @@ export function computeDealFlags(args: {
         audience: ["rep", "leader"],
       });
     }
+  }
+
+  // The other direction, and the one only an independent read can produce. A
+  // rep excluding a deal the buyer is actively advancing is sandbagging, and
+  // it was inexpressible until DealRipe's own ladder gained an Omitted rung:
+  // with a Commit/Expect/Pipeline scale there was no way to tell "we agree
+  // this is out" from "we never had a way to say that".
+  if (band === "Omitted" && a.band !== null && (BAND_ORDER[a.band] ?? -1) > BAND_ORDER.Pipeline) {
+    flags.push({
+      id: "omitted_but_advancing",
+      severity: "warning",
+      title: `Omitted by the rep, and the buyer is acting like ${a.band}`,
+      evidence: `the rep has excluded this from the forecast. ${a.momentumReason}`,
+      move: "ask why it is out; either the forecast is short a deal or there is a reason the calls do not show",
+      audience: ["leader"],
+    });
   }
 
   // ---- ENGAGEMENT, the flags a CRM cannot produce -------------------------

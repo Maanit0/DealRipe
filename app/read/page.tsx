@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AppShell } from "@/components/AppShell";
 import { loadPortfolioRead, type DealRead } from "@/lib/deal-read-portfolio";
+import { describeForecastRead } from "@/lib/salesforce-stage";
 import { repName } from "@/lib/display-names";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 import { DEFAULT_TENANT_SLUG, withTenant } from "@/lib/tenant-nav";
@@ -43,6 +44,10 @@ export default async function ReadPage({
 
   const stalling = rows.filter((r) => r.assessment.momentum === "stalling").length;
   const unreadable = rows.filter((r) => r.assessment.confidence === "low").length;
+  // Counted and said out loud rather than left to look like an unforecast deal:
+  // an account with no open opportunity has probably resolved in the CRM that
+  // knows, which is the exact reading this project got wrong once already.
+  const noOpenOpp = rows.filter((r) => r.crmRead?.status === "no_open_opportunity").length;
 
   return (
     <AppShell active="review" tenant={tenant}>
@@ -78,6 +83,7 @@ export default async function ReadPage({
               </Link>
               <span className="text-muted">
                 {stalling} losing momentum · {unreadable} with too little evidence to judge
+                {noOpenOpp > 0 ? ` · ${noOpenOpp} whose Salesforce account has no open opportunity` : ""}
               </span>
             </div>
 
@@ -99,6 +105,7 @@ export default async function ReadPage({
 
               {shown.map((r) => {
                 const m = MOMENTUM[r.assessment.momentum];
+                const rep = describeForecastRead(r.crmRead);
                 const critical = r.flags.filter((f) => f.severity === "critical");
                 const rest = r.flags.filter((f) => f.severity !== "critical");
                 return (
@@ -117,7 +124,15 @@ export default async function ReadPage({
                       <span className={`text-[11px] px-2 py-0.5 rounded-md ${m.cls}`}>{m.label}</span>
                       <span className="text-[12px] text-muted ml-auto">
                         rep says{" "}
-                        <span className="text-ink">{r.crm?.forecastCategory ?? "no band"}</span>
+                        {/* Five distinguishable states, not one phrase. A blank band,
+                            an unlinked deal and an account whose every opportunity is
+                            closed say completely different things about what to do. */}
+                        <span
+                          title={rep.detail || undefined}
+                          className={rep.tone === "suspect" ? "text-warn" : rep.tone === "absent" ? "text-muted italic" : "text-ink"}
+                        >
+                          {rep.label}
+                        </span>
                         {"  ·  "}
                         DealRipe says <span className="text-ink">{r.assessment.band ?? "no read"}</span>
                         {r.crm?.closeDate ? `  ·  closing ${r.crm.closeDate}` : ""}

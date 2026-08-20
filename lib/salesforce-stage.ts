@@ -107,6 +107,84 @@ export type SalesforceRead =
   | { status: "no_open_opportunity"; snapshot: null; totalOpportunities: number }
   | { status: "unavailable"; snapshot: null; error: string };
 
+/**
+ * What to SHOW where a rep's forecast band would go, for each of the five ways
+ * the read can end.
+ *
+ * This exists because /read printed `forecastCategory ?? "no band"` and that
+ * one label was covering five different facts. Measured across 116 open Magaya
+ * deals on 2026-08-20: 44 `no_open_opportunity`, 18 `no_account`, and only the
+ * remainder a band the rep actually set. So sixty-two deals asserted "the rep
+ * did not forecast this" when for 44 of them Salesforce holds no open
+ * opportunity at all, which per this project's own rule means the deal has
+ * probably resolved somewhere else and someone should go and look.
+ *
+ * `tone` is separate from the label because these are not equally alarming. A
+ * Rolldog-only deal with no Salesforce account is ordinary. An account whose
+ * every opportunity is closed, still sitting in the pipeline accruing daily
+ * snapshots, is the eleven-dead-deals bug arriving again.
+ *
+ * Lives here, next to the type it describes, so the page and the diagnostic
+ * cannot drift into two different vocabularies for the same five states.
+ */
+export type ForecastReadLabel = {
+  /** What the rep's band is, or the reason there is not one. */
+  label: string;
+  /** Long form, for a tooltip or a detail line. Empty when the label says it all. */
+  detail: string;
+  /** neutral: a real band. absent: nothing to read, and that is fine.
+   *  suspect: the read succeeded and what it found needs a person. */
+  tone: "neutral" | "absent" | "suspect";
+};
+
+export function describeForecastRead(read: SalesforceRead | undefined): ForecastReadLabel {
+  if (!read) {
+    return { label: "not checked", detail: "no Salesforce read was attempted for this deal", tone: "absent" };
+  }
+  switch (read.status) {
+    case "read":
+      return read.snapshot.forecastCategory
+        ? { label: read.snapshot.forecastCategory, detail: "", tone: "neutral" }
+        : {
+            label: "band not set",
+            detail: "the opportunity is open and the rep has left the forecast category blank",
+            tone: "neutral",
+          };
+    case "no_open_opportunity":
+      return {
+        label: "no open opportunity",
+        // The number matters: an account with several closed opportunities and
+        // none open is a deal that resolved in the other CRM, not a new logo
+        // nobody has forecast yet.
+        detail:
+          `the Salesforce account carries ${read.totalOpportunities} opportunit` +
+          `${read.totalOpportunities === 1 ? "y" : "ies"} and none of them is open, so this deal ` +
+          `may have resolved outside DealRipe`,
+        tone: "suspect",
+      };
+    case "no_account":
+      return {
+        label: "not linked to Salesforce",
+        detail: "no Salesforce account is linked, so there is no forecast band to read",
+        tone: "absent",
+      };
+    case "unconfirmed_link":
+      return {
+        label: "link not confirmed",
+        detail:
+          `an account is linked at '${read.confidence ?? "none"}' confidence, below the bar for ` +
+          `attributing its band to this deal`,
+        tone: "absent",
+      };
+    case "unavailable":
+      return {
+        label: "could not read Salesforce",
+        detail: read.error,
+        tone: "suspect",
+      };
+  }
+}
+
 type OppRow = {
   Id: string;
   Name: string;

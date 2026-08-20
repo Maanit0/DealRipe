@@ -468,8 +468,23 @@ export async function computeBuyerSignals(args: {
  *   named and visible rather than buried in a fitted model.
  */
 export type DealAssessment = {
-  /** DealRipe's own band. Null when too little was readable to say anything. */
-  band: "Commit" | "Expect" | "Pipeline" | null;
+  /**
+   * DealRipe's own band, on the SAME ladder the rep forecasts on. Null when too
+   * little was readable to say anything.
+   *
+   * `Omitted` is a rung on purpose, and it was missing until 2026-08-20. The
+   * ladder ran Commit / Expect / Pipeline, so a rep who had omitted a deal
+   * could never be agreed with: seventeen open Magaya deals sat at Omitted and
+   * every one of them rendered as a disagreement DealRipe had not actually
+   * made. A second read that cannot reach the rep's own answer is not a second
+   * read, it is a scale mismatch.
+   *
+   * It runs in both directions and both are useful. Agreeing with an omit says
+   * the evidence backs the rep's own judgement. Disagreeing upward, DealRipe
+   * carrying a deal the rep omitted, is sandbagging, and that is a catch a
+   * leader will pay for.
+   */
+  band: "Commit" | "Expect" | "Pipeline" | "Omitted" | null;
   /** Is this deal moving, and is it moving relative to ITS OWN rhythm. */
   momentum: "advancing" | "steady" | "stalling" | "unknown";
   momentumReason: string;
@@ -689,8 +704,11 @@ export function assessDeal(
     // date has been wrong twice already; the third estimate is not evidence.
     const slipped = s.closeDateSlips.status === "read" && s.closeDateSlips.value >= 2;
 
+    // A deal nobody is talking to does not belong in a forecast, at any rung.
+    // Magaya's dominant recorded loss reason is No Decision / Non-Responsive,
+    // so silence is the single most predictive thing this function reads.
     if (momentum === "stalling") {
-      band = "Pipeline";
+      band = "Omitted";
     } else if (slipped) {
       band = "Expect";
       risks.push("the close date has moved at least twice, so a confident band is not supportable");
@@ -699,9 +717,20 @@ export function assessDeal(
     } else if (momentum === "advancing" && threaded && (buyerIn || committed)) {
       band = "Expect";
     } else if (momentum === "advancing" || threaded) {
+      // Pipeline is now a CLAIM rather than a floor: something positive was
+      // read, either a booked meeting or a buying group wider than one person.
       band = "Pipeline";
     } else {
-      band = "Pipeline";
+      // Nothing positive was readable at all. Until 2026-08-20 this fell
+      // through to Pipeline, which made Pipeline mean two incompatible things
+      // at once, a real early-stage read and "no rung above the floor was
+      // reached". The floor is exactly the codebase's signature failure:
+      // absence of evidence printed as a positive claim.
+      band = "Omitted";
+      risks.push(
+        "no meeting is booked and only one person from their side has spoken, so nothing " +
+          "readable supports carrying this in the forecast",
+      );
     }
   }
 

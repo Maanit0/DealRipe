@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/AppShell";
 import { loadPortfolioRead } from "@/lib/deal-read-portfolio";
+import { describeForecastRead } from "@/lib/salesforce-stage";
 import { buildDealTimeline, type TimelineEntry } from "@/lib/deal-timeline";
 import { repName } from "@/lib/display-names";
 import { readEmailEngagement } from "@/lib/email-log";
@@ -119,6 +120,7 @@ export default async function DealReadPage({
     readEmailEngagement({ tenantId, dealId: deal.id }),
   ]);
   const read = reads[0];
+  const rep = describeForecastRead(read?.crmRead);
 
   return (
     <AppShell active="review" tenant={tenant}>
@@ -131,7 +133,12 @@ export default async function DealReadPage({
         {read && (
           <p className="text-[13px] text-muted mt-1">
             {repName(read.repEmail)} · rep says{" "}
-            <span className="text-ink">{read.crm?.forecastCategory ?? "no band"}</span> · DealRipe says{" "}
+            <span
+              title={rep.detail || undefined}
+              className={rep.tone === "suspect" ? "text-warn" : rep.tone === "absent" ? "text-muted italic" : "text-ink"}
+            >
+              {rep.label}
+            </span> · DealRipe says{" "}
             <span className="text-ink">{read.assessment.band ?? "no read"}</span>,{" "}
             {read.assessment.momentum}
             {read.crm?.closeDate ? ` · closing ${read.crm.closeDate}` : ""} · confidence{" "}

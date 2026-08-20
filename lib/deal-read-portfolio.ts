@@ -16,7 +16,7 @@
 
 import { computeDealFlags, type Flag } from "./deal-flags";
 import { assessDeal, computeBuyerSignals, type BuyerSignals, type DealAssessment } from "./deal-signals-buyer";
-import { resolveSalesforceSnapshots, type SalesforceSnapshot } from "./salesforce-stage";
+import { resolveSalesforceSnapshots, type SalesforceRead, type SalesforceSnapshot } from "./salesforce-stage";
 import {
   closeDateSlipsFor,
   HISTORY_BEGINS,
@@ -32,6 +32,17 @@ export type DealRead = {
   signals: BuyerSignals;
   assessment: DealAssessment;
   crm: SalesforceSnapshot | null;
+  /**
+   * The read ITSELF, not just its payload.
+   *
+   * `crm` is null for four distinguishable reasons and a view that only has
+   * `crm` cannot tell them apart. /read printed all four, plus a genuinely
+   * blank band, as the single phrase "rep says no band", which asserts
+   * something about the rep for 62 of 116 deals where the truth was that the
+   * account has no open opportunity or was never linked. Pass the reason
+   * through and let the reader see which one it is.
+   */
+  crmRead: SalesforceRead | undefined;
   flags: Flag[];
 };
 
@@ -114,6 +125,7 @@ export async function loadPortfolioRead(args: {
         const assessment = assessDeal(signals);
         const read = crmByDeal.get(d.id);
         const crm = read?.status === "read" ? read.snapshot : null;
+
         return {
           dealId: d.id,
           account: d.account,
@@ -121,6 +133,7 @@ export async function loadPortfolioRead(args: {
           signals,
           assessment,
           crm,
+          crmRead: read,
           flags: computeDealFlags({ signals, assessment, crm, now: args.now }),
         };
       }),
