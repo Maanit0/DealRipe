@@ -19,7 +19,15 @@ export type Json =
 export type Tristate = "yes" | "no" | "unknown";
 
 export type PrescriptionKind = "question" | "end_commitment" | "next_step" | "avoid";
-export type PrescriptionSource = "briefing" | "recap";
+/**
+ * Which surface issued the instruction.
+ *
+ * `briefing` and `recap` are triggered by a CALL. `reengage` is triggered by a
+ * flag firing on SILENCE, and carries the deal's last captured call in
+ * call_id, because that is what the silence is measured from. See
+ * supabase/add-reengage-source.sql.
+ */
+export type PrescriptionSource = "briefing" | "recap" | "reengage";
 
 export type Database = {
   public: {

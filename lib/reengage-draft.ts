@@ -46,6 +46,7 @@ import { assessDeal, computeBuyerSignals, type BuyerSignals } from "./deal-signa
 import { allowedMailboxes, createDraft, createReplyDraft, domainOf } from "./graph-mail";
 import { findCustomerThread } from "./followup-draft";
 import { runModel } from "./model-run";
+import { ledgerError, recordPrescriptions } from "./prescription-ledger";
 import { recordSentMessage } from "./sent-messages";
 import { supabaseAdmin } from "./supabase";
 
@@ -103,6 +104,16 @@ export type ReengageDraft = {
   body: string;
   to: string[];
   replyToMessageId: string | null;
+  /**
+   * The last captured call, which this draft is grounded in and which the
+   * silence is measured from.
+   *
+   * Null when the deal has no captured call. That deal gets no ledger row,
+   * which is correct rather than a limitation: a prescription with no call
+   * cannot be scored, and there would be nothing to ground the draft in
+   * either.
+   */
+  groundedInCallId: string | null;
 };
 
 export type ReengageOutcome =
@@ -153,7 +164,7 @@ The subject is ignored when this replies to an existing thread, so write it as t
 async function lastCallContext(
   tenantId: string,
   dealId: string,
-): Promise<{ when: string | null; summary: string } | null> {
+): Promise<{ callId: string; when: string | null; summary: string } | null> {
   const db = supabaseAdmin();
   const call = await db
     .from("calls")
@@ -181,6 +192,7 @@ async function lastCallContext(
     .map((r) => `- ${r.framework_field_key}: ${r.answer}${r.evidence ? ` (they said: "${String(r.evidence).slice(0, 220)}")` : ""}`);
 
   return {
+    callId: c.id,
     when: c.scheduled_start ?? c.call_date,
     summary: [c.title ? `Meeting: ${c.title}` : null, ...lines].filter(Boolean).join("\n"),
   };
@@ -261,6 +273,7 @@ export async function generateReengageDraft(args: {
     body: dedash(parsed.body).trim(),
     to: args.customerEmails,
     replyToMessageId: thread?.id ?? null,
+    groundedInCallId: ctx?.callId ?? null,
   };
 }
 
@@ -334,12 +347,41 @@ export async function createReengageDraft(
     return { status: "failed", account: draft.account, why: err instanceof Error ? err.message : String(err) };
   }
 
+  const tenantId = (
+    await supabaseAdmin().from("deals").select("tenant_id").eq("id", draft.dealId).maybeSingle()
+  ).data?.tenant_id as string;
+
+  // THE LEDGER ROW IS THE POINT, not the email.
+  //
+  // prescribed_actions is the action-outcome dataset, and until now every row
+  // in it was triggered by a call. This is the first instruction DealRipe
+  // issues because something did NOT happen, which is a kind of row no
+  // call-triggered system can produce. Recording it anywhere else would split
+  // the asset in two.
+  //
+  // The text is the flag's MOVE, not the email body: the ledger records what
+  // the rep was told to do, and the draft is the help we gave them doing it.
+  if (draft.groundedInCallId) {
+    const led = await recordPrescriptions({
+      tenantId,
+      dealId: draft.dealId,
+      callId: draft.groundedInCallId,
+      source: "reengage",
+      issuedAt: new Date().toISOString(),
+      prescriptions: [
+        { kind: "next_step", text: draft.flag.move, frameworkFieldKeys: null },
+      ],
+    });
+    if (led.status === "unavailable") {
+      console.warn(`[reengage-draft] ledger write failed for ${draft.account}: ${ledgerError(led.error)}`);
+    }
+  }
+
   // The flag id rides in the archived subject because that is what
   // recentlyDrafted matches on: the cooldown is per flag, not per deal, so a
   // deal that goes quiet and later loses its thread can be drafted for both.
   await recordSentMessage({
-    tenantId: (await supabaseAdmin().from("deals").select("tenant_id").eq("id", draft.dealId).maybeSingle()).data
-      ?.tenant_id as string,
+    tenantId,
     dealId: draft.dealId,
     kind: "reengage_draft",
     toEmail: draft.to.join(", "),
