@@ -45,7 +45,7 @@ import { loadFramework } from "../lib/framework";
 import { formatMeetingTime } from "../lib/graph-time";
 import type { MeetingType } from "../lib/meeting-classify";
 import { buildRecap } from "../lib/recap-build";
-import { renderRecapNote } from "../lib/recap-render";
+import { renderGeneralRecapNote, renderRecapNote } from "../lib/recap-render";
 import { postRecapNote, recapNoteExists } from "../lib/salesforce-note";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
@@ -182,6 +182,8 @@ async function main(): Promise<void> {
   let posted = 0;
   let already = 0;
   let failed = 0;
+  // Posted like any other Note now. Counted separately only so the summary can
+  // say how many carry a readout without a qualification audit.
   let general = 0;
 
   for (const [i, job] of todo.entries()) {
@@ -256,26 +258,34 @@ async function main(): Promise<void> {
         meetingType: (job.call.meeting_type as MeetingType | null) ?? undefined,
       });
 
-      if (built.kind !== "qualification") {
-        // A renewal or support call gets the readout and no qualification
-        // record, which is the documented routing. Counted as itself rather
-        // than as a failure, because it is neither.
-        console.log(`  general ${head}: routed as '${built.kind}', which has no Note artifact`);
-        general += 1;
-        continue;
-      }
-
-      const noteBody = renderRecapNote({
-        account: built.account,
-        callTitle: job.call.title,
-        callAt: formatMeetingTime(job.call.scheduled_start ?? undefined),
-        stageKey: built.stageKey,
-        narrative: built.narrative,
-        demoStrategy: built.demoStrategy,
-        captured: built.summary.captured,
-        stillOpen: built.summary.stillOpen,
-        history: built.history,
-      });
+      // A renewal, support or existing-customer call gets the readout and no
+      // qualification audit, which is the documented routing rather than a
+      // failure. It used to get no Note either, which WAS a failure: three of
+      // Magaya's captured calls fell in that hole, all correctly classified as
+      // existing_customer on accounts carrying Account.Type = Customer.
+      const noteBody =
+        built.kind === "qualification"
+          ? renderRecapNote({
+              account: built.account,
+              callTitle: job.call.title,
+              callAt: formatMeetingTime(job.call.scheduled_start ?? undefined),
+              stageKey: built.stageKey,
+              narrative: built.narrative,
+              demoStrategy: built.demoStrategy,
+              captured: built.summary.captured,
+              stillOpen: built.summary.stillOpen,
+              history: built.history,
+            })
+          : renderGeneralRecapNote({
+              account: built.account,
+              callTitle: job.call.title,
+              callAt: formatMeetingTime(job.call.scheduled_start ?? undefined),
+              meetingType: built.meetingType,
+              narrative: built.narrative,
+              fallback: built.recap,
+              history: null,
+            });
+      if (built.kind !== "qualification") general += 1;
 
       const res = await postRecapNote({
         tenantSlug: SLUG,
@@ -316,7 +326,10 @@ async function main(): Promise<void> {
 
   console.log(`\n${"=".repeat(80)}`);
   if (apply) {
-    console.log(`posted ${posted}, already present ${already}, general-call ${general}, failed ${failed}`);
+    console.log(
+      `posted ${posted}, already present ${already}, failed ${failed}` +
+        (general > 0 ? ` (${general} of the posted are readout-only Notes for non new-business calls)` : ""),
+    );
   } else {
     console.log(`DRY RUN. Nothing generated, nothing written. ${todo.length} would be attempted.`);
     console.log(`Each is three Anthropic passes over a full transcript, roughly 3.5 minutes.`);

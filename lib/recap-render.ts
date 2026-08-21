@@ -221,6 +221,90 @@ export function renderRecapNote(args: {
 }
 
 /**
+ * The Note for a call that is NOT a new-business conversation.
+ *
+ * WHY THIS EXISTS
+ *
+ * renderRecapNote is qualification-only, so a renewal, a support call or an
+ * existing-customer conversation produced a readout for the rep and nothing at
+ * all for the CRM. Three of Magaya's 84 captured calls are in that hole (Best
+ * on 2026-07-16, CBX Global on 07-20 and 07-22), and they are not misfiled: all
+ * three carry Account.Type = Customer, so `existing_customer` is the correct
+ * classification and the missing artifact is the actual gap.
+ *
+ * It matters more than the count suggests. An expansion conversation with a
+ * paying customer is exactly the record a solution engineer wants before the
+ * next call, and Eduardo pastes recaps into Notes by hand precisely for that.
+ *
+ * WHAT IT DELIBERATELY OMITS
+ *
+ * The qualification audit, all of it. docs/recap-target-eduardo.md routes the
+ * audit and only the audit; running it here would tell a customer who has paid
+ * for years that their budget and decision process are open, which is the
+ * renewal-QBR failure the call-type work exists to stop. The narrative runs for
+ * every call type, so what is left is the readout, which is the part a reader
+ * of a Note wants anyway.
+ *
+ * `fallback` is the older shallow shape and is used ONLY when the narrative
+ * pass produced nothing, so a failed pass degrades to a thinner Note rather
+ * than to no Note. A pass that failed says so; it never renders as an empty
+ * section, which would read as "nothing was discussed".
+ */
+export function renderGeneralRecapNote(args: {
+  account: string;
+  callTitle?: string | null;
+  callAt?: string | null;
+  /** How the call was classified, stated plainly so a reader knows why there
+   *  is no qualification section rather than assuming one went missing. */
+  meetingType: string;
+  narrative: PassResult<Narrative>;
+  fallback?: { summary: string; takeaways: string[]; nextSteps: string[] } | null;
+  history: string | null;
+}): string {
+  const out: string[] = [];
+  out.push(`Call recap: ${args.account}`);
+  if (args.callTitle) out.push(args.callTitle);
+  if (args.callAt) out.push(args.callAt);
+  out.push("");
+  out.push(
+    `Classified as ${args.meetingType.replace(/_/g, " ")}, so this is the readout without a ` +
+      `qualification audit. A new-business audit on this call would list gates the account settled long ago.`,
+  );
+  out.push("");
+
+  if (args.narrative.status === "present") {
+    out.push(renderNarrativeProse(args.narrative.value));
+  } else if (args.fallback) {
+    // The narrative failed and the shallow pass did not. Say which, so a thin
+    // Note is legible as a degraded one rather than as a thin conversation.
+    out.push(renderPassGap("NARRATIVE", args.narrative) ?? "");
+    out.push("");
+    out.push("WHAT THE CALL COVERED");
+    out.push(args.fallback.summary);
+    if (args.fallback.takeaways.length > 0) {
+      out.push("");
+      out.push("TAKEAWAYS");
+      out.push(args.fallback.takeaways.map((t) => `  - ${t}`).join("\n"));
+    }
+    if (args.fallback.nextSteps.length > 0) {
+      out.push("");
+      out.push("NEXT STEPS");
+      out.push(args.fallback.nextSteps.map((t) => `  - ${t}`).join("\n"));
+    }
+  } else {
+    out.push(renderPassGap("NARRATIVE", args.narrative) ?? "");
+  }
+
+  if (args.history) {
+    out.push("");
+    out.push("PRIOR CALLS ON THIS DEAL");
+    out.push(args.history);
+  }
+
+  return out.join("\n").trimEnd();
+}
+
+/**
  * The short form, for the email a rep opens on a phone.
  *
  * Four things only: what this account is, what hurts, what we still owe them,
