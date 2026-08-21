@@ -5,6 +5,7 @@ import { ForecastRoomView } from "@/components/ForecastRoom";
 import { ReviewFilterBar } from "@/components/ReviewFilterBar";
 import { attachDoThis } from "@/lib/digest-synthesis";
 import { getForecastRoom, type ForecastRoom } from "@/lib/forecast-room";
+import { getForecastWhy, type ForecastWhy } from "@/lib/forecast-why";
 import { resolveRange, RANGE_LABELS, type RangeKey } from "@/lib/date-range";
 import { getPipelineChanges, type DealChangeRecord, type ChangeEvent } from "@/lib/pipeline-changes";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
@@ -145,13 +146,25 @@ async function MagayaReview({ searchParams }: { searchParams: SP }) {
   const rangeLabel = range.key === "custom" ? `${searchParams.from} to ${searchParams.to}` : RANGE_LABELS[range.key as RangeKey];
 
   let deals: DealChangeRecord[] = [];
+  let why: ForecastWhy | null = null;
   let headline = { totalPipelineAnnual: 0, forecastMix: [], closedWon: 0, closedLost: 0, dealsChanged: 0, dealsNeedingAttention: 0, newOpportunities: 0 } as Awaited<ReturnType<typeof getPipelineChanges>>["headline"];
   try {
     const tenantId = await resolveTenantId(tenant);
-    const pc = await getPipelineChanges(tenantId, { sinceIso: range.sinceIso ?? new Date(Date.now() - 7 * 864e5).toISOString(), untilIso: range.untilIso ?? new Date().toISOString() });
+    const sinceIso = range.sinceIso ?? new Date(Date.now() - 7 * 864e5).toISOString();
+    const untilIso = range.untilIso ?? new Date().toISOString();
+    // In parallel: the state of the pipeline, and the reason it is in that
+    // state. The second is the thing every forecast dashboard is missing.
+    const [pc, w] = await Promise.all([
+      getPipelineChanges(tenantId, { sinceIso, untilIso }),
+      getForecastWhy({ tenantId, sinceIso, untilIso }).catch((err) => {
+        console.error("[review] forecast why failed:", err);
+        return null;
+      }),
+    ]);
     await attachDoThis(pc.deals);
     deals = pc.deals;
     headline = pc.headline;
+    why = w;
   } catch (err) {
     console.error("[review] load failed:", err);
   }
@@ -228,6 +241,12 @@ async function MagayaReview({ searchParams }: { searchParams: SP }) {
 
         <ReviewFilterBar reps={reps} />
         <div className="mt-2 text-[11px] text-muted">Showing {rangeLabel.toLowerCase()}. Amounts are monthly, as in RollDog.</div>
+
+        {/* WHY THE NUMBER MOVED.
+            Above the tiles on purpose. Every forecast dashboard shows the
+            state; a leader opening one after two days away wants the reason it
+            changed, with a name on it. See lib/forecast-why.ts. */}
+        <WhySection why={why} />
 
         {/* Top KPIs: total + forecast categories + closed won (Kent parity) */}
         <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-3">
@@ -424,6 +443,84 @@ function CountCard({ label, value, sub, color }: { label: string; value: number;
       <div className="text-[13px] text-muted">{label}</div>
       <div className={`text-[30px] font-semibold leading-tight mt-0.5 ${color ?? "text-ink"}`}>{value}</div>
       <div className="text-[12px] text-muted mt-0.5">{sub}</div>
+    </div>
+  );
+}
+
+
+/**
+ * What moved the forecast, who moved it, and whether the calls back it.
+ *
+ * Weakening changes lead, because a leader opening this wants the reason the
+ * number went down before anything else. Agreements are collapsed into a count:
+ * a change DealRipe agrees with is not news, and printing all of them would
+ * bury the eight that are.
+ */
+function WhySection({ why }: { why: ForecastWhy | null }) {
+  if (!why) return null;
+
+  // "We did not look" and "nothing moved" must not render the same way.
+  if (why.unavailable) {
+    return (
+      <div className="mt-4 bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+        <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">Why the number moved</div>
+        <p className="text-[13px] text-warn mt-2">
+          Salesforce could not be read, so this section is empty because we did not look, not because
+          nothing changed. {why.unavailable}
+        </p>
+      </div>
+    );
+  }
+
+  const questioned = why.changes.filter((c) => c.evidence.verdict === "contradicts");
+  const agreed = why.changes.filter((c) => c.evidence.verdict === "supports").length;
+  const weakening = why.changes.filter((c) => c.direction === "weakens").length;
+  if (why.changes.length === 0) {
+    return (
+      <div className="mt-4 bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+        <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">Why the number moved</div>
+        <p className="text-[13px] text-muted mt-2">Nothing moved a stage, band, amount or close date in this window.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 bg-white rounded-xl2 shadow-card border border-line px-5 py-4">
+      <div className="flex items-baseline justify-between flex-wrap gap-2">
+        <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">Why the number moved</div>
+        <div className="text-[12px] text-muted">
+          {why.changes.length} change{why.changes.length === 1 ? "" : "s"} on tracked deals
+          {weakening > 0 ? `, ${weakening} of them downward` : ""}
+          {why.unattributed > 0 ? ` · ${why.unattributed} more on accounts no deal is linked to` : ""}
+        </div>
+      </div>
+
+      {questioned.length === 0 ? (
+        <p className="text-[13px] text-muted mt-3">
+          Every change in this window is backed by what the calls show. {agreed} checked.
+        </p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {questioned.slice(0, 8).map((c, i) => (
+            <div key={i} className="border-l-2 border-warn/40 pl-3">
+              <div className="text-[13px] text-ink">
+                <span className="font-medium">{c.account}.</span> {c.headline}
+              </div>
+              {/* The verdict is the whole point. A changelog says a date moved;
+                  this says whether the customer ever agreed to one. */}
+              <div className="text-[12px] text-warn mt-0.5">{c.evidence.text}</div>
+            </div>
+          ))}
+          {questioned.length > 8 && (
+            <div className="text-[12px] text-muted">
+              and {questioned.length - 8} more the calls do not support
+            </div>
+          )}
+          <div className="text-[12px] text-muted pt-1">
+            {agreed} other change{agreed === 1 ? " is" : "s are"} backed by what the calls show and are not listed.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
