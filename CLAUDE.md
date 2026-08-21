@@ -446,6 +446,89 @@ disagree with the code it checks will, and it will do so confidently.
 There is an outstanding pass to do: grep for `catch { ... = null }` and give each
 one a distinguishable failure result.
 
+**A flag that fires on most of the book is not a flag.** `emailing_without_reply`
+fired on 67 of 112 open deals, 60%, because `awaitingReply` is a STATE: it is
+true the moment a rep sends a follow-up, which is the normal condition of a live
+conversation. The signal was honest and the flag was naive. The DURATION is what
+turns a state into a judgement, and `daysSinceOurMessage` was already computed in
+`lib/email-log.ts` and never surfaced. Gated at seven calendar days, five
+working, so a Friday send is not flagged on Wednesday: 67 became 12. Exposing
+that signal also pushed nine deals over the readable-signal threshold, so
+`insufficient_evidence` fell 41 to 32. Check every new flag's fire rate across
+the whole book before shipping it; the target shape is roughly 1 flag per deal
+with a third of deals carrying none.
+
+**A null CRM read silenced the entire flag engine for a deal.** Every
+band-versus-evidence flag was gated on `bandRank`, so a deal whose Salesforce
+read came back empty produced NO flags at all. Three of the six deals the Monday
+digest prints carry no open opportunity, so GHY, with four critical gates open,
+no economic buyer and nothing booked, produced zero flags, and Dunavant, a $293k
+deal advancing with no economic buyer ever on a call, produced zero because that
+check required a Commit band. Absence of a CRM read rendered as absence of a
+problem, inside the flag engine itself. `no_open_opportunity`,
+`no_economic_buyer_while_progressing` and `never_heard` need no band, and the
+read STATUS is now passed to `computeDealFlags` alongside the snapshot, because
+five distinguishable reads collapsing into one null is what caused it.
+
+**A whole-run Salesforce failure is invisible unless a caller says so.**
+`loadCloseDateHistoryForAccounts` is one call covering every account and is
+correctly fail-closed, so a transient failure removes the close-date dimension
+for EVERYONE at once. Two runs minutes apart with identical code produced 11
+deals flagged as repeatedly pushed and then 0. `loadPortfolioRead` swallowed it
+entirely, so the output was indistinguishable from a week where no date moved.
+Use `loadPortfolioReadWithNotes` where a reader needs to know, and the failure
+is logged loudly either way.
+
+**Salesforce field history carries `CreatedBy`, so "who moved the number" was
+always one column away.** `lib/forecast-why.ts` joins it to the calls: a close
+date pushed where no call ever validated one is a different event from one
+pushed after the customer named a date out loud. Live over 7 days: 106 changes
+on tracked deals, 28 downward, concentrated as 15 amount changes with no budget
+established, 11 close-date pushes with no date ever validated, 9 band raises
+with no economic buyer. Two verdict bugs are worth not repeating: Closed Won
+fell through to the gates branch and told a leader DealRipe DISAGREED with a
+deal closing WON, and a rep typing into a blank Amount was called a
+contradiction because gates were open. Open gates are context, not a verdict. A
+section whose verdicts are wrong is worse than one with no verdicts, because a
+leader argues with it once and never opens it again.
+
+**A rep marking a deal Closed Lost is usually telling the truth.** Optimism runs
+the other way: reps inflate bands and push dates, they do not invent losses,
+because a loss comes out of their own number. So agree by default and put the
+burden on disagreeing. Two exceptions are worth saying: a deal closed while a
+meeting is booked or the customer wrote in the last week, and a SWEEP.
+`detectLossBatches` groups closes per actor inside a 15-minute window and counts
+distinct deals, which finds the 2026-08-07 Mitch Nemmers event automatically for
+the first time and reports it as one hygiene sweep rather than four losses.
+
+**A win is not undone by other business being open.** `run-outcome-sync`
+reported `closedWon: 0` for weeks while field history showed three Closed Won
+moves in one week. Any open opportunity returned `open_with_recent_close`, which
+is reported and never labelled. That conservatism is right for a LOSS, since the
+open opportunity may BE this deal, and wrong for a win. A win now labels with
+`concurrentOpen` carrying the count so the claim stays auditable. The check that
+it is not simply looser: Zasbyjmc was already labelled, and Ncven has no
+captured call at all, so every close is historical and DealRipe declines to
+claim a win on a deal it never observed.
+
+**The Kiddom flag catalogue's Low band is the MOST certain, not the least.** Its
+own evidence table requires "Committed stage, clear customer commitment, engaged
+economic buyer, validated close date" for Low, and calls High "credible upside,
+not a storage bucket for stale deals". So Low is Commit, Medium is Expect, High
+is Pipeline. Read the intuitive way, all 21 forecast-validation flags invert.
+`Opportunity.NextStep` is populated on 34 of 4,443 open opportunities, 0.8%, so
+the four catalogue flags built on it would fire on 99.2% of the book: write that
+field from our extracted next step rather than flagging its absence. Full audit
+in `docs/flag-catalogue.md`.
+
+**The Monday digest had two rankings and nothing reconciled them.**
+`getPipelineChanges` sorts by attention score, `attachDoThis` wrote its LLM
+action onto the first 8 of that, and the email re-sorted by annual value and
+printed 6. Four of the six deals Mark reads carried only fallback text,
+including the two largest, and 6 of 8 model calls went to deals he never saw.
+`lib/digest-priority.ts` is the single order now, on recoverable value, and the
+synthesis follows the display order rather than leading it.
+
 **Capture failures are admission failures, not recording failures.** Fourteen
 calls carried "bot done but media unavailable". Not one had lost media: thirteen
 bots were never admitted to the meeting and one had a dead join link. The cause
@@ -696,10 +779,9 @@ has looked closely enough to be specific.
 
 **The distance to what the decks promise**
 
-- The learning loop. `outcome-sync` runs daily, produces nothing, and nothing
-  consumes it. It is broken at the identifier (see the won/lost fact above): fix
-  the deal-to-Opportunity mapping and the empty allowlist FIRST, but do it to
-  catch pilot deals as they close, NOT because a training backlog exists: only 7
+- The learning loop. `outcome-sync` now resolves and labels correctly (1 won and
+  3 lost applied 2026-08-20, 105 snapshots and 8 prescriptions backfilled with an
+  outcome) and nothing consumes it yet. That is the remaining half. Note only 7
   closed opportunities have a DealRipe call before the close, and 5 of those are
   one hygiene sweep. Until this runs, "learns your winning sales motion" is a
   claim, not a feature, and it stays a claim for months after it runs.
