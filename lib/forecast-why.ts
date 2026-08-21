@@ -85,6 +85,72 @@ export type ForecastChange = {
     | { verdict: "no_evidence"; text: string };
 };
 
+/**
+ * Several deals closed by one person in one sitting.
+ *
+ * Not a property of any single deal, so it cannot be computed inside
+ * evidenceFor and is passed in.
+ */
+type LossBatch = { count: number; spanMinutes: number };
+
+/**
+ * How close together two closes must be to be the same sitting.
+ *
+ * Fifteen minutes rather than the ninety seconds the known sweep actually
+ * took, because a person working through a list pauses. The threshold only has
+ * to separate "working a list" from "two deals died this week".
+ */
+const SWEEP_WINDOW_MIN = 15;
+
+/** Below this it is a coincidence, not a sweep. */
+const SWEEP_MIN_DEALS = 3;
+
+/**
+ * Group Closed Lost changes into sittings, keyed by the change that belongs to
+ * each. Grouped per ACTOR: two managers closing deals the same afternoon are
+ * two events, not one.
+ */
+function detectLossBatches(
+  staged: ReadonlyArray<Omit<ForecastChange, "headline" | "evidence">>,
+): Map<Omit<ForecastChange, "headline" | "evidence">, LossBatch> {
+  const out = new Map<Omit<ForecastChange, "headline" | "evidence">, LossBatch>();
+  const losses = staged.filter((c) => c.field === "StageName" && /closed lost/i.test(c.to ?? ""));
+  const byActor = new Map<string, typeof losses>();
+  for (const l of losses) (byActor.get(l.actor) ?? byActor.set(l.actor, []).get(l.actor)!).push(l);
+
+  for (const list of byActor.values()) {
+    const ordered = [...list].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    let run: typeof ordered = [];
+    const flush = () => {
+      // One deal can carry several StageName rows; the sweep is about how many
+      // distinct DEALS were closed, not how many rows were written.
+      const deals = new Set(run.map((r) => r.dealId));
+      if (deals.size >= SWEEP_MIN_DEALS) {
+        const span = Math.max(
+          1,
+          Math.round((Date.parse(run[run.length - 1].at) - Date.parse(run[0].at)) / 60_000),
+        );
+        for (const r of run) out.set(r, { count: deals.size, spanMinutes: span });
+      }
+      run = [];
+    };
+    for (const l of ordered) {
+      if (run.length === 0) {
+        run = [l];
+        continue;
+      }
+      const gapMin = (Date.parse(l.at) - Date.parse(run[run.length - 1].at)) / 60_000;
+      if (gapMin <= SWEEP_WINDOW_MIN) run.push(l);
+      else {
+        flush();
+        run = [l];
+      }
+    }
+    flush();
+  }
+  return out;
+}
+
 export type ForecastWhy = {
   changes: ForecastChange[];
   /** Salesforce changes on accounts we could not map to a tracked deal. Counted
@@ -169,6 +235,7 @@ function evidenceFor(
   c: Omit<ForecastChange, "headline" | "evidence">,
   s: BuyerSignals,
   flags: Flag[],
+  batch: LossBatch | null,
 ): ForecastChange["evidence"] {
   if (c.field === "CloseDate") {
     const gaps = s.criticalGapsOpen;
@@ -220,9 +287,52 @@ function evidenceFor(
 
   if (c.field === "StageName") {
     if (/closed lost/i.test(c.to ?? "")) {
+      // A REP MARKING A DEAL LOST IS USUALLY TELLING THE TRUTH, so this agrees
+      // by default and the burden is on disagreeing. Optimism runs the other
+      // way: reps inflate bands and push dates, they do not invent losses,
+      // because a loss is a costly admission and it comes out of their number.
+      //
+      // Two things are still worth saying, and both are cheap to be wrong
+      // about in the safe direction.
+
+      // ONE: the buyer had not actually gone anywhere. A deal closed while a
+      // meeting is on the calendar or the customer wrote days ago is a rep or a
+      // manager giving up on something still live, and it is the only shape of
+      // premature loss worth interrupting a CRO for.
+      const next = s.nextMeetingBooked;
+      const mailDays = s.daysSinceCustomerReply.status === "read" ? s.daysSinceCustomerReply.value : null;
+      if (next.status === "read" && next.value) {
+        return { verdict: "contradicts", text: `closed lost while ${next.evidence}` };
+      }
+      if (mailDays !== null && mailDays <= 7) {
+        return {
+          verdict: "contradicts",
+          text: `closed lost, and the customer wrote ${mailDays} day(s) ago. Worth asking before this counts as a loss.`,
+        };
+      }
+
+      // TWO: this is one of several closed at once, which is a fact about the
+      // DATA rather than about the deal.
+      //
+      // Already learned here the expensive way and never detected automatically
+      // until now: Mitch Nemmers closed Dpworld, GUYWBD, Air Americas and
+      // Extrum within 90 seconds of each other at 2026-08-07T18:28, and
+      // Successchb on 08-11, every one reason No Decision / Non-Responsive.
+      // That is a VP running a hygiene sweep over deals that went dark, not
+      // five competitive losses. Read as five, DealRipe-observed deals appear
+      // to lose at 71% against Magaya's 77% historical win rate. Both figures
+      // are noise, and the learning loop must count the sweep once.
       const days = s.daysSinceLastCall.status === "read" ? s.daysSinceLastCall.value : null;
+      if (batch && batch.count >= 3) {
+        return {
+          verdict: "supports",
+          text:
+            `one of ${batch.count} deals ${c.actor} closed within ${batch.spanMinutes} minute(s). ` +
+            `That is a hygiene sweep rather than ${batch.count} separate losses, and it should count once.`,
+        };
+      }
       return days === null
-        ? { verdict: "no_evidence", text: "no captured call on this deal" }
+        ? { verdict: "no_evidence", text: "no captured call on this deal, so nothing here confirms or questions the loss" }
         : { verdict: "supports", text: `last captured conversation was ${days} days ago` };
     }
     // A WON deal is not something to disagree with. The first version fell
@@ -387,13 +497,14 @@ export async function getForecastWhy(args: {
     }
   }
 
+  const batches = detectLossBatches(staged);
   const changes: ForecastChange[] = staged.map((c) => {
     const sig = signalsByDeal.get(c.dealId);
     return {
       ...c,
       headline: headlineOf(c),
       evidence: sig
-        ? evidenceFor(c, sig.signals, sig.flags)
+        ? evidenceFor(c, sig.signals, sig.flags, batches.get(c) ?? null)
         : { verdict: "no_evidence" as const, text: "the deal's signals could not be computed" },
     };
   });
