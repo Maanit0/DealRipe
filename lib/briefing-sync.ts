@@ -13,6 +13,8 @@
  * on. Never throws mid-scan for a single bad meeting.
  */
 
+import { computeDealFlags, renderFlagsForBriefing } from "./deal-flags";
+import { assessDeal, computeBuyerSignals } from "./deal-signals-buyer";
 import { generateBriefingFromState } from "./generate-briefing";
 import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
@@ -423,10 +425,31 @@ async function processEvent(
     return;
   }
 
+  // DealRipe's MEASURED flags, so the briefing's signal is a fact rather than
+  // something the model inferred from the qualification fields. Days of silence
+  // against this deal's own cadence, close-date movement, an unanswered thread:
+  // none of that is in the extraction, so the prompt could not have known it.
+  //
+  // Best effort and deliberately non-fatal. A briefing without its signal flag
+  // is a smaller loss than a rep walking into a call with no briefing at all,
+  // which is what a throw here would produce.
+  let dealFlags: string | null = null;
+  try {
+    const signals = await computeBuyerSignals({ tenantId, dealId: ctx.dealId });
+    dealFlags = renderFlagsForBriefing(
+      computeDealFlags({ signals, assessment: assessDeal(signals) }),
+    );
+  } catch (err) {
+    console.warn(
+      `[briefing-sync] flags unavailable for ${ctx.account}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
     attendees: attendees ?? `the ${ctx.account} team`,
     callType,
+    dealFlags,
     // The calendar title is the only signal we have about what kind of call
     // this is before it happens. Without it every briefing for an account with
     // no captured history reads as a first discovery call.

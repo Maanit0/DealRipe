@@ -542,3 +542,32 @@ export function computeDealFlags(args: {
   const rank: Record<FlagSeverity, number> = { critical: 0, warning: 1, watch: 2 };
   return flags.sort((x, y) => rank[x.severity] - rank[y.severity]);
 }
+
+
+/**
+ * The flags, rendered for a briefing prompt.
+ *
+ * WHY A RENDERER RATHER THAN HANDING OVER THE OBJECTS
+ *
+ * A briefing is read live on a call, and two of the three fields on a Flag are
+ * for a different reader. `move` is written for a leader or for the rep's own
+ * planning ("move the band", "or stop working it"), and a rep who reads that
+ * out on a call has said something about our forecast to a customer, which the
+ * briefing rules forbid outright. So only the title and the evidence cross
+ * over, and the prompt is told these are the ONLY acceptable basis for the
+ * signal flag.
+ *
+ * `watch` is dropped. A briefing carries one signal flag, so a list that
+ * includes the low-severity ones just gives the model more to choose wrongly
+ * from.
+ *
+ * Returns null rather than an empty string when there is nothing, so the
+ * prompt block is omitted entirely instead of appearing with nothing under it.
+ */
+export function renderFlagsForBriefing(flags: Flag[]): string | null {
+  const useful = flags
+    .filter((f) => f.severity !== "watch")
+    .filter((f) => f.audience.includes("rep") || f.severity === "critical");
+  if (useful.length === 0) return null;
+  return useful.map((f) => `- ${f.title}. ${f.evidence}`).join("\n");
+}

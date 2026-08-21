@@ -88,6 +88,14 @@ export type BriefingState = {
   rolldogNarrative?: string | null;
   /** What kind of call this is, resolved pre-call. See lib/call-type-precall.ts. */
   callType?: PreCallTypeRead | null;
+  /**
+   * DealRipe's measured flags on this deal, rendered for the prompt.
+   *
+   * Optional and absent by default, so every existing caller behaves exactly as
+   * before. See renderFlagsForBriefing in lib/deal-flags.ts for why the model
+   * must not infer these.
+   */
+  dealFlags?: string | null;
 };
 
 /**
@@ -130,6 +138,7 @@ export async function generateBriefingFromState(
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
     callType: state.callType,
+    dealFlags: state.dealFlags,
     today: new Date().toISOString().slice(0, 10),
   });
 

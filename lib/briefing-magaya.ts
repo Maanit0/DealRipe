@@ -117,7 +117,7 @@ Rules:
 11. Prefer questions that uncover unknowns the agent cannot know (the customer's procurement steps, signing path, legal sequence, internal timeline). Serve the question, do not assume the answer.
 12. "callObjective" is what you want the CUSTOMER to DO by the end of the call (a concrete action or commitment), not what to confirm. Name the person or action.
 13. "whatsAtRisk" is what slips if the call goes badly, stated in the customer's own compelling-event or timeline words where available.
-14. "signalFlag" is one short flag ONLY if there is a live risk worth surfacing (economic buyer not engaged, deal stalled, competitor ahead, close date unvalidated). Otherwise null.
+14. "signalFlag" is one short flag ONLY if there is a live risk worth surfacing. When the user message carries a WHAT DEALRIPE HAS FLAGGED block, signalFlag MUST come from it and must not be invented: those flags are measured (days of silence against this deal's own cadence, how far and how often the close date has moved, whether we are waiting on a reply, whether the rep's band is ahead of the evidence) and the qualification fields alone cannot tell you any of them. Pick the single most consequential one and say it in the rep's language. If that block is absent or empty, signalFlag is null.
 15. Do not invent facts that are not in the provided state.
 15a. "Unknown" on a field means DEALRIPE HAS NOT HEARD IT, not that the customer has not decided it. Never say or imply otherwise. "whereItStands" describes the DEAL, never our own record: no "zero prior qualification data", no "all qualification fields are blank", no "nothing is on record", no "qualification record is empty". A rep does not care what our database holds, and telling them it is empty reads as an apology. If we truly know nothing about the deal, say what the call itself is and what you need out of it, for example "First working session on their inbond filings, so the job is to learn how they run today and leave with a dated next step."
 16. Be brief and scannable, the rep reads this live on a call. callObjective, nextStepCommitment, whatsAtRisk and signalFlag are ONE tight sentence each, at most about 22 words, no run-ons and no lists. "whereItStands" is the exception, and the test is whether there is real material to carry, not which block it came from. Where you hold specifics, from SINCE LAST CALL, the rep checklist or the BDR record, it may run to four or five sentences, because naming what the customer said, what we owe them and what is at stake is worth more than brevity. Where you hold nothing specific, one sentence, because padding out an empty record is how a briefing becomes filler. Each question "ask" is at most about 18 words. Each "why" is one short line, at most about 14 words. Favor fewer words over completeness.
@@ -191,6 +191,22 @@ export function buildMagayaBriefingUserMessage(args: {
    * guidance, which is what the prompt had on its own.
    */
   callType?: PreCallTypeRead | null;
+  /**
+   * DealRipe's computed flags on this deal, as facts.
+   *
+   * Rule 14 asks the model to notice "a live risk worth surfacing", which means
+   * signalFlag has always been INFERRED from the same qualification state the
+   * rest of the briefing reads. Everything that makes those risks knowable is
+   * computed deterministically elsewhere and was not reaching the prompt: how
+   * long the customer has been silent measured against this deal's own rhythm,
+   * how many times the close date has moved and by how much, whether we are
+   * waiting on a reply, whether the rep's band is ahead of the evidence.
+   *
+   * None of that is in the extraction, so the model could not have known it,
+   * and a flag it invented from an empty field is a guess wearing a fact's
+   * clothes. Passed in as text so the prompt states rather than deduces.
+   */
+  dealFlags?: string | null;
 }): string {
   const { framework, extraction } = args;
 
@@ -255,6 +271,18 @@ export function buildMagayaBriefingUserMessage(args: {
 
   if (args.history) {
     lines.push(``, `SINCE LAST CALL:`, args.history);
+  }
+
+  if (args.dealFlags) {
+    // Above the plays and below the history: it is more current than the
+    // reference material and less specific than what the customer last said.
+    lines.push(
+      ``,
+      `WHAT DEALRIPE HAS FLAGGED ON THIS DEAL. These are measured, not inferred, and`,
+      `are the only acceptable basis for "signalFlag". Do not invent a risk that is`,
+      `not here, and do not repeat one verbatim to the customer in an "ask".`,
+      args.dealFlags,
+    );
   }
 
   // What kind of call this is, RESOLVED, not left for the model to infer.
