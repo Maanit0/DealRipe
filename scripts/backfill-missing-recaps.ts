@@ -28,6 +28,7 @@
  * title, exactly as scripts/preview-recap.ts --post-note produces one at a time.
  *
  *   npx tsx scripts/backfill-missing-recaps.ts               dry run, lists the work
+ *   npx tsx scripts/backfill-missing-recaps.ts --deal cbxglobal
  *   npx tsx scripts/backfill-missing-recaps.ts --open-only   skip resolved deals
  *   npx tsx scripts/backfill-missing-recaps.ts --limit 2 --apply
  *   npx tsx scripts/backfill-missing-recaps.ts --apply       WRITES, ~3.5 min a call
@@ -45,7 +46,7 @@ import { formatMeetingTime } from "../lib/graph-time";
 import type { MeetingType } from "../lib/meeting-classify";
 import { buildRecap } from "../lib/recap-build";
 import { renderRecapNote } from "../lib/recap-render";
-import { postRecapNote } from "../lib/salesforce-note";
+import { postRecapNote, recapNoteExists } from "../lib/salesforce-note";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
@@ -79,6 +80,7 @@ type CallRow = {
 async function main(): Promise<void> {
   const apply = process.argv.includes("--apply");
   const openOnly = process.argv.includes("--open-only");
+  const onlyDeal = arg("--deal")?.toLowerCase();
   const limit = Number(arg("--limit") ?? Number.MAX_SAFE_INTEGER);
 
   const db = supabaseAdmin();
@@ -159,6 +161,7 @@ async function main(): Promise<void> {
       skips.push({ label, when, why: "deal has no stage_key, and a stage is not something to invent" });
       continue;
     }
+    if (onlyDeal && !deal.account.toLowerCase().includes(onlyDeal)) continue;
     const body = transcriptOf.get(call.id) ?? "";
     if (body.trim().length < 50) {
       skips.push({
@@ -191,6 +194,29 @@ async function main(): Promise<void> {
 
     const started = Date.now();
     try {
+      // ASK BEFORE GENERATING. postRecapNote does this same lookup, but only
+      // after a body exists, and a body is three model passes over a full
+      // transcript. Re-running this script regenerated nine recaps that already
+      // had Notes before discovering it, roughly forty minutes to learn
+      // nothing. An 'unknown' lookup is not treated as absent: it skips, since
+      // a duplicate recap in front of a customer costs more than a missing one.
+      const present = await recapNoteExists({
+        tenantSlug: SLUG,
+        accountId: job.deal.salesforce_account_id as string,
+        account: job.deal.account,
+        callAt: job.call.scheduled_start,
+      });
+      if (present.state === "found") {
+        already += 1;
+        console.log(`  already ${head}  (${present.id})`);
+        continue;
+      }
+      if (present.state === "unknown") {
+        failed += 1;
+        console.log(`  FAILED  ${head}: could not check for an existing Note (${present.why})`);
+        continue;
+      }
+
       const framework = await loadFramework(tenantId, job.deal.framework_id as string);
       if (!framework) {
         console.log(`  FAILED ${head}: framework load returned null`);

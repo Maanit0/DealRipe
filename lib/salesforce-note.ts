@@ -85,6 +85,35 @@ async function existingNote(
   return hit ? { state: "found", id: hit.ContentDocumentId } : { state: "absent" };
 }
 
+/**
+ * Is a recap Note for this call already on the record, WITHOUT rendering one.
+ *
+ * postRecapNote does the same lookup, but only after its caller has built a
+ * body, and building one costs three model passes over a full transcript. That
+ * is fine for a single call and absurd for a sweep: re-running the twelve-call
+ * backfill regenerated nine recaps that already had Notes, roughly forty
+ * minutes and real money, to learn nothing.
+ *
+ * Three-way for the same reason existingNote is. A failed lookup reported as
+ * "absent" would send a caller off to generate and then write a duplicate in
+ * front of a customer's solution engineer.
+ */
+export async function recapNoteExists(args: {
+  tenantSlug: string;
+  accountId: string;
+  account: string;
+  callAt: string | null;
+}): Promise<{ state: "found"; id: string } | { state: "absent" } | { state: "unknown"; why: string }> {
+  try {
+    const { token, instanceUrl } = await getSalesforceClient();
+    return await runWithAuthorizedAccounts([args.accountId], () =>
+      existingNote(instanceUrl, token, args.accountId, recapNoteTitle(args.account, args.callAt)),
+    );
+  } catch (err) {
+    return { state: "unknown", why: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** ContentNote.Content is base64-encoded HTML, not plain text. */
 function toNoteContent(body: string): string {
   const escaped = body
