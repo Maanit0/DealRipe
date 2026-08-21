@@ -286,6 +286,24 @@ export function renderPipelineDigestEmail(args: {
     .filter((d) => d.noShowInWindow)
     .sort((a, b) => Date.parse(b.lastConversationAt ?? "") - Date.parse(a.lastConversationAt ?? ""))
     .slice(0, 6);
+  // A deal that leaves the attention list must not leave the digest. These are
+  // quiet past three weeks with nothing booked, so they are genuinely at risk
+  // and genuinely not rescuable by an agenda item, which is a different
+  // conversation rather than a lower priority. Dropping them silently is how
+  // No Decision / Non-Responsive stays Magaya's most recorded loss reason.
+  const dark = priority.goingDark.slice(0, 6);
+  const darkRows = dark
+    .map(
+      (g, i) => `
+      <tr>
+        <td valign="top" width="18" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${AMBER};font-weight:700;">&#9679;</td>
+        <td valign="top" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(g.deal.account, g.deal.dealId)}.</strong> ${
+          g.daysQuiet === null ? "No conversation on record." : `Quiet ${g.daysQuiet} days.`
+        } ${esc(g.deal.repName)}${g.deal.dealSizeAnnual ? `, ${money(g.deal.dealSizeAnnual)}` : ""}.</td>
+      </tr>`,
+    )
+    .join("");
+
   const h = pc.headline;
 
   // Blocker texts already printed in full on an earlier card this send.
@@ -345,7 +363,7 @@ export function renderPipelineDigestEmail(args: {
       const dot = sev === "high" ? RED : sev === "med" ? AMBER : MUTED;
       const moveColor = d.movement.direction === "forward" ? GREEN : d.movement.direction === "backward" ? RED : MUTED;
       const facts = d.inRolldog
-        ? `${esc(d.stageName ?? "—")} &middot; ${esc(d.forecastCategory ?? "—")} &middot; closes ${esc(dstr(d.closeDate) || "—")} &middot; ${d.dealSizeAnnual ? esc(money(d.dealSizeAnnual)) + "/yr" : "size —"} &middot; ${esc(d.repName)}`
+        ? `${esc(d.stageName ?? "no stage")} &middot; ${esc(d.forecastCategory ?? "no band")} &middot; closes ${esc(dstr(d.closeDate) || "no date")} &middot; ${d.dealSizeAnnual ? esc(money(d.dealSizeAnnual)) + "/yr" : "size not recorded"} &middot; ${esc(d.repName)}`
         : `Not in Rolldog yet &middot; ${esc(d.repName)}`;
       // The hero when it exists: DealRipe rates the deal below the rep's forecast.
       // This is the "you're committing this but it's soft" moment Mark cares most about.
@@ -487,6 +505,16 @@ export function renderPipelineDigestEmail(args: {
   ${attention.length ? attentionCards : `<tr><td style="padding-top:12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${CARD};border:1px solid ${BORDER};border-radius:14px;"><tr><td style="padding:20px 22px;font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">Nothing needs your attention this week.</td></tr></table></td></tr>`}
 
   ${
+    darkRows
+      ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
+    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 6px 0;">Going quiet</div>
+    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">Nobody has spoken to these and nothing is booked. They are not on the list above because a Monday agenda item will not rescue them. Each one needs a decision: work it deliberately, or stop.</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${darkRows}</table>
+  </td></tr>`
+      : ""
+  }
+
+  ${
     noShows.length
       ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
     <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 14px 0;">No-shows</div>
@@ -505,7 +533,7 @@ export function renderPipelineDigestEmail(args: {
   t.push("", "DEALS TO LOOK AT");
   if (attention.length)
     attention.forEach((d, i) => {
-      t.push(`${i + 1}. ${d.account} (${d.stageName ?? "—"}, ${d.forecastCategory ?? "—"}, closes ${dstr(d.closeDate) || "—"})`);
+      t.push(`${i + 1}. ${d.account} (${d.stageName ?? "no stage"}, ${d.forecastCategory ?? "no band"}, closes ${dstr(d.closeDate) || "no date"})`);
       if (fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory)) t.push(`   ${d.repName} has this at ${d.forecastCategory}, DealRipe rates it ${d.dealRipeCategory}: ${d.blockers[0] ?? ""}`);
       t.push(`   Moved this week: ${d.movement.summary}`);
       const fcMoveT = d.changes.find((c) => c.kind === "forecast" && c.from && c.to && c.from !== c.to);
@@ -516,6 +544,13 @@ export function renderPipelineDigestEmail(args: {
       t.push(`   Rep's next move: ${d.doThis ?? doThisText(d)}`);
     });
   else t.push("- Nothing needs attention.");
+  if (dark.length) {
+    t.push("", "GOING QUIET");
+    t.push("Nobody has spoken to these and nothing is booked. Each needs a decision: work it deliberately, or stop.");
+    for (const g of dark) {
+      t.push(`- ${g.deal.account}. ${g.daysQuiet === null ? "No conversation on record." : `Quiet ${g.daysQuiet} days.`} ${g.deal.repName}`);
+    }
+  }
   if (noShows.length) {
     t.push("", "NO-SHOWS");
     for (const d of noShows) t.push(`- ${d.account}: ${dstr(d.lastConversationAt) || "recent"} meeting${d.primaryContact ? ` with ${d.primaryContact.name}` : ""} was a no-show.`);

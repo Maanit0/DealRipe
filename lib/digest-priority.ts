@@ -107,7 +107,7 @@ export type DigestPriority = {
    * is Magaya's most recorded loss reason and deleting it from the digest is
    * how it stays that way.
    */
-  goingDark: DealChangeRecord[];
+  goingDark: Array<{ deal: DealChangeRecord; daysQuiet: number | null }>;
   /**
    * Deals with no value in Rolldog, split by whether they made the cut.
    *
@@ -169,7 +169,7 @@ export function rankForDigest(
   const limit = opts.limit ?? DIGEST_ATTENTION_LIMIT;
 
   const attention = deals.filter((d) => d.needsAttention);
-  const goingDark: DealChangeRecord[] = [];
+  const goingDark: Array<{ deal: DealChangeRecord; daysQuiet: number | null }> = [];
   const scored: DigestRank[] = [];
 
   // Risk is relative to THIS week's book, not to an absolute scale. A week
@@ -181,7 +181,9 @@ export function rankForDigest(
   for (const d of attention) {
     const quiet = daysQuiet(d, now);
     const { f, why } = fixability(d, quiet);
-    if (f <= 0.25) goingDark.push(d);
+    // Carries the number, so the email states the silence rather than asserting
+    // it. "Quiet 34 days" is a fact a leader can act on; "going quiet" is a mood.
+    if (f <= 0.25) goingDark.push({ deal: d, daysQuiet: quiet });
 
     const known = d.dealSizeAnnual !== null && d.dealSizeAnnual > 0;
     const annual = known ? (d.dealSizeAnnual as number) : UNKNOWN_ANNUAL;
@@ -214,6 +216,8 @@ export function rankForDigest(
   }
 
   scored.sort((a, b) => b.score - a.score || a.deal.account.localeCompare(b.deal.account));
+  // Longest silent first: the ones closest to being unrecoverable lead.
+  goingDark.sort((a, b) => (b.daysQuiet ?? 0) - (a.daysQuiet ?? 0));
   const ranked = scored.slice(0, limit);
 
   return {
