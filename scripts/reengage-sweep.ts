@@ -151,6 +151,32 @@ async function main(): Promise<void> {
       skips.push({ account: r.account, why: "no rep email on the deal, so there is no mailbox to draft into" });
       continue;
     }
+    // NEVER WRITE TO A CUSTOMER WHOSE DEAL IS OVER.
+    //
+    // loadPortfolioRead drops deals carrying an outcome_label, but a label only
+    // exists once outcome-sync --apply has run, and it runs once a day at 06:00.
+    // A deal that closed since then is still "open" to this sweep. Caught for
+    // real on 2026-08-20: this script generated a re-engagement draft for
+    // Aeronet offering to send workflow videos, and Salesforce had marked that
+    // opportunity Closed Lost that same day, reason Executive Alignment.
+    //
+    // no_open_opportunity is the live read and means every opportunity on the
+    // account is closed. It is exactly the state that used to render as "the
+    // rep set no forecast band", and here it is the difference between a useful
+    // draft and one that would embarrass a rep in front of a customer.
+    if (r.crmRead?.status === "no_open_opportunity") {
+      skips.push({
+        account: r.account,
+        why: "every opportunity on the Salesforce account is closed, so this deal is over",
+      });
+      continue;
+    }
+    if (r.crmRead?.status === "unavailable") {
+      // Fail closed. Not knowing whether the deal is still live is a reason not
+      // to mail the customer, not a reason to assume it is.
+      skips.push({ account: r.account, why: `could not read Salesforce to confirm the deal is live (${r.crmRead.error})` });
+      continue;
+    }
     if (await recentlyDrafted(r.dealId, flag.id)) {
       skips.push({ account: r.account, why: `already drafted for '${flag.id}' inside the cooldown` });
       continue;
