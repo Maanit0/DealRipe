@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { envValue } from "@/lib/env-value";
 
+import { rankForDigest } from "@/lib/digest-priority";
 import { attachDoThis } from "@/lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
 import { getPipelineChanges } from "@/lib/pipeline-changes";
@@ -80,7 +81,14 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     const untilIso = new Date().toISOString();
     const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
-    await attachDoThis(pc.deals);
+    // Rank ONCE, then spend the model calls on exactly what the email prints.
+    // Until 2026-08-20 attachDoThis took the first 8 of pc.deals, which is
+    // sorted by attention score, while the email re-sorted by annual value and
+    // printed 6. On the live pilot that meant 4 of the 6 deals Mark reads had
+    // only fallback text, including the two largest, and 6 of 8 model calls
+    // went to deals he never saw.
+    const priority = rankForDigest(pc.deals);
+    await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
     const weekLabel = new Date().toLocaleDateString("en-US", {
       month: "long",
       day: "numeric",
@@ -88,6 +96,8 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     });
     const email = renderPipelineDigestEmail({
       pc,
+      // The same object the synthesis was given, so the two sets cannot drift.
+      priority,
       weekLabel,
       recipientName: process.env.DIGEST_TO_NAME ?? "Mark Buman",
       baseUrl: process.env.DEALRIPE_APP_URL,

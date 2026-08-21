@@ -5,6 +5,7 @@
  * own section. Matches the recap style. No em-dashes.
  */
 
+import { rankForDigest, type DigestPriority } from "../digest-priority";
 import type { DigestAttention, DigestMovement, DigestNoShow } from "../weekly-digest-data";
 import type { ChangeEvent, DealChangeRecord, PipelineChanges } from "../pipeline-changes";
 
@@ -254,6 +255,11 @@ export function renderPipelineDigestEmail(args: {
   weekLabel: string;
   recipientName?: string;
   baseUrl?: string;
+  /** The shared ranking. Pass the SAME object the synthesis was given, so the
+   *  deals carrying an LLM-written action and the deals printed here cannot be
+   *  different sets. Recomputed from pc.deals when omitted, which is pure and
+   *  therefore still consistent, just wasteful. */
+  priority?: DigestPriority;
 }): RenderedEmail {
   const { pc, weekLabel, recipientName } = args;
   const base = (args.baseUrl ?? "").replace(/\/$/, "");
@@ -265,11 +271,14 @@ export function renderPipelineDigestEmail(args: {
     const l = c.toLowerCase();
     return /commit/.test(l) ? 3 : /expect/.test(l) ? 2 : /pipeline/.test(l) ? 1 : /omit/.test(l) ? 0 : -1;
   };
-  // Mark triages by revenue first: the biggest deals to look at lead.
-  const attention = pc.deals
-    .filter((d) => d.needsAttention)
-    .sort((a, b) => (b.dealSizeAnnual ?? 0) - (a.dealSizeAnnual ?? 0))
-    .slice(0, 6);
+  // ONE ranking, shared with the synthesis. This used to re-sort by
+  // dealSizeAnnual while digest-synthesis wrote its LLM action onto the top 8
+  // by attention score, so 4 of the 6 deals printed here carried only fallback
+  // text and 6 of 8 model calls went to deals this email never showed. The
+  // order is a product decision and the synthesis follows it; see
+  // lib/digest-priority.ts for why the key is recoverable value.
+  const priority = args.priority ?? rankForDigest(pc.deals);
+  const attention = priority.ranked.map((r) => r.deal);
   // Only no-shows inside this digest's own window. Using the current-state flag
   // relisted missed meetings from weeks earlier under a "week of" heading, which
   // grew the section to nine items and trained the reader to skip it.
