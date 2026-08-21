@@ -15,7 +15,12 @@ export type SentMessageKind =
   | "no_show_draft"
   | "followup_draft"
   /** Asking a rep which Salesforce account a deal belongs to. */
-  | "link_escalation";
+  | "link_escalation"
+  /**
+   * A re-engagement draft, written because a FLAG fired rather than because a
+   * call happened or a message arrived. See lib/reengage-draft.ts.
+   */
+  | "reengage_draft";
 
 export type SentMessage = {
   id: string;
@@ -139,6 +144,7 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<SentMessageKind>([
   "no_show_draft",
   "followup_draft",
   "link_escalation",
+  "reengage_draft",
 ]);
 
 /** All archived messages for a deal, newest first. */
