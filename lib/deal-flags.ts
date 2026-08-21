@@ -45,6 +45,7 @@
 
 import type { BuyerSignals, DealAssessment } from "./deal-signals-buyer";
 import type { SalesforceSnapshot } from "./salesforce-stage";
+import { stageKeyFromName, stageRank } from "./rolldog-summary";
 
 export type FlagSeverity = "critical" | "warning" | "watch";
 
@@ -86,6 +87,44 @@ const BAND_ORDER: Record<string, number> = { Omitted: -1, Pipeline: 0, Expect: 1
  * budget confirmed and getting a signature all take longer than this.
  */
 const IMMINENT_DAYS = 21;
+
+/**
+ * Silence that disqualifies an Expect.
+ *
+ * Shorter than the stalling threshold on purpose. `losing_momentum` asks
+ * whether a deal is dying, measured against its OWN rhythm. This asks a
+ * narrower question with a fixed answer: an Expect carries a number in this
+ * quarter's roll-up, and three weeks of nothing is too long for a deal doing
+ * that.
+ */
+const EXPECT_STALE_DAYS = 21;
+
+/**
+ * Silence that makes a Pipeline deal storage rather than upside.
+ *
+ * Deliberately long. The weakest band is where early deals legitimately sit
+ * quiet between conversations, and flagging those at three weeks would fire on
+ * most of the book and teach a leader to skip the section.
+ */
+const PIPELINE_DEAD_DAYS = 60;
+
+/**
+ * A close-date push large enough to be its own event.
+ *
+ * `close_date_repeatedly_pushed` catches a pattern of small moves. This catches
+ * the single move of a quarter or more, which is a different fact: the deal
+ * changed, not the date, and one big push never trips a count-of-two rule.
+ */
+const MAJOR_SLIP_DAYS = 60;
+
+/**
+ * How long an unanswered message waits before it means something.
+ *
+ * Seven calendar days, which is five working ones, so a Friday send is not
+ * flagged on Wednesday. See the comment at the flag: the ungated version fired
+ * on 60% of the book.
+ */
+const UNANSWERED_DAYS = 7;
 
 function daysUntil(iso: string | null, now: Date): number | null {
   if (!iso) return null;
@@ -232,13 +271,140 @@ export function computeDealFlags(args: {
     });
   }
 
+  // ---- FORECAST VALIDATION -----------------------------------------------
+  //
+  // The Kiddom catalogue's second group, translated to Magaya's bands. Each one
+  // is a JOIN between the band the rep claims and evidence DealRipe already
+  // computes, which makes them the cheapest high-value flags available and the
+  // reason a leader opens the room at all.
+  //
+  // ON THE BAND MAPPING, because getting it backwards inverts all of them:
+  // in the source scheme LOW is the MOST certain band, not the least. Its own
+  // evidence table requires "Committed stage, clear customer commitment,
+  // engaged economic buyer, validated close date" for Low, and calls High
+  // "credible upside, not a storage bucket for stale deals". So Low is Commit,
+  // Medium is Expect, High is Pipeline. See docs/flag-catalogue.md.
+  const stageKey = stageKeyFromName(crm?.stageName ?? null);
+  const stage = stageRank(stageKey);
+  const quiet = s.daysSinceLastCall.status === "read" ? s.daysSinceLastCall.value : null;
+  const noNextMeeting = s.nextMeetingBooked.status === "read" && !s.nextMeetingBooked.value;
+
+  if (bandRank !== null && bandRank >= BAND_ORDER.Commit) {
+    // "Low Forecast Without Customer Commitment". The single most predictive
+    // one in the group: a Commit is a promise that the customer has agreed to
+    // something, and this asks whether anyone heard them agree.
+    if (s.commitmentSecured.status === "read" && !s.commitmentSecured.value) {
+      flags.push({
+        id: "commit_without_commitment",
+        severity: "critical",
+        title: "Commit with nothing the customer agreed to",
+        evidence: `the rep has this at Commit and ${s.commitmentSecured.evidence}`,
+        move: "get one dated thing the customer says yes to, in writing, before this counts in the roll-up",
+        audience: ["rep", "leader"],
+      });
+    }
+    // "Low Forecast With No Upcoming Meeting".
+    if (noNextMeeting) {
+      flags.push({
+        id: "commit_without_next_meeting",
+        severity: "warning",
+        title: "Commit with nothing on the calendar",
+        evidence: "the rep has this at Commit and no next meeting is booked with the customer",
+        move: "a deal that closes this quarter has a next conversation; book it or move the band",
+        audience: ["rep", "leader"],
+      });
+    }
+    // "Low Forecast Still Not Committed", as a stage-versus-band check.
+    if (stage !== null && stage < 4) {
+      flags.push({
+        id: "commit_at_early_stage",
+        severity: "warning",
+        title: `Commit while the CRM still has this at ${stageKey}`,
+        evidence: `the rep forecasts Commit and the opportunity sits at "${crm?.stageName}"`,
+        move: "move the stage or move the band; one of the two is wrong and the roll-up reads the band",
+        audience: ["leader"],
+      });
+    }
+  }
+
+  if (bandRank !== null && bandRank === BAND_ORDER.Expect) {
+    // "Medium Forecast Still Qualified".
+    if (stage !== null && stage < 3) {
+      flags.push({
+        id: "expect_at_early_stage",
+        severity: "watch",
+        title: `Expect while the CRM still has this at ${stageKey}`,
+        evidence: `the rep forecasts Expect and the opportunity sits at "${crm?.stageName}"`,
+        move: "either the solution is further along than the stage says, or the band is ahead of the deal",
+        audience: ["leader"],
+      });
+    }
+    // "Medium Forecast Without Recent Engagement".
+    if (quiet !== null && quiet >= EXPECT_STALE_DAYS && noNextMeeting) {
+      flags.push({
+        id: "expect_without_engagement",
+        severity: "warning",
+        title: `Expect on a deal with no contact in ${quiet} days`,
+        evidence: `the rep has this at Expect, the last captured conversation was ${quiet} days ago, and nothing is booked`,
+        move: "an Expect carries a number this quarter; get a conversation on the calendar or move it down",
+        audience: ["rep", "leader"],
+      });
+    }
+  }
+
+  // "High Forecast Is Inactive". Reads oddly until you have the mapping: this
+  // is the weakest band going stale, which is how a pipeline fills with deals
+  // nobody has decided to stop working.
+  if (bandRank === BAND_ORDER.Pipeline && quiet !== null && quiet >= PIPELINE_DEAD_DAYS && noNextMeeting) {
+    flags.push({
+      id: "pipeline_inactive",
+      severity: "watch",
+      title: `Pipeline deal untouched for ${quiet} days`,
+      evidence: `no captured conversation in ${quiet} days and nothing booked, while the deal still counts as pipeline`,
+      move: "Pipeline should be credible upside, not storage. Work it deliberately or omit it",
+      audience: ["leader"],
+    });
+  }
+
+  // "Major Close-Date Slip". A single push of a quarter or more is a different
+  // event from three small ones and is not caught by the repeated-push rule.
+  if (
+    s.closeDateSlips.status === "read" &&
+    s.closeDateSlips.value === 1 &&
+    /(\d+) days? in total/.test(s.closeDateSlips.evidence)
+  ) {
+    const total = Number(s.closeDateSlips.evidence.match(/(\d+) days? in total/)![1]);
+    if (total >= MAJOR_SLIP_DAYS) {
+      flags.push({
+        id: "close_date_major_slip",
+        severity: "warning",
+        title: `Close date moved ${total} days in one change`,
+        evidence: s.closeDateSlips.evidence,
+        move: "a push this size is a change in the deal, not a change in the date; find out which and record it",
+        audience: ["rep", "leader"],
+      });
+    }
+  }
+
   // ---- ENGAGEMENT, the flags a CRM cannot produce -------------------------
 
-  if (s.awaitingReply.status === "read" && s.awaitingReply.value) {
+  // A WAITING PERIOD, not just the state.
+  //
+  // awaitingReply is true the moment a rep sends a follow-up, which is the
+  // normal condition of a live conversation. Ungated, this fired on 67 of 112
+  // open deals, 60% of the book, and a flag that fires on most rows is not a
+  // flag: it is a background colour, and it teaches a leader to skip the
+  // section it appears in.
+  //
+  // Five working days is the threshold, expressed as seven calendar days so a
+  // Friday send is not flagged on Wednesday. Below it, an unanswered email is
+  // an email in flight.
+  const waited = s.daysSinceOurMessage.status === "read" ? s.daysSinceOurMessage.value : null;
+  if (s.awaitingReply.status === "read" && s.awaitingReply.value && waited !== null && waited >= UNANSWERED_DAYS) {
     flags.push({
       id: "emailing_without_reply",
       severity: "warning",
-      title: "We wrote last and they have not answered",
+      title: `We wrote ${waited} days ago and they have not answered`,
       evidence: s.awaitingReply.evidence,
       // Kiddom named this among the most predictive flags they cannot build,
       // because it needs the mailbox and Salesforce does not hold the evidence.

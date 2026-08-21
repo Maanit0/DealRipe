@@ -91,6 +91,17 @@ export type BuyerSignals = {
    * set and it is invisible to any CRM-only tool.
    */
   awaitingReply: Signal<boolean>;
+  /**
+   * How long our last outbound message has gone unanswered.
+   *
+   * Separate from awaitingReply because they answer different questions.
+   * awaitingReply is a STATE and is true the moment a rep sends a follow-up,
+   * which is the normal condition of a healthy conversation: it was true on 67
+   * of 112 open deals, so a flag built on it alone fired on 60% of the book and
+   * was therefore worthless as a flag. This is the DURATION, which is what
+   * turns the state into a judgement.
+   */
+  daysSinceOurMessage: Signal<number>;
   /** Needs Salesforce CloseDate history, wired separately. */
   closeDateSlips: Signal<number>;
 };
@@ -167,6 +178,12 @@ export async function computeBuyerSignals(args: {
     awaitingReply: mail
       ? read(mail.awaitingReply, mail.evidence)
       : unread<boolean>("no email logged for this deal"),
+    daysSinceOurMessage:
+      mail && mail.daysSinceOurMessage !== null
+        ? read(mail.daysSinceOurMessage, mail.evidence)
+        : unread<number>(
+            mail ? "nothing has been sent to this customer from a logged mailbox" : "no email logged for this deal",
+          ),
     closeDateSlips:
       args.closeDateSlips === undefined
         ? unread<number>("the caller did not prefetch close-date history for this deal")
@@ -562,6 +579,7 @@ export function assessDeal(
     ["commitment", s.commitmentSecured],
     ["customer email replies", s.daysSinceCustomerReply],
     ["awaiting a reply", s.awaitingReply],
+    ["time since we wrote", s.daysSinceOurMessage],
     ["close date slips", s.closeDateSlips],
   ];
   for (const [label, sig] of all) {

@@ -148,13 +148,45 @@ const STAGE_ID_TO_KEY: Readonly<Record<number, string>> = Object.freeze({
 export function stageKeyFromSummary(s: RolldogSummary | null): string | null {
   if (!s) return null;
   // The name first: it is what a human reads, and every numbered stage carries
-  // its number there.
-  const m = s.stageName?.match(/SQL\s*(\d)/i);
-  if (m) return `SQL${m[1]}`;
+  // its number there, except the one that does not.
+  const byName = stageKeyFromName(s.stageName);
+  if (byName) return byName;
   if (s.stageId !== null && s.stageId in STAGE_ID_TO_KEY) {
     return STAGE_ID_TO_KEY[s.stageId];
   }
   return null;
+}
+
+/**
+ * The same resolution from a stage NAME alone, for a caller that has no
+ * Rolldog summary.
+ *
+ * Salesforce carries the same stage names as Rolldog and no stage id, so
+ * anything reading a SalesforceSnapshot needs this and only this. Exported and
+ * shared rather than re-derived, because the one case that matters is exactly
+ * the case a fresh regex gets wrong: "SQL - Develop Opportunity (Qualify)"
+ * carries no digit and IS SQL1, and reading it as null once already briefed and
+ * scored six live deals as having no CRM stage.
+ *
+ * Returns null for a name that resolves to nothing, which is a real state on
+ * this pilot and must never be confused with SQL0.
+ */
+export function stageKeyFromName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const m = name.match(/SQL\s*(\d)/i);
+  if (m) return `SQL${m[1]}`;
+  // The digitless stage. Matched on its own words rather than on "anything
+  // starting SQL", so a future unnumbered stage does not silently inherit SQL1.
+  if (/develop\s+opportunity/i.test(name) || /\bqualify\b/i.test(name)) return "SQL1";
+  return null;
+}
+
+/** Ordinal for a framework stage key, for comparing how far along a deal is.
+ *  Null in, null out: an unresolved stage is not stage zero. */
+export function stageRank(key: string | null): number | null {
+  if (!key) return null;
+  const m = key.match(/^SQL(\d)$/i);
+  return m ? Number(m[1]) : null;
 }
 
 /**
