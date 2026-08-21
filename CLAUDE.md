@@ -458,6 +458,20 @@ that signal also pushed nine deals over the readable-signal threshold, so
 the whole book before shipping it; the target shape is roughly 1 flag per deal
 with a third of deals carrying none.
 
+**"No open opportunity" is NOT a closed deal, and a flag that said so was wrong
+on all 45 deals it fired on.** DealRipe creates a deal from a calendar invite;
+Magaya does not create the opportunity until AFTER the discovery call, which
+`scripts/link-deal.ts` prints on every run. So no open opportunity is the NORMAL
+state of a new deal here. Checked against `resolveDealOutcome`: 36 of the 45
+accounts carry no opportunity AT ALL rather than closed ones, and the other 9
+carry only closes predating our first call, which is an existing customer having
+a new conversation (Tqlglobal's most recent close is 2025-08-01, its first
+captured call 2026-08-13). A deal that genuinely resolved already carries an
+`outcome_label` and is dropped by `loadPortfolioRead` before flags run. The true
+and much narrower statement is `worked_with_no_opportunity`: two or more calls
+and nothing for the stage, the forecast or field write-back to attach to. One
+deal qualifies.
+
 **A null CRM read silenced the entire flag engine for a deal.** Every
 band-versus-evidence flag was gated on `bandRank`, so a deal whose Salesforce
 read came back empty produced NO flags at all. Three of the six deals the Monday

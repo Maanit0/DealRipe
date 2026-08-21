@@ -156,6 +156,7 @@ export function computeDealFlags(args: {
    * a finding in its own right, not a missing input.
    */
   crmRead?: string | null;
+
   now?: Date;
 }): Flag[] {
   const { signals: s, assessment: a } = args;
@@ -411,20 +412,39 @@ export function computeDealFlags(args: {
   // Absence of a CRM read rendered as absence of a problem. The signature bug,
   // arriving inside the flag engine.
 
-  // The CRM read itself is a finding. An account whose every opportunity is
-  // closed is probably a deal that resolved somewhere else, which this project
-  // has already been wrong about once at the cost of eleven deals sitting in
-  // the pipeline accruing daily snapshots.
-  if (args.crmRead === "no_open_opportunity") {
+  // NO OPEN OPPORTUNITY IS NOT A CLOSED DEAL, and the first version of this
+  // flag said it was.
+  //
+  // It shipped as "every opportunity on the account is closed, so this deal may
+  // have resolved outside DealRipe" and fired on 45 deals. Checked against
+  // resolveDealOutcome, it was right on ZERO of them: 36 accounts carry no
+  // opportunity AT ALL rather than closed ones, and the other 9 carry only
+  // closes that predate our first call, which is an existing customer having a
+  // new conversation (Tqlglobal's most recent close is 2025-08-01 and its first
+  // captured call is 2026-08-13).
+  //
+  // The cause is Magaya's own motion, which scripts/link-deal.ts prints on every
+  // run: DealRipe creates a deal from a calendar invite, and Magaya does not
+  // create the opportunity until AFTER the discovery call. So "no open
+  // opportunity" is the NORMAL state of a new deal here, and a deal that
+  // genuinely resolved already carries an outcome_label and is dropped upstream
+  // by loadPortfolioRead before it ever reaches this function.
+  //
+  // What is actually worth saying is narrower and true: a deal the rep has
+  // worked more than once with no opportunity to write to. Field write-back,
+  // the stage and the forecast all need one, so this is a real blocker rather
+  // than a guess about whether the deal is alive. One deal qualifies today.
+  const worked = s.conversationCount.status === "read" ? s.conversationCount.value : null;
+  if (args.crmRead === "no_open_opportunity" && worked !== null && worked >= 2) {
     flags.push({
-      id: "no_open_opportunity",
-      severity: "critical",
-      title: "Every opportunity on the Salesforce account is closed",
+      id: "worked_with_no_opportunity",
+      severity: "warning",
+      title: `${worked} calls in and no Salesforce opportunity exists`,
       evidence:
-        "Salesforce answered and the account carries no open opportunity, so this deal may have resolved " +
-        "outside DealRipe while still counting as live pipeline here",
-      move: "check Salesforce and close this out, or open the opportunity it should be sitting on",
-      audience: ["leader"],
+        `the account is linked and carries no open opportunity, so there is nothing for the stage, the ` +
+        `forecast or field write-back to attach to`,
+      move: "create the opportunity so this deal can be forecast and written to, or say why it should not be",
+      audience: ["rep", "leader"],
     });
   }
 

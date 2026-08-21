@@ -104,6 +104,22 @@ export type BuyerSignals = {
   daysSinceOurMessage: Signal<number>;
   /** Needs Salesforce CloseDate history, wired separately. */
   closeDateSlips: Signal<number>;
+  /**
+   * How many captured calls actually produced a conversation.
+   *
+   * A Signal like everything else, and the type system is what forced it. The
+   * first version was a plain number on the reasoning that a count of our own
+   * rows is always readable. The calls read can fail, and the only value to
+   * write then would have been 0, which says "nobody has spoken to them" when
+   * it means "we could not check". That is the mistake this whole file exists
+   * to make impossible, and it was caught by a missing-property error rather
+   * than by care.
+   *
+   * Carried because several judgements need to tell "not worked yet" from
+   * "worked repeatedly", and reconstructing it from daysSinceLastCall or
+   * callCadenceDays gets it wrong at exactly one call.
+   */
+  conversationCount: Signal<number>;
 };
 
 /** Framework fields whose absence is a real risk, not merely an unticked box. */
@@ -204,6 +220,7 @@ export async function computeBuyerSignals(args: {
     const reason = `calls read failed: ${callsRes.error.message}`;
     return {
       ...base,
+      conversationCount: unread(reason),
       nextMeetingBooked: unread(reason),
       daysSinceLastCall: unread(reason),
       callCadenceDays: unread(reason),
@@ -434,6 +451,7 @@ export async function computeBuyerSignals(args: {
 
   return {
     ...base,
+    conversationCount: read(held.length, `${held.length} captured conversation(s) on this deal`),
     nextMeetingBooked,
     daysSinceLastCall,
     callCadenceDays,
