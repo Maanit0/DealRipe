@@ -40,17 +40,23 @@ export type DealOutcome =
       /** Closed opportunities on the account that we deliberately ignored as
        *  predating our first call. Reported so a caller can show its work. */
       historicalIgnored: number;
+      /**
+       * Opportunities still open on this account when the label was written.
+       *
+       * Non-zero only on a WIN, by the asymmetry documented on
+       * open_with_recent_close. Carried so a reader can see the claim is
+       * "we observed a win here", never "this relationship is finished".
+       */
+      concurrentOpen: number;
     }
   | { status: "open"; openCount: number }
   /**
    * Still live, AND something closed on the account after our first call.
    *
-   * Speed International is the case: an ABI opportunity closed won on
-   * 2026-08-14, days after a call we captured, while other business on the
-   * account stays open. Labelling the deal won would tell the digest a live
-   * relationship is finished; reporting a bare `open` would throw away the one
-   * outcome we actually observed. It is both, so it says both, and the
-   * learning loop can use `closed` while the pipeline uses the open count.
+   * NOW REACHED ONLY BY A LOSS. A win on the account is labelled `won` with
+   * concurrentOpen set, for the asymmetry argued at the branch itself: other
+   * business being open does not undo a win, but it genuinely does undo the
+   * claim that a deal was lost.
    */
   | {
       status: "open_with_recent_close";
@@ -189,6 +195,39 @@ export function resolveDealOutcome(args: {
   if (open.length > 0) {
     const recent = inWindowAll[0];
     if (!recent) return { status: "open", openCount: open.length };
+
+    // A WIN AND A LOSS ARE NOT SYMMETRIC HERE, and treating them as one rule
+    // is why run-outcome-sync reported closedWon: 0 while Ariel had won two
+    // deals that week and Juan one.
+    //
+    // The conservatism protects against inventing a LOSS. An account with
+    // three closed-lost and one open opportunity has not lost this deal; the
+    // open one may BE this deal, and labelling it lost would delete a live
+    // relationship from the pipeline.
+    //
+    // A win does not have that failure mode. Other business being open does
+    // not undo a win, and an opportunity that closed won on or after a call we
+    // captured is a win DealRipe observed. Refusing to record it is the same
+    // error the rest of this file exists to prevent, pointed at the good news:
+    // absence of a label reported as absence of an outcome.
+    //
+    // The residual risk is attributing the wrong opportunity, which is present
+    // on the fully-closed path too and accepted there. concurrentOpen carries
+    // the count so the claim stays auditable and reads as "we observed a win
+    // on this account" rather than "this account is finished".
+    if (recent.IsWon) {
+      return {
+        status: "won",
+        opportunityId: recent.Id,
+        opportunityName: recent.Name,
+        closeDate: String(recent.CloseDate),
+        amount: typeof recent.Amount === "number" ? recent.Amount : null,
+        lossReason: recent.Loss_Reason__c ?? null,
+        historicalIgnored: closed.length - inWindowAll.length,
+        concurrentOpen: open.length,
+      };
+    }
+
     return {
       status: "open_with_recent_close",
       openCount: open.length,
@@ -237,6 +276,7 @@ export function resolveDealOutcome(args: {
     amount: typeof chosen.Amount === "number" ? chosen.Amount : null,
     lossReason: chosen.Loss_Reason__c ?? null,
     historicalIgnored: closed.length - inWindow.length,
+    concurrentOpen: 0,
   };
 }
 
@@ -247,7 +287,9 @@ export function describeOutcome(o: DealOutcome): string {
     case "lost":
       return `${o.status.toUpperCase()} ${o.closeDate} ${o.opportunityName.slice(0, 40)}${
         o.lossReason ? ` reason=${o.lossReason}` : ""
-      }${o.historicalIgnored ? ` (ignored ${o.historicalIgnored} older closes)` : ""}`;
+      }${o.historicalIgnored ? ` (ignored ${o.historicalIgnored} older closes)` : ""}${
+        o.concurrentOpen ? ` (${o.concurrentOpen} other opportunit${o.concurrentOpen === 1 ? "y" : "ies"} still open on the account)` : ""
+      }`;
     case "open":
       return `open (${o.openCount} open opportunit${o.openCount === 1 ? "y" : "ies"})`;
     case "open_with_recent_close":
