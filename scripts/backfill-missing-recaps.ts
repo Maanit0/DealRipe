@@ -180,6 +180,7 @@ async function main(): Promise<void> {
   console.log(`  ${jobs.length} call(s) can be recapped; ${skips.length} cannot\n`);
 
   let posted = 0;
+  let would = 0;
   let already = 0;
   let failed = 0;
   // Posted like any other Note now. Counted separately only so the summary can
@@ -189,36 +190,46 @@ async function main(): Promise<void> {
   for (const [i, job] of todo.entries()) {
     const when = (job.call.scheduled_start ?? job.call.call_date ?? "?").slice(0, 10);
     const head = `[${i + 1}/${todo.length}] ${when}  ${job.deal.account}`;
+
+    // ASK BEFORE GENERATING, IN BOTH MODES.
+    //
+    // postRecapNote does this same lookup, but only after a body exists, and a
+    // body is three model passes over a full transcript. Re-running this
+    // script regenerated nine recaps that already had Notes before discovering
+    // that, roughly forty minutes to learn nothing.
+    //
+    // And it runs on the dry-run path too, because the dry run is what a person
+    // reads to decide whether to spend the forty minutes. A dry run that counts
+    // finished work as outstanding is the same lie in the other direction: it
+    // said "12 would be attempted" when 11 were already posted.
+    //
+    // 'unknown' is never treated as absent. A duplicate recap in front of a
+    // customer's solution engineer costs more than a missing one.
+    const present = await recapNoteExists({
+      tenantSlug: SLUG,
+      accountId: job.deal.salesforce_account_id as string,
+      account: job.deal.account,
+      callAt: job.call.scheduled_start,
+    });
+    if (present.state === "found") {
+      already += 1;
+      console.log(`  already ${head}  (${present.id})`);
+      continue;
+    }
+    if (present.state === "unknown") {
+      failed += 1;
+      console.log(`  FAILED  ${head}: could not check for an existing Note (${present.why})`);
+      continue;
+    }
+
     if (!apply) {
+      would += 1;
       console.log(`  would  ${head}  ${job.body.length} chars${job.deal.outcome_label ? `  (deal ${job.deal.outcome_label})` : ""}`);
       continue;
     }
 
     const started = Date.now();
     try {
-      // ASK BEFORE GENERATING. postRecapNote does this same lookup, but only
-      // after a body exists, and a body is three model passes over a full
-      // transcript. Re-running this script regenerated nine recaps that already
-      // had Notes before discovering it, roughly forty minutes to learn
-      // nothing. An 'unknown' lookup is not treated as absent: it skips, since
-      // a duplicate recap in front of a customer costs more than a missing one.
-      const present = await recapNoteExists({
-        tenantSlug: SLUG,
-        accountId: job.deal.salesforce_account_id as string,
-        account: job.deal.account,
-        callAt: job.call.scheduled_start,
-      });
-      if (present.state === "found") {
-        already += 1;
-        console.log(`  already ${head}  (${present.id})`);
-        continue;
-      }
-      if (present.state === "unknown") {
-        failed += 1;
-        console.log(`  FAILED  ${head}: could not check for an existing Note (${present.why})`);
-        continue;
-      }
-
       const framework = await loadFramework(tenantId, job.deal.framework_id as string);
       if (!framework) {
         console.log(`  FAILED ${head}: framework load returned null`);
@@ -331,8 +342,15 @@ async function main(): Promise<void> {
         (general > 0 ? ` (${general} of the posted are readout-only Notes for non new-business calls)` : ""),
     );
   } else {
-    console.log(`DRY RUN. Nothing generated, nothing written. ${todo.length} would be attempted.`);
-    console.log(`Each is three Anthropic passes over a full transcript, roughly 3.5 minutes.`);
+    console.log(
+      `DRY RUN. Nothing generated, nothing written. ${would} would be attempted` +
+        (already > 0 ? `, ${already} already have a Note` : "") +
+        (failed > 0 ? `, ${failed} could not be checked` : "") +
+        `.`,
+    );
+    if (would > 0) {
+      console.log(`Each is three Anthropic passes over a full transcript, roughly 3.5 minutes.`);
+    }
   }
   console.log(`${"=".repeat(80)}\n`);
 }
