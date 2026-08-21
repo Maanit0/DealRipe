@@ -148,6 +148,14 @@ export function computeDealFlags(args: {
   assessment: DealAssessment;
   /** The customer's CRM state, when we could read it. */
   crm?: SalesforceSnapshot | null;
+  /**
+   * WHY the CRM state is absent, which the absent state cannot say.
+   *
+   * Passing only `crm` collapses five distinguishable reads into one null and
+   * silently disables every band flag. `no_open_opportunity` in particular is
+   * a finding in its own right, not a missing input.
+   */
+  crmRead?: string | null;
   now?: Date;
 }): Flag[] {
   const { signals: s, assessment: a } = args;
@@ -384,6 +392,84 @@ export function computeDealFlags(args: {
         audience: ["rep", "leader"],
       });
     }
+  }
+
+  // ---- FLAGS THAT DO NOT NEED A BAND --------------------------------------
+  //
+  // Everything above is gated on bandRank, which means a deal with no readable
+  // CRM band produces NO band flags at all. That is correct for a claim about
+  // the rep's forecast and catastrophic as a default, and it was silently
+  // hiding the worst deals in the book.
+  //
+  // Measured 2026-08-20 on the six deals the digest actually prints: three of
+  // them (Seino Logix, GHY, Caderco) carry no open Salesforce opportunity, so
+  // crm was null and every flag was skipped. GHY has four critical gates open,
+  // no economic buyer and nothing booked, and produced zero flags. Dunavant, a
+  // $293k deal advancing with no economic buyer ever on a call, produced zero
+  // flags because that check required a Commit band.
+  //
+  // Absence of a CRM read rendered as absence of a problem. The signature bug,
+  // arriving inside the flag engine.
+
+  // The CRM read itself is a finding. An account whose every opportunity is
+  // closed is probably a deal that resolved somewhere else, which this project
+  // has already been wrong about once at the cost of eleven deals sitting in
+  // the pipeline accruing daily snapshots.
+  if (args.crmRead === "no_open_opportunity") {
+    flags.push({
+      id: "no_open_opportunity",
+      severity: "critical",
+      title: "Every opportunity on the Salesforce account is closed",
+      evidence:
+        "Salesforce answered and the account carries no open opportunity, so this deal may have resolved " +
+        "outside DealRipe while still counting as live pipeline here",
+      move: "check Salesforce and close this out, or open the opportunity it should be sitting on",
+      audience: ["leader"],
+    });
+  }
+
+  // A deal being actively worked with nobody who can sign it.
+  //
+  // Gated on ENGAGEMENT rather than on band, so it says "this deal is
+  // progressing without a signer" and not "this early deal has not met the
+  // signer yet", which would be true of most of the book and useless.
+  const engaged =
+    (s.nextMeetingBooked.status === "read" && s.nextMeetingBooked.value) ||
+    (s.fieldsAnswered.status === "read" && s.fieldsAnswered.value >= 3);
+  if (
+    bandRank === null &&
+    engaged &&
+    s.economicBuyerEngaged.status === "read" &&
+    !s.economicBuyerEngaged.value
+  ) {
+    flags.push({
+      id: "no_economic_buyer_while_progressing",
+      severity: "warning",
+      title: "Progressing with nobody who can sign it",
+      evidence: `the deal is moving and ${s.economicBuyerEngaged.evidence}`,
+      move: "name who signs and get them into the next conversation while there still is one",
+      audience: ["rep", "leader"],
+    });
+  }
+
+  // A deal at the top of a forecast that we have never heard.
+  //
+  // Seino Logix leads the digest at $345,516 and no captured call on it has
+  // produced a conversation. A leader reading a ranked list is entitled to know
+  // which rows are ranked on the CRM's word alone.
+  if (
+    s.daysSinceLastCall.status === "unavailable" &&
+    s.criticalGapsOpen.status === "unavailable" &&
+    a.confidence !== "low"
+  ) {
+    flags.push({
+      id: "never_heard",
+      severity: "warning",
+      title: "No conversation has ever been captured on this deal",
+      evidence: `${s.daysSinceLastCall.reason}, so everything known about it comes from the CRM`,
+      move: "get DealRipe on the next call, or treat this deal's forecast as the rep's word alone",
+      audience: ["leader"],
+    });
   }
 
   // ---- ENGAGEMENT, the flags a CRM cannot produce -------------------------

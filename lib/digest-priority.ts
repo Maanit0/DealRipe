@@ -49,7 +49,10 @@
  * say so out loud rather than let the omission speak.
  */
 
+import { computeDealFlags, type Flag } from "./deal-flags";
+import { assessDeal, computeBuyerSignals } from "./deal-signals-buyer";
 import type { DealChangeRecord } from "./pipeline-changes";
+import { resolveSalesforceSnapshots } from "./salesforce-stage";
 
 /** How many attention deals the digest prints. One constant, so the synthesis
  *  budget and the email can never disagree about the visible set again. */
@@ -96,6 +99,14 @@ export type DigestRank = {
   value: { annual: number; known: boolean };
   /** One clause naming why this is where it is, for a leader who disagrees. */
   because: string;
+  /**
+   * DealRipe's own flags on this deal, filled by attachFlags.
+   *
+   * Empty until then, and empty is ambiguous on purpose only here: a caller
+   * that has not run attachFlags gets the digest it always got. Every consumer
+   * that renders these runs it.
+   */
+  flags: Flag[];
 };
 
 export type DigestPriority = {
@@ -212,6 +223,7 @@ export function rankForDigest(
       because: known
         ? `$${Math.round(annual / 1000)}k at stake, ${why}`
         : `value not recorded in Rolldog, ${why}`,
+      flags: [],
     });
   }
 
@@ -229,4 +241,58 @@ export function rankForDigest(
     },
     belowTheFold: Math.max(0, scored.length - ranked.length),
   };
+}
+
+
+/**
+ * Fill in DealRipe's flags on the deals the digest will print.
+ *
+ * WHY THIS IS SEPARATE FROM rankForDigest
+ *
+ * The ranking is pure and synchronous, which is what makes it testable and
+ * what lets the email and the synthesis share it without either doing I/O.
+ * Flags need six database reads a deal. Keeping them apart means the ordering
+ * can never depend on whether the flag reads succeeded.
+ *
+ * WHY ONLY THE RANKED DEALS
+ *
+ * Six deals, not 112. The digest prints six, and computing flags for the other
+ * hundred to throw them away would add about a minute to a cron that already
+ * refreshes every snapshot before it starts.
+ *
+ * Best effort per deal. A deal whose signals cannot be computed keeps an empty
+ * flag list and still prints, because a missing flag section is a smaller
+ * failure than a missing digest.
+ */
+export async function attachFlags(priority: DigestPriority, tenantId: string): Promise<void> {
+  const ids = priority.ranked.map((r) => r.deal.dealId);
+  if (ids.length === 0) return;
+
+  // Batched once for the whole set, as everywhere else that touches Salesforce.
+  let crmByDeal: Awaited<ReturnType<typeof resolveSalesforceSnapshots>> | null = null;
+  try {
+    crmByDeal = await resolveSalesforceSnapshots(tenantId, ids);
+  } catch {
+    // Flags that need the CRM band simply will not fire. That is the honest
+    // degradation: no band read means no band-versus-evidence claim.
+  }
+
+  await Promise.all(
+    priority.ranked.map(async (r) => {
+      try {
+        const signals = await computeBuyerSignals({ tenantId, dealId: r.deal.dealId });
+        const read = crmByDeal?.get(r.deal.dealId);
+        r.flags = computeDealFlags({
+          signals,
+          assessment: assessDeal(signals),
+          crm: read?.status === "read" ? read.snapshot : null,
+          crmRead: read?.status ?? null,
+        });
+      } catch (err) {
+        console.warn(
+          `[digest-priority] flags failed for ${r.deal.account}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
+  );
 }

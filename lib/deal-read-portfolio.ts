@@ -55,12 +55,43 @@ export type DealRead = {
  */
 const CONCURRENCY = 8;
 
-export async function loadPortfolioRead(args: {
+/**
+ * What could not be read for the WHOLE RUN, as opposed to per deal.
+ *
+ * Close-date history is one Salesforce call covering every account, so it
+ * succeeds or fails for everyone at once. When it fails, every close-date flag
+ * silently disappears and the output is indistinguishable from a week where no
+ * date moved. Observed live on 2026-08-20: two runs minutes apart, identical
+ * code, 11 deals flagged as repeatedly pushed in one and 0 in the other.
+ *
+ * A view that cannot say which of those it is will eventually tell a leader
+ * that nothing moved when we simply did not look.
+ */
+export type PortfolioReadNotes = {
+  closeDateHistory: { status: "read" } | { status: "unavailable"; reason: string };
+};
+
+/** The read plus what it could not see. `loadPortfolioRead` returns only the
+ *  rows, for the callers that predate this and do not render the notes. */
+export async function loadPortfolioReadWithNotes(args: {
   tenantId: string;
-  /** Omit for every open deal. */
   dealIds?: string[];
   now?: Date;
-}): Promise<DealRead[]> {
+}): Promise<{ rows: DealRead[]; notes: PortfolioReadNotes }> {
+  const notes: PortfolioReadNotes = { closeDateHistory: { status: "read" } };
+  const rows = await loadPortfolioRead(args, notes);
+  return { rows, notes };
+}
+
+export async function loadPortfolioRead(
+  args: {
+    tenantId: string;
+    /** Omit for every open deal. */
+    dealIds?: string[];
+    now?: Date;
+  },
+  notes?: PortfolioReadNotes,
+): Promise<DealRead[]> {
   const db = supabaseAdmin();
 
   let q = db
@@ -103,6 +134,15 @@ export async function loadPortfolioRead(args: {
     loadOpportunityCreationForAccounts(accountIds),
   ]);
 
+  if (notes && closeHist.status !== "read") {
+    notes.closeDateHistory = { status: "unavailable", reason: closeHist.error };
+  }
+  if (closeHist.status !== "read") {
+    // Loud in the log even when the caller passes no notes, because this silently
+    // removes a whole class of flag from every deal in the run.
+    console.warn(`[deal-read-portfolio] close-date history unavailable this run: ${closeHist.error}`);
+  }
+
   const out: DealRead[] = [];
   for (let i = 0; i < deals.length; i += CONCURRENCY) {
     const batch = deals.slice(i, i + CONCURRENCY);
@@ -134,7 +174,7 @@ export async function loadPortfolioRead(args: {
           assessment,
           crm,
           crmRead: read,
-          flags: computeDealFlags({ signals, assessment, crm, now: args.now }),
+          flags: computeDealFlags({ signals, assessment, crm, crmRead: read?.status ?? null, now: args.now }),
         };
       }),
     );

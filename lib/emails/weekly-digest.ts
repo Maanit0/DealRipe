@@ -357,6 +357,17 @@ export function renderPipelineDigestEmail(args: {
   const GREYBOX = "#F5F7FA";
   const LABEL = `font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.03em;color:${NAVY};text-transform:uppercase;`;
   const VALUE = `font-family:${SANS};font-size:15px;line-height:22px;color:${INK};margin-top:4px;`;
+  // DealRipe's own flags, keyed by deal. These are a different object from
+  // DealChangeRecord.blockers: blockers come from the Rolldog/extraction read
+  // in pipeline-changes, these come from lib/deal-flags.ts over the buyer
+  // signals, the mailbox and Salesforce close-date history. Two things no CRM
+  // holds and neither engine can see alone.
+  //
+  // The reason they are worth their own block rather than being merged into
+  // blockers: every one carries a MOVE. A blocker says what is wrong; a flag
+  // says what to do about it, and the move is the only part a leader forwards.
+  const flagsByDeal = new Map(priority.ranked.map((r) => [r.deal.dealId, r.flags] as const));
+
   const attentionCards = attention
     .map((d: DealChangeRecord, i) => {
       const sev = d.flags[0]?.severity ?? "high";
@@ -411,6 +422,24 @@ export function renderPipelineDigestEmail(args: {
             `<div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};margin-top:6px;"><span style="color:${dot};font-size:10px;">&#9679;</span>&nbsp; ${esc(b)}</div>`,
         )
         .join("");
+      // Critical and warning only. `watch` flags are context on a deal page and
+      // noise in an email, and the whole point of gating them is that a leader
+      // reads this section every week.
+      const drFlags = (flagsByDeal.get(d.dealId) ?? []).filter((f) => f.severity !== "watch");
+      const drFlagsHtml = drFlags.length
+        ? `<div style="${LABEL}margin-top:17px;">What DealRipe caught</div>` +
+          drFlags
+            .slice(0, 3)
+            .map(
+              (f) =>
+                `<div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};margin-top:6px;">` +
+                `<span style="color:${f.severity === "critical" ? RED : AMBER};font-size:10px;">&#9679;</span>&nbsp; ` +
+                `<strong style="color:${NAVY};">${esc(f.title)}.</strong> ${esc(f.evidence)}` +
+                `<div style="color:${GREEN};margin-top:2px;padding-left:18px;">${esc(f.move)}</div></div>`,
+            )
+            .join("")
+        : "";
+
       const contactBlock = d.primaryContact && !d.isNoShow
         ? `<div style="${LABEL}margin-top:17px;">Main contact</div>
            <div style="${VALUE}">${esc(d.primaryContact.name)}${d.primaryContact.role ? `, ${esc(d.primaryContact.role)}` : ""}${d.primaryContact.relationship ? ` <span style="color:${MUTED};">(${esc(d.primaryContact.relationship)})</span>` : ""}</div>`
@@ -449,6 +478,7 @@ export function renderPipelineDigestEmail(args: {
 
             <div style="${LABEL}margin-top:18px;">What's blocking</div>
             ${blockersHtml}
+            ${drFlagsHtml}
             ${contactBlock}
             ${agreedBlock}
 
@@ -541,6 +571,14 @@ export function renderPipelineDigestEmail(args: {
       for (const w of d.whatChanged) t.push(`     - ${w.label ? `${w.label}: ` : ""}${w.text}`);
       t.push(`   Blocking:`);
       for (const b of (d.blockers.length ? d.blockers : ["Worth a look."])) t.push(`     - ${b}`);
+      const tFlags = (flagsByDeal.get(d.dealId) ?? []).filter((f) => f.severity !== "watch").slice(0, 3);
+      if (tFlags.length) {
+        t.push(`   What DealRipe caught:`);
+        for (const f of tFlags) {
+          t.push(`     - ${f.title}. ${f.evidence}`);
+          t.push(`       ${f.move}`);
+        }
+      }
       t.push(`   Rep's next move: ${d.doThis ?? doThisText(d)}`);
     });
   else t.push("- Nothing needs attention.");

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { envValue } from "@/lib/env-value";
 
-import { rankForDigest } from "@/lib/digest-priority";
+import { attachFlags, rankForDigest } from "@/lib/digest-priority";
 import { attachDoThis } from "@/lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
 import { getPipelineChanges } from "@/lib/pipeline-changes";
@@ -88,6 +88,10 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     // only fallback text, including the two largest, and 6 of 8 model calls
     // went to deals he never saw.
     const priority = rankForDigest(pc.deals);
+    // DealRipe's own flags on exactly the deals that will print. Fills
+    // priority.ranked[].flags; best effort, so a flag read that fails costs the
+    // section and never the digest.
+    await attachFlags(priority, tenantId);
     await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
     const weekLabel = new Date().toLocaleDateString("en-US", {
       month: "long",
