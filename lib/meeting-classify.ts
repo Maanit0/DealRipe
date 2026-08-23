@@ -102,21 +102,13 @@ Do NOT answer existing_customer for this deal.`
   }
 }
 
-export type CallSubtype = "discovery" | "demo" | "proposal" | "follow_up" | "customer" | "internal";
-
-const SUBTYPE_LABEL: Record<CallSubtype, string> = {
-  discovery: "Discovery",
-  demo: "Demo",
-  proposal: "Proposal",
-  follow_up: "Follow-up",
-  customer: "Customer",
-  internal: "Internal",
-};
-
-export function callSubtypeLabel(s: string | null | undefined): string | null {
-  if (!s) return null;
-  return SUBTYPE_LABEL[s as CallSubtype] ?? null;
-}
+// Moved to lib/meeting-labels.ts, which has no model, CRM or Node dependencies.
+// Re-exported so every existing importer keeps working, but a CLIENT component
+// must import from meeting-labels directly: importing it from here drags the
+// Anthropic SDK into the browser bundle. See that file for the whole story.
+export { callSubtypeLabel } from "./meeting-labels";
+export type { CallSubtype } from "./meeting-labels";
+import type { CallSubtype } from "./meeting-labels";
 
 /**
  * Finer purpose of a call. Existing-customer and internal meetings map straight

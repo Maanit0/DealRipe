@@ -38,6 +38,7 @@ import {
 } from "./pilot-config";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import { createBot, deleteBot, getBot } from "./recall";
+import { withModelContext } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
@@ -204,7 +205,11 @@ export async function runCalendarSync(
         if (day) seenEventIds.add(`${ev.iCalUId}:${day}`);
       }
       try {
-        await processEvent(ev, tenantId, counts, emit, { repEmail, autoJoin });
+        // Attribute every model call under this event, however deep. join_gate
+        // alone is 915 of 3,906 traced calls and carried no tenant until now.
+        await withModelContext({ tenantId }, () =>
+          processEvent(ev, tenantId, counts, emit, { repEmail, autoJoin }),
+        );
       } catch (err) {
         emit({
           kind: "error",

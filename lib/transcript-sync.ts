@@ -71,6 +71,7 @@ import { extractContactsFromTranscript, upsertDealContacts } from "./contacts-ex
 import { customerParticipation } from "./attendance";
 import { classifyCallSubtype, classifyMeetingType } from "./meeting-classify";
 import { rolldogOppIdForDeal } from "./pilot-config";
+import { withModelContext } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 
 export type TranscriptSyncCounts = {
@@ -185,15 +186,20 @@ export async function runTranscriptSync(
       break;
     }
     counts.pollBots += 1;
-    await processRow(
-      {
-        callId: row.id,
-        tenantId: row.tenant_id,
-        externalCallId: row.external_id,
-        recallBotId: row.recall_bot_id,
-      },
-      counts,
-      emit,
+    // Captured before the closure: the guard above narrows these to string, and
+    // TypeScript drops property narrowing inside a callback because it cannot
+    // prove the object was not mutated in between.
+    const args = {
+      callId: row.id,
+      tenantId: row.tenant_id,
+      externalCallId: row.external_id,
+      recallBotId: row.recall_bot_id,
+    };
+    // Extraction is the most expensive single call in the system. Attributing
+    // it to the tenant and the call is what makes cost per customer and cost
+    // per deal answerable at all.
+    await withModelContext({ tenantId: row.tenant_id, callId: row.id }, () =>
+      processRow(args, counts, emit),
     );
   }
 

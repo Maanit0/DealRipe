@@ -37,28 +37,12 @@ const RELATIONSHIPS = new Set<ContactRelationship>([
   "unknown",
 ]);
 
-/**
- * A contact is worth showing a CRO only if it's a real stakeholder. Keep anyone
- * with a defined relationship (including a mentioned-only economic buyer, that's
- * the un-engaged-buyer signal), but drop the noise the LLM sometimes grabs from
- * scheduling/email logistics: an "unknown" relationship with no substantive role
- * or a placeholder role like "unknown internal stakeholder". This is what keeps
- * "Unknown internal stakeholder" out of the pipeline-review brief.
- */
-export function isMeaningfulContact(c: {
-  relationship?: string | null;
-  role?: string | null;
-}): boolean {
-  const rel = (c.relationship ?? "").toLowerCase().trim();
-  const role = (c.role ?? "").toLowerCase().trim();
-  if (rel && rel !== "unknown") return true;
-  const junkRole =
-    !role ||
-    /unknown|mentioned|scheduling|shared .*email|internal stakeholder|copied|cc'?d/.test(
-      role,
-    );
-  return !junkRole;
-}
+// Moved to lib/contact-filter.ts, which has no model, CRM or Node dependencies.
+// Re-exported so existing importers keep working, but a CLIENT component must
+// import from contact-filter directly: importing it from here drags the
+// Anthropic SDK into the browser bundle.
+export { isMeaningfulContact } from "./contact-filter";
+import { isMeaningfulContact } from "./contact-filter";
 
 /**
  * Extract the named, customer-side individuals from a transcript. Excludes the

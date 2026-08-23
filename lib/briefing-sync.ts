@@ -33,6 +33,7 @@ import { isAutoJoinRep, repEmailForDeal, resolveMeetingDeal } from "./pilot-conf
 import { prescriptionsFromBriefing, recordPrescriptions } from "./prescription-ledger";
 import { prewarmRolldogToken } from "./rolldog";
 import { recordSentMessage } from "./sent-messages";
+import { withModelContext } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
 
@@ -158,7 +159,9 @@ export async function runBriefingSync(
     for (const ev of events) {
       counts.eventsSeen += 1;
       try {
-        await processEvent(ev, tenantId, now, counts, emit, autoJoin);
+        await withModelContext({ tenantId }, () =>
+          processEvent(ev, tenantId, now, counts, emit, autoJoin),
+        );
       } catch (err) {
         counts.errors += 1;
         emit({ kind: "error", eventId: ev.eventId, message: err instanceof Error ? err.message : String(err) });

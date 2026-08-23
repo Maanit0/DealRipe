@@ -36,6 +36,7 @@
 
 import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
+import { withModelContext } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 import type { MeetingType } from "./meeting-classify";
 
@@ -295,18 +296,26 @@ export async function runRecapSync(
     }
 
     try {
-      const notify = await sendPostCallSummary({
-        tenantId: row.tenant_id,
-        dealExternalId: externalId,
-        extraction,
-        transcript,
-        meetingType: (row.meeting_type as MeetingType | null) ?? undefined,
-        callId: row.id,
-        // Without this the audit measures against where the deal stands today
-        // rather than where it stood on the call, and history can cite a later
-        // conversation than the one being recapped.
-        callAt: row.scheduled_start,
-      });
+      // The recap passes are the two most expensive calls in the system,
+      // measured at ~14,000 tokens and 75s for the narrative and ~14,000 and
+      // 57s for the demo strategy. Untagged they were the largest
+      // unattributable line in the bill.
+      const notify = await withModelContext(
+        { tenantId: row.tenant_id, dealId: row.deal_id, callId: row.id },
+        () =>
+          sendPostCallSummary({
+            tenantId: row.tenant_id,
+            dealExternalId: externalId,
+            extraction,
+            transcript,
+            meetingType: (row.meeting_type as MeetingType | null) ?? undefined,
+            callId: row.id,
+            // Without this the audit measures against where the deal stands
+            // today rather than where it stood on the call, and history can
+            // cite a later conversation than the one being recapped.
+            callAt: row.scheduled_start,
+          }),
+      );
       if (notify.sent) counts.recapped += 1;
       else {
         counts.skipped += 1;

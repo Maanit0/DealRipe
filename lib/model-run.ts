@@ -34,10 +34,54 @@
  * this file the thing everyone edits.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import type Anthropic from "@anthropic-ai/sdk";
 
 import { getAnthropicClient, getAnthropicModel } from "./anthropic";
 import { supabaseAdmin } from "./supabase";
+
+/**
+ * WHO this work is for, carried ambiently rather than threaded.
+ *
+ * Measured 2026-08-23: 3,906 traced model calls and THREE of them carried a
+ * tenant_id. Every trace was landing, and none of it could answer the questions
+ * the table exists for: what does this customer cost, what does this deal cost,
+ * is one tenant's spend running away. reengage_draft was the only site passing
+ * a tenantId, because it was the only one written after the table existed.
+ *
+ * The obvious fix is to thread tenantId through fourteen call sites, seven of
+ * which do not have it in scope and would need it plumbed through their own
+ * callers. That is a wide diff across live cron paths for a bookkeeping field,
+ * and it has to be redone for every new call site and every new tenant.
+ *
+ * This is ambient instead. A cron route or a script wraps its work once, and
+ * every model call underneath it, however deeply nested, is attributed. An
+ * explicit argument still wins, so a caller that knows better always can.
+ *
+ * AsyncLocalStorage survives await boundaries, which is what makes this safe
+ * under the concurrency these crons run at: two tenants processed in parallel
+ * do not see each other's context.
+ */
+type ModelContext = { tenantId?: string | null; dealId?: string | null; callId?: string | null };
+const modelContext = new AsyncLocalStorage<ModelContext>();
+
+/**
+ * Run `fn` with every model call inside it attributed to this tenant/deal/call.
+ *
+ * Nests: an inner call overrides only the fields it names, so a route can set
+ * the tenant once and a per-deal loop can add the deal id without restating it.
+ */
+export function withModelContext<T>(ctx: ModelContext, fn: () => Promise<T>): Promise<T> {
+  const parent = modelContext.getStore() ?? {};
+  return modelContext.run({ ...parent, ...ctx }, fn);
+}
+
+/** What the ambient context currently holds, for a diagnostic that wants to
+ *  prove attribution is on the path before a long run. */
+export function currentModelContext(): ModelContext {
+  return { ...(modelContext.getStore() ?? {}) };
+}
 
 export type ModelRunArgs = {
   /**
@@ -123,6 +167,12 @@ async function record(row: Record<string, unknown>): Promise<void> {
  */
 export async function runModel(args: ModelRunArgs): Promise<ModelRunResult> {
   const model = args.model ?? getAnthropicModel();
+  // Explicit wins, ambient fills in. `undefined` means "not stated", while an
+  // explicit null means "deliberately none", so only undefined falls through.
+  const ambient = modelContext.getStore() ?? {};
+  const tenantId = args.tenantId !== undefined ? args.tenantId : (ambient.tenantId ?? null);
+  const dealId = args.dealId !== undefined ? args.dealId : (ambient.dealId ?? null);
+  const callId = args.callId !== undefined ? args.callId : (ambient.callId ?? null);
   const started = Date.now();
   const retries = args.retries ?? 2;
 
@@ -147,9 +197,9 @@ export async function runModel(args: ModelRunArgs): Promise<ModelRunResult> {
         cache_creation_input_tokens?: number;
       };
       await record({
-        tenant_id: args.tenantId ?? null,
-        deal_id: args.dealId ?? null,
-        call_id: args.callId ?? null,
+        tenant_id: tenantId,
+        deal_id: dealId,
+        call_id: callId,
         task: args.task,
         prompt_version: args.promptVersion ?? "v1",
         model,
@@ -187,9 +237,9 @@ export async function runModel(args: ModelRunArgs): Promise<ModelRunResult> {
   }
 
   await record({
-    tenant_id: args.tenantId ?? null,
-    deal_id: args.dealId ?? null,
-    call_id: args.callId ?? null,
+    tenant_id: tenantId,
+    deal_id: dealId,
+    call_id: callId,
     task: args.task,
     prompt_version: args.promptVersion ?? "v1",
     model,

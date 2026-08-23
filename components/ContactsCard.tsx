@@ -1,4 +1,4 @@
-import { isMeaningfulContact } from "@/lib/contacts-extract";
+import { isMeaningfulContact } from "@/lib/contact-filter";
 import type { Contact } from "@/lib/seed-data";
 
 type Props = {

@@ -7,7 +7,7 @@ import { AttendanceCard } from "./AttendanceCard";
 import { ContactsCard } from "./ContactsCard";
 import { TranscriptView } from "./TranscriptView";
 import type { CallAttendance } from "@/lib/attendance";
-import { callSubtypeLabel } from "@/lib/meeting-classify";
+import { callSubtypeLabel } from "@/lib/meeting-labels";
 import type { MeetingDetail } from "@/lib/meetings";
 import type { Contact } from "@/lib/seed-data";
 
