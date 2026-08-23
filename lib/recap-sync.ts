@@ -108,7 +108,7 @@ export async function runRecapSync(
   // marker would be a second thing to keep true.
   const calls = await db
     .from("calls")
-    .select("id, tenant_id, deal_id, meeting_type, outcome, scheduled_start, deals!inner(external_id)")
+    .select("id, tenant_id, deal_id, meeting_type, call_subtype, outcome, scheduled_start, deals!inner(external_id)")
     .eq("has_been_extracted", true)
     .gte("scheduled_start", since)
     .order("scheduled_start", { ascending: true });
@@ -121,6 +121,7 @@ export async function runRecapSync(
     tenant_id: string;
     deal_id: string;
     meeting_type: string | null;
+    call_subtype: string | null;
     outcome: string | null;
     scheduled_start: string | null;
     deals: { external_id: string | null };
@@ -346,6 +347,8 @@ export async function runRecapSync(
               account: d.deals.account,
               repEmail: d.deals.rep_email,
               meetingType: row.meeting_type,
+              // So a proposal call gets a terms email and a discovery call gets a recap.
+              callSubtype: row.call_subtype ?? null,
               summary: notify.summary,
               agreed: notify.agreed,
               callDate: d.scheduled_start ?? d.call_date,

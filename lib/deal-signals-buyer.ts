@@ -75,6 +75,26 @@ export type BuyerSignals = {
   // ---- Qualification: what the calls have proven --------------------------
   fieldsAnswered: Signal<number>;
   criticalGapsOpen: Signal<string[]>;
+  /**
+   * Gaps that belong to THIS deal's stage and below, rather than the five
+   * absolute ones.
+   *
+   * The two answer different questions and conflating them is why the digest
+   * printed the same four blockers on nearly every card. Measured 2026-08-23:
+   * 106 of 115 open Magaya deals sit at SQL0, and not one of the five
+   * CRITICAL_FIELDS belongs to SQL1. budget_fit and close_date_validated are
+   * SQL2, competition_notes and decision_process_mapped are SQL3,
+   * sql4_exec_involvement is SQL4. So every early deal has all five "critical
+   * gaps open" by construction, which is true, useless, and identical on every
+   * deal.
+   *
+   * criticalGapsOpen stays absolute and is right where it is: a rep claiming
+   * Commit should be measured against a budget and a signer whatever stage the
+   * CRM says. This is the rep-facing half: what THIS deal needs next, given
+   * where it actually is. Same rule the briefing has always used via
+   * openGapsUpToStage.
+   */
+  stageGapsOpen: Signal<string[]>;
   economicBuyerEngaged: Signal<boolean>;
 
   // ---- Commitment: did anyone agree to anything --------------------------
@@ -179,7 +199,10 @@ export async function computeBuyerSignals(args: {
 
   const dealRes = await db
     .from("deals")
-    .select("id, account")
+    // stage_key: without it dealStageKey is always null, the ceiling becomes
+    // MAX_SAFE_INTEGER and the "stage-relative" gap read silently degrades to
+    // the absolute one. tsc does not catch that, because the row is cast.
+    .select("id, account, stage_key")
     .eq("tenant_id", args.tenantId)
     .eq("id", args.dealId)
     .maybeSingle();
@@ -240,6 +263,7 @@ export async function computeBuyerSignals(args: {
       silentInvitees: unread(reason),
       fieldsAnswered: unread(reason),
       criticalGapsOpen: unread(reason),
+      stageGapsOpen: unread(reason),
       economicBuyerEngaged: unread(reason),
       commitmentSecured: unread(reason),
     };
@@ -372,24 +396,35 @@ export async function computeBuyerSignals(args: {
   // SQL0-SQL5 one. The second treats a field nobody discussed as a gap that is
   // closed, which would let a deal reach Commit with no budget ever raised.
   let frameworkKeys: Set<string> | null = null;
+  let stageFields: Array<{ field_key: string; label: string | null; stage_key: string | null }> = [];
   const frameworkId = ((feRes.data ?? []) as Array<{ framework_id: string | null }>).find(
     (r) => r.framework_id,
   )?.framework_id;
   if (frameworkId) {
-    const ff = await db.from("framework_fields").select("field_key").eq("framework_id", frameworkId);
+    // stage_key and label too: the stage-relative gap read needs to know which
+    // stage each field belongs to and how to name it to a rep.
+    const ff = await db
+      .from("framework_fields")
+      .select("field_key, label, stage_key")
+      .eq("framework_id", frameworkId);
     if (!ff.error) {
-      frameworkKeys = new Set(((ff.data ?? []) as Array<{ field_key: string }>).map((f) => f.field_key));
+      stageFields = (ff.data ?? []) as Array<{ field_key: string; label: string | null; stage_key: string | null }>;
+      frameworkKeys = new Set(stageFields.map((f) => f.field_key));
     }
   }
 
   let fieldsAnswered: Signal<number>;
   let criticalGapsOpen: Signal<string[]>;
+  let stageGapsOpen: Signal<string[]>;
+  // The deal's own stage, which is what makes a gap read stage-relative at all.
+  const dealStageKey = (dealRes.data as { stage_key?: string | null } | null)?.stage_key ?? null;
   let economicBuyerEngaged: Signal<boolean>;
 
   if (feRes.error) {
     const reason = `extraction read failed: ${feRes.error.message}`;
     fieldsAnswered = unread(reason);
     criticalGapsOpen = unread(reason);
+    stageGapsOpen = unread(reason);
     economicBuyerEngaged = unread(reason);
   } else {
     const rows = (feRes.data ?? []) as Array<{ framework_field_key: string; status: string }>;
@@ -397,6 +432,7 @@ export async function computeBuyerSignals(args: {
       const why = "no extraction on this deal, so nothing has been proven either way";
       fieldsAnswered = unread(why);
       criticalGapsOpen = unread(why);
+      stageGapsOpen = unread(why);
       economicBuyerEngaged = unread(why);
     } else {
       const yes = new Set(rows.filter((r) => r.status === "Yes").map((r) => r.framework_field_key));
@@ -425,6 +461,46 @@ export async function computeBuyerSignals(args: {
       criticalGapsOpen = read(
         open,
         open.length === 0 ? "no critical gap open" : `${open.length} critical gap(s): ${open.join("; ")}`,
+      );
+
+      // What this deal needs NEXT, given where it actually is. Fields at or
+      // below the deal's own stage that no call has answered Yes.
+      const rankOf = (k: string | null | undefined): number => {
+        const m = (k ?? "").match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+      };
+      // AT OR BELOW THIS STAGE, PLUS THE NEXT ONE.
+      //
+      // "At or below" alone returns nothing for an SQL0 deal, because Magaya's
+      // framework has no SQL0 fields at all: its first stage with any is SQL1.
+      // That is literally true and useless, and it applies to 106 of 115 open
+      // deals. What a rep on an early deal actually needs is the discovery set
+      // one stage up, which is exactly what the briefing has always shown via
+      // openGapsForStage on the NEXT stage.
+      //
+      // So the window is everything owed so far plus everything due next, which
+      // is the same question a rep asks walking into a call.
+      const ceiling = rankOf(dealStageKey) + 1;
+      // NAME THE FIELD, NOT ITS CATEGORY, AND SAY EACH ONCE.
+      //
+      // framework_fields.label is the CATEGORY ("Company Profile"), and several
+      // fields share one, so mapping straight to it produced "Company Profile,
+      // Company Profile, Company Profile, Company Profile" for every early
+      // deal. The field key is the specific thing a rep has to find out
+      // (why_looking, existing_systems, user_count), which is what makes the
+      // list actionable rather than decorative.
+      const stageOpen = [
+        ...new Set(
+          stageFields
+            .filter((f) => f.stage_key && rankOf(f.stage_key) <= ceiling && !yes.has(f.field_key))
+            .map((f) => f.field_key.replace(/^sql\d_/, "").replace(/_/g, " ")),
+        ),
+      ];
+      stageGapsOpen = read(
+        stageOpen,
+        stageOpen.length === 0
+          ? `nothing open at ${dealStageKey ?? "this stage"} or the next`
+          : `${stageOpen.length} open at ${dealStageKey ?? "this stage"} or the next: ${stageOpen.slice(0, 5).join("; ")}`,
       );
 
       // WHO SIGNS COMES FROM THE CALLS, NOT FROM AN SQL4 CHECKBOX.
@@ -510,6 +586,7 @@ export async function computeBuyerSignals(args: {
     silentInvitees,
     fieldsAnswered,
     criticalGapsOpen,
+    stageGapsOpen,
     economicBuyerEngaged,
     commitmentSecured,
   };
@@ -643,6 +720,7 @@ export function assessDeal(
     ["silent invitees", s.silentInvitees],
     ["fields answered", s.fieldsAnswered],
     ["critical gaps", s.criticalGapsOpen],
+    ["gaps at this stage", s.stageGapsOpen],
     ["economic buyer", s.economicBuyerEngaged],
     ["commitment", s.commitmentSecured],
     ["customer email replies", s.daysSinceCustomerReply],

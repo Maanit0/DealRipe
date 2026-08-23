@@ -83,6 +83,24 @@ export type FollowUpDraftInput = {
    * one and he was only sending a recording. Discussed is not agreed.
    */
   agreed?: { weOwe: string[]; customerOwes: string[] };
+  /**
+   * What KIND of conversation this was, so the email has the right job.
+   *
+   * Until 2026-08-23 the draft had exactly one shape: a post-call recap ending
+   * in one dated ask. That is right after discovery and wrong everywhere else,
+   * and the Protrans call is what made it obvious. DealRipe drafted a recap of
+   * a technical report review; Alexandra sent a full commercial concessions
+   * letter with revised licence fees, tier pricing and implementation rates,
+   * because the customer was waiting on terms. Our draft scored 17% overlap and
+   * that was the correct outcome: it was a well-written email for a different
+   * conversation.
+   *
+   * The recap already routes on call type and the follow-up draft never did,
+   * even though calls.call_subtype was written minutes earlier by the same
+   * ingest. Absent falls back to the discovery shape, which is what it always
+   * did.
+   */
+  callSubtype?: string | null;
 };
 
 export type FollowUpDraft = {
@@ -574,6 +592,16 @@ Non-negotiable rules:
    Do NOT write "is on its way", "are on their way" or "I'll send it over" for something included in THIS email either. Those describe a separate, later email and leave the customer waiting for one that never arrives.
    Always name the file in attachmentsToAdd so the rep knows what to attach before sending.
 
+WHAT THIS PARTICULAR EMAIL IS FOR
+
+The user message names the kind of call. The rules above hold for all of them, but the JOB of the email changes and rule 1's "one ask" means something different in each:
+
+- DISCOVERY: they told you about their problem. Reflect it back in their words and ask for the next conversation, dated. This is the default shape.
+- DEMO: they saw the product. Connect what they saw to the specific problem they named earlier, and ask for the next step toward a decision, dated.
+- PROPOSAL or NEGOTIATION: they are evaluating terms and are waiting on YOU. The email carries the substance being decided on, not a recap of the meeting. State what changed, item by item, in the order the customer raised them, and be concrete about numbers, dates and what is included. Length rule 3 is relaxed here and only here: a terms email is as long as the terms. Still one ask, and it is for the decision or the next step toward it.
+- FOLLOW_UP: the conversation is already running. Be short, pick up exactly where it left off, and do not re-introduce anything.
+- EXISTING CUSTOMER: they already buy from you. Never write as though you are selling in for the first time, never ask what is driving them to look at a new solution.
+
 Return JSON only:
 {"subject": string, "body": string, "attachmentsToAdd": string[]}
 
@@ -605,9 +633,23 @@ function buildUserMessage(
   const s = input.summary;
   const open = s.stillOpen.slice(0, 4).map((f) => `- ${f.label ?? f.fieldKey}`).join("\n");
   const today = new Date().toISOString().slice(0, 10);
+  // Stated as a fact at the top, the same way the briefing states call type, so
+  // the model routes on it rather than inferring the shape from the transcript.
+  const kind = (input.callSubtype ?? "").trim().toLowerCase();
+  const KIND_LABEL: Record<string, string> = {
+    discovery: "DISCOVERY",
+    demo: "DEMO",
+    proposal: "PROPOSAL or NEGOTIATION",
+    follow_up: "FOLLOW_UP",
+    customer: "EXISTING CUSTOMER",
+    internal: "INTERNAL",
+  };
   return [
     `TODAY: ${today}`,
     `CUSTOMER: ${input.account}`,
+    KIND_LABEL[kind]
+      ? `THIS WAS A ${KIND_LABEL[kind]} CALL. Write the email that kind of call needs.`
+      : `CALL KIND NOT CLASSIFIED, so write the default discovery shape.`,
     input.attendees ? `ON THE CALL: ${input.attendees}` : "",
     input.recipients
       ? `WRITING TO (greet these people and nobody else): ${input.recipients}`
@@ -951,6 +993,8 @@ export async function autoDraftFollowUpForCall(args: {
   account: string;
   repEmail: string | null;
   meetingType: string | null;
+  /** calls.call_subtype, written by transcript-sync minutes before this runs. */
+  callSubtype?: string | null;
   summary: PostCallSummary;
   /** Verified commitments from the narrative pass. See FollowUpDraftInput. */
   agreed?: { weOwe: string[]; customerOwes: string[] };
@@ -1078,6 +1122,7 @@ export async function autoDraftFollowUpForCall(args: {
     recipients: recipients || undefined,
     callDate: args.callDate ?? null,
     calendarConnectionId: conn.data?.id ?? null,
+    callSubtype: args.callSubtype ?? null,
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
 

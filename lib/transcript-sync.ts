@@ -235,7 +235,7 @@ async function retryFailedDrafts(): Promise<void> {
   const rows = await db
     .from("calls")
     .select(
-      "id, deal_id, participants, scheduled_start, call_date, meeting_type, followup_draft_state, followup_draft_reason, followup_draft_attempts, deals!inner(account, rep_email)",
+      "id, deal_id, participants, scheduled_start, call_date, meeting_type, call_subtype, followup_draft_state, followup_draft_reason, followup_draft_attempts, deals!inner(account, rep_email)",
     )
     .in("followup_draft_state", ["failed", "unavailable"])
     .limit(20);
@@ -248,6 +248,7 @@ async function retryFailedDrafts(): Promise<void> {
     scheduled_start: string | null;
     call_date: string | null;
     meeting_type: string | null;
+    call_subtype: string | null;
     followup_draft_state: string;
     followup_draft_reason: string | null;
     followup_draft_attempts: number;
@@ -294,6 +295,8 @@ async function retryFailedDrafts(): Promise<void> {
         account: r.deals.account,
         repEmail: r.deals.rep_email,
         meetingType: r.meeting_type,
+        // So a proposal call gets a terms email and a discovery call gets a recap.
+        callSubtype: r.call_subtype ?? null,
         summary,
         callDate: r.scheduled_start ?? r.call_date,
         participants: r.participants,
