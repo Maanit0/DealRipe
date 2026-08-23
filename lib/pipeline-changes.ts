@@ -626,7 +626,13 @@ export async function getPipelineChanges(
   const untilMs = Date.parse(opts.untilIso);
 
   const [dealsRes, feRes, contactsRes, callsRes, snapsRes, framework] = await Promise.all([
-    db.from("deals").select("id, account, external_id, rep_email, rolldog_opportunity_id, outcome_label").eq("tenant_id", tenantId),
+    db
+      .from("deals")
+      // outcome_close_date so won/lost can be counted IN THE WINDOW rather than
+      // all time. Without it the headline can only say "ever", which for a
+      // weekly digest is the wrong question.
+      .select("id, account, external_id, rep_email, rolldog_opportunity_id, outcome_label, outcome_close_date")
+      .eq("tenant_id", tenantId),
     db.from("field_extractions").select("deal_id, framework_field_key, status, answer, last_updated_from_call_id").eq("tenant_id", tenantId),
     db.from("contacts").select("deal_id, name, role, relationship, last_contacted_at").eq("tenant_id", tenantId),
     db.from("calls").select("id, deal_id, outcome, scheduled_start, call_date, meeting_type, title, participants").eq("tenant_id", tenantId),
@@ -653,6 +659,7 @@ export async function getPipelineChanges(
     rep_email: string | null;
     rolldog_opportunity_id: string | null;
     outcome_label: "won" | "lost" | null;
+    outcome_close_date: string | null;
   }>).filter((d) => !isConsumerMailShell(d.external_id));
 
   // A resolved deal is not pipeline.
@@ -1149,7 +1156,25 @@ export async function getPipelineChanges(
     // "To look at" is a real problem Mark should inspect: a high-severity risk or
     // a deal moving backward. Medium/low flags (no meeting booked, not in Rolldog)
     // are shown as context on the card but don't inflate the list on their own.
-    const needsAttention = hasContent && (flags.some((f) => f.severity === "high") || hasBackwardChange);
+    // A DEAL CARRYING THE NUMBER NEEDS LOOKING AT EVERY WEEK UNTIL IT IS FIXED,
+    // not only in the week something went wrong.
+    //
+    // This used to be "a high-severity flag or a backward move", both of which
+    // are events. Narrowing NO_SHOW_OUTCOMES on 2026-08-23 removed a wrongly
+    // fired high flag from about eighteen deals, and the side effect was that
+    // Seino Logix at $345,516 and Dunavant at $292,584 dropped off Mark's list
+    // entirely in a quiet week, replaced by four deals with no recorded value.
+    //
+    // A Commit or Expect with no economic buyer, no budget or no validated date
+    // is a standing problem with the forecast, and it is exactly what Mark
+    // triages on. It belongs on the list whether or not it moved.
+    const carriesTheNumber = category ? COMMIT_RE.test(category) || EXPECT_RE.test(category) : false;
+    const decisiveGapOpen = missing.some((m) => /economic buyer|budget|close date/i.test(m));
+    const needsAttention =
+      hasContent &&
+      (flags.some((f) => f.severity === "high") ||
+        hasBackwardChange ||
+        (carriesTheNumber && decisiveGapOpen));
 
     records.push({
       dealId: d.id,
@@ -1231,8 +1256,19 @@ export async function getPipelineChanges(
   const headline: Headline = {
     totalPipelineAnnual,
     forecastMix: Array.from(mixMap.values()).sort((a, b) => b.annual - a.annual),
-    closedWon: records.filter((r) => r.changes.some((c) => c.kind === "won")).length,
-    closedLost: records.filter((r) => r.changes.some((c) => c.kind === "lost")).length,
+    // COUNTED FROM closedOut, NOT FROM records.
+    //
+    // records excludes every deal carrying an outcome_label by construction
+    // (line ~671), so counting won/lost from it could only ever return zero,
+    // and the digest headline read "won/lost 0/0" for weeks while outcome-sync
+    // had labelled 3 won and 8 lost. The first number a CRO looks for was
+    // structurally unable to be anything but zero.
+    //
+    // Scoped to the window, because a weekly digest asks what closed THIS WEEK.
+    // A deal with no recorded close date is not counted rather than assumed to
+    // be recent.
+    closedWon: closedOut.filter((d) => d.outcome_label === "won" && inWindow(d.outcome_close_date, sinceMs, untilMs)).length,
+    closedLost: closedOut.filter((d) => d.outcome_label === "lost" && inWindow(d.outcome_close_date, sinceMs, untilMs)).length,
     dealsChanged: records.filter((r) => r.changes.length > 0).length,
     dealsNeedingAttention: records.filter((r) => r.needsAttention).length,
     newOpportunities: records.filter((r) => r.changes.some((c) => c.kind === "new")).length,

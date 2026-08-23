@@ -610,7 +610,16 @@ export function renderPipelineDigestEmail(args: {
   ${spacer}
 
   <tr><td style="padding:4px 6px 0 6px;">
-    <div style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${NAVY};margin-bottom:${patternHtml ? "14px" : "0"};">Deals to look at${h.dealsNeedingAttention > attention.length ? ` &middot; top ${attention.length} of ${h.dealsNeedingAttention}` : ""}</div>
+    <div style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${NAVY};margin-bottom:6px;">Deals to look at${h.dealsNeedingAttention > attention.length ? ` &middot; top ${attention.length} of ${h.dealsNeedingAttention}` : ""}</div>
+    ${
+      // Ranked on recoverable value, which needs a value. Most of this book does
+      // not have one in either CRM, so say that rather than let the order look
+      // arbitrary: 24 of 39 attention deals carry no amount in Rolldog or
+      // Salesforce, and those are ranked on risk alone.
+      priority.valueUnknown.all > 0
+        ? `<div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-bottom:${patternHtml ? "14px" : "12px"};">Ranked by what is recoverable: value at stake, then how likely it is to bite, then whether anyone can move it this week. ${priority.valueUnknown.all} of these ${h.dealsNeedingAttention} carry no amount in Rolldog or Salesforce, so they are ranked on risk alone.</div>`
+        : `<div style="margin-bottom:${patternHtml ? "14px" : "0"};"></div>`
+    }
     ${patternHtml}
   </td></tr>
   ${attention.length ? attentionCards : `<tr><td style="padding-top:12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${CARD};border:1px solid ${BORDER};border-radius:14px;"><tr><td style="padding:20px 22px;font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">Nothing needs your attention this week.</td></tr></table></td></tr>`}
@@ -653,6 +662,10 @@ export function renderPipelineDigestEmail(args: {
   const t: string[] = [`DealRipe pipeline changes, week of ${weekLabel}`, "", `Pipeline ${money(h.totalPipelineAnnual)} · ${h.dealsChanged} changed · ${h.dealsNeedingAttention} to look at · won/lost ${h.closedWon}/${h.closedLost}`];
   if (softAmount > 0) t.push("", `Reps have ${money(repForecast)} in Commit and Expect. DealRipe rates ${money(softAmount)} of it softer than the forecast, on ${softDeals.length} deal(s).`);
   t.push("", "DEALS TO LOOK AT");
+  if (priority.valueUnknown.all > 0) {
+    t.push(`Ranked by what is recoverable: value at stake, then how likely it is to bite, then whether`);
+    t.push(`anyone can move it this week. ${priority.valueUnknown.all} of these ${h.dealsNeedingAttention} carry no amount in either CRM, so they are ranked on risk alone.`);
+  }
   if (attention.length)
     attention.forEach((d, i) => {
       t.push(`${i + 1}. ${d.account} (${d.stageName ?? "no stage"}, ${d.forecastCategory ?? "no band"}, closes ${dstr(d.closeDate) || "no date"})`);
