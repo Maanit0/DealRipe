@@ -492,6 +492,28 @@ export function computeDealFlags(args: {
     });
   }
 
+  // THE CHAMPION THE REP MAY BE MISTAKING FOR THE SIGNER.
+  //
+  // A senior person is engaged, the calls read them as a champion, and nobody
+  // on the deal is identified as the buyer. That is a deal being run through
+  // someone who cannot approve it, which is the most expensive mistake in
+  // mid-market selling and the one a forecast never shows until signature.
+  //
+  // No CRM holds the evidence: it needs the transcript to say who the person is
+  // to the deal, which is what contacts-extract produces. Raised at `warning`
+  // rather than critical because being wrong about it costs a rep one question,
+  // and being right about it saves a quarter.
+  if (s.championMistakenForBuyer.status === "read" && s.championMistakenForBuyer.value) {
+    flags.push({
+      id: "champion_not_signer",
+      severity: "warning",
+      title: `${s.championMistakenForBuyer.value} may be a champion rather than the signer`,
+      evidence: s.championMistakenForBuyer.evidence,
+      move: "ask them directly who approves a purchase this size, and get that person into a conversation",
+      audience: ["rep", "leader"],
+    });
+  }
+
   // ---- ENGAGEMENT, the flags a CRM cannot produce -------------------------
 
   // A WAITING PERIOD, not just the state.

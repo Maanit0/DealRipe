@@ -59,6 +59,14 @@ export type ContactLike = {
 const SENIOR_TITLE =
   /budget|cfo|coo|ceo|chief|owner|founder|president|managing director|company director|\bdirector\b|\bvp\b|vice president|head of|general manager|partner|final (say|decision)|economic|controller|signatory/i;
 
+/**
+ * A role that claims decision authority in its own words.
+ *
+ * Separate from SENIOR_TITLE on purpose: "Head of Operations" is senior and
+ * says nothing about who signs, where "Owner" and "Decision Maker" do.
+ */
+const DECIDES_RE = /owner|decision.?mak|decides|final (say|approval|decision)|signator|approver|principal|proprietor/i;
+
 export type EconomicBuyerRead =
   | {
       status: "engaged";
@@ -113,7 +121,22 @@ export function championMistakenForBuyer(
 ): { name: string | null; role: string | null } | null {
   if (contacts.some((c) => c.relationship === "economic_buyer")) return null;
   const seniorChampion = contacts.find(
-    (c) => c.relationship === "champion" && c.last_contacted_at && SENIOR_TITLE.test(String(c.role ?? "")),
+    (c) =>
+      c.relationship === "champion" &&
+      c.last_contacted_at &&
+      SENIOR_TITLE.test(String(c.role ?? "")) &&
+      // AT AN SME THE OWNER IS OFTEN BOTH, AND THAT IS NOT A RISK.
+      //
+      // The first version fired on "Heidi Y (Owner / Decision Maker, took over
+      // the company from her father)" and "Tanner Williams (co-owner)". Those
+      // people sign. The extraction labelled them `champion` because they are
+      // also championing it, which at a fifty-person forwarder is the normal
+      // and healthy case rather than a deal running through the wrong person.
+      //
+      // The confusion only exists when the senior person is NOT described as
+      // deciding. Someone whose own role says owner, decision maker or approver
+      // is the buyer whatever the relationship field calls them.
+      !DECIDES_RE.test(String(c.role ?? "")),
   );
   return seniorChampion ? label(seniorChampion) : null;
 }

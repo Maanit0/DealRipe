@@ -41,6 +41,7 @@
 import { getDealAttendanceHistory, type CallAttendance } from "./attendance";
 import { readEmailEngagement } from "./email-log";
 import type { SlipVerdict } from "./salesforce-stage-history";
+import { buyerLabelOf, championMistakenForBuyer, resolveEconomicBuyer, type ContactLike } from "./economic-buyer";
 import { supabaseAdmin } from "./supabase";
 
 /** A reading that knows whether it is a reading. */
@@ -102,6 +103,15 @@ export type BuyerSignals = {
    * turns the state into a judgement.
    */
   daysSinceOurMessage: Signal<number>;
+  /**
+   * The senior person the rep is engaged with who reads as a champion rather
+   * than the signer, when nobody is labelled the buyer.
+   *
+   * The most expensive mistake in mid-market selling and the one a forecast
+   * never shows until the deal stalls at signature. Value is their label, null
+   * when there is no such confusion. See lib/economic-buyer.ts.
+   */
+  championMistakenForBuyer: Signal<string | null>;
   /** Needs Salesforce CloseDate history, wired separately. */
   closeDateSlips: Signal<number>;
   /**
@@ -221,6 +231,7 @@ export async function computeBuyerSignals(args: {
     return {
       ...base,
       conversationCount: unread(reason),
+      championMistakenForBuyer: unread(reason),
       nextMeetingBooked: unread(reason),
       daysSinceLastCall: unread(reason),
       callCadenceDays: unread(reason),
@@ -333,11 +344,24 @@ export async function computeBuyerSignals(args: {
   }
 
   // ---- qualification -----------------------------------------------------
-  const feRes = await db
-    .from("field_extractions")
-    .select("framework_field_key, status, framework_id")
-    .eq("tenant_id", args.tenantId)
-    .eq("deal_id", args.dealId);
+  const [feRes, ctRes] = await Promise.all([
+    db
+      .from("field_extractions")
+      .select("framework_field_key, status, framework_id")
+      .eq("tenant_id", args.tenantId)
+      .eq("deal_id", args.dealId),
+    // The people the extraction found on the calls, with the relationship it
+    // assigned. This is where "who signs" actually lives.
+    db
+      .from("contacts")
+      .select("name, role, relationship, last_contacted_at")
+      .eq("tenant_id", args.tenantId)
+      .eq("deal_id", args.dealId),
+  ]);
+  const contactRows = (ctRes.error ? [] : (ctRes.data ?? [])) as ContactLike[];
+  if (ctRes.error) {
+    console.warn(`[deal-signals] contacts read failed for ${args.dealId}: ${ctRes.error.message}`);
+  }
 
   // The deal's own framework decides which gaps exist at all.
   //
@@ -403,14 +427,30 @@ export async function computeBuyerSignals(args: {
         open.length === 0 ? "no critical gap open" : `${open.length} critical gap(s): ${open.join("; ")}`,
       );
 
-      economicBuyerEngaged = inFramework("sql4_exec_involvement")
-        ? read(
-            yes.has("sql4_exec_involvement"),
-            yes.has("sql4_exec_involvement")
-              ? "the calls confirm an executive or economic buyer is engaged"
-              : "no executive or economic buyer confirmed by any call",
-          )
-        : unread("this framework has no executive-involvement field");
+      // WHO SIGNS COMES FROM THE CALLS, NOT FROM AN SQL4 CHECKBOX.
+      //
+      // This read sql4_exec_involvement, a single late-stage framework field.
+      // 17 of Eduardo's 21 open deals sit at SQL0 where that question is never
+      // asked, so the field is structurally unfillable and this returned false
+      // on a rep who had six engaged buyers. A gate nobody has reached yet is
+      // not evidence that the buyer is absent.
+      //
+      // lib/economic-buyer.ts resolves it from the contact records the
+      // extraction builds out of the transcripts, which is where the answer
+      // actually lives. The SQL4 field stays in CRITICAL_FIELDS above, because
+      // as a GATE it is still a real thing the rep has to close; it just is not
+      // the way to find out who the buyer is.
+      const buyerRead = resolveEconomicBuyer(contactRows);
+      economicBuyerEngaged =
+        buyerRead.status === "engaged"
+          ? read(true, `${buyerLabelOf(buyerRead) ?? "the economic buyer"} has been in contact`)
+          : buyerRead.status === "identified_absent"
+            ? read(false, `${buyerLabelOf(buyerRead) ?? "the economic buyer"} is identified and has never been on a call`)
+            : // Deliberately UNREAD, not false. Not knowing who signs is not
+              // evidence that they are absent, and reporting it as false is
+              // what put "the economic buyer has never been on a call" on deals
+              // where nobody had been identified at all.
+              unread("nobody has been identified as the person who signs");
     }
   }
 
@@ -452,6 +492,16 @@ export async function computeBuyerSignals(args: {
   return {
     ...base,
     conversationCount: read(held.length, `${held.length} captured conversation(s) on this deal`),
+    championMistakenForBuyer: (() => {
+      const c = championMistakenForBuyer(contactRows);
+      const label = c ? `${c.name ?? "the main contact"}${c.role ? ` (${c.role.split(",")[0].trim()})` : ""}` : null;
+      return read(
+        label,
+        label
+          ? `${label} is engaged and reads as a champion, and nobody on this deal is identified as the signer`
+          : "no champion/buyer confusion detected",
+      );
+    })(),
     nextMeetingBooked,
     daysSinceLastCall,
     callCadenceDays,
@@ -598,6 +648,7 @@ export function assessDeal(
     ["customer email replies", s.daysSinceCustomerReply],
     ["awaiting a reply", s.awaitingReply],
     ["time since we wrote", s.daysSinceOurMessage],
+    ["champion versus buyer", s.championMistakenForBuyer],
     ["close date slips", s.closeDateSlips],
   ];
   for (const [label, sig] of all) {
