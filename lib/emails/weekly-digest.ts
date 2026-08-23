@@ -23,6 +23,10 @@ const SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
 
 export type RenderedEmail = { subject: string; html: string; text: string };
 
+function capitaliseFirst(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -341,18 +345,25 @@ export function renderPipelineDigestEmail(args: {
   // close date" lines read as boilerplate even though each is true, which is
   // the same mistake the buyer sentence on the attention cards already made.
   // When one reason dominates, hoist it and let each row carry only its number.
+  // The shared clause is the LAST one, by construction in forecast-why.ts:
+  // deal-specific facts are ordered ahead of the generic requirement clause so
+  // hoisting can never swallow them. An earlier version keyed on the first
+  // clause and hid "push number 5" on IFF, which was the most damning fact in
+  // the section.
+  const tail = (text: string) => text.split("; ").slice(-1)[0] ?? "";
+  const head = (text: string) => text.split("; ").slice(0, -1).join("; ");
   const reasonCount = new Map<string, number>();
-  for (const c of whyShown) {
-    const key = c.evidence.text.split(".")[0];
-    reasonCount.set(key, (reasonCount.get(key) ?? 0) + 1);
-  }
+  for (const c of whyShown) reasonCount.set(tail(c.evidence.text), (reasonCount.get(tail(c.evidence.text)) ?? 0) + 1);
   const [sharedReason, sharedN] = [...reasonCount.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
   const hoisted = sharedN >= 3 ? sharedReason : null;
 
   const whyHtml = whyShown
     .map((c, i) => {
-      const own = c.evidence.text.split(".")[0];
-      const line = hoisted && own === hoisted ? "" : `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${AMBER};margin-top:3px;">${esc(c.evidence.text)}</div>`;
+      // Keep the deal-specific head even when the shared tail is hoisted.
+      const own = hoisted && tail(c.evidence.text) === hoisted ? head(c.evidence.text) : c.evidence.text;
+      const line = own
+        ? `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${AMBER};margin-top:3px;">${esc(capitaliseFirst(own))}</div>`
+        : "";
       return `
       <div style="${i === 0 ? "" : `margin-top:12px;padding-top:12px;border-top:1px solid ${BORDER};`}">
         <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(c.account, c.dealId)}.</strong> ${esc(c.headline)}.</div>
@@ -607,8 +618,8 @@ export function renderPipelineDigestEmail(args: {
   ${
     whyHtml
       ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
-    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 6px 0;">What moved the number, and who moved it</div>
-    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">Stage, band, amount and close-date changes your reps made this week that the calls do not support.${hoisted ? ` On ${sharedN} of them, <strong style="color:${NAVY};">${esc(hoisted.toLowerCase())}</strong>.` : ""}${whyAgreed > 0 ? ` ${whyAgreed} other change${whyAgreed === 1 ? " is" : "s are"} backed by what the calls show and are not listed.` : ""}</div>
+    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 6px 0;">What moved the number, and what changed on the deal</div>
+    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">Stage, band, amount and close-date changes your reps made this week, each with what actually happened on the deal since the last time that value was set. DealRipe does not know why a rep moved a number and does not guess; this is the record between the two changes.${hoisted ? ` On ${sharedN} of them, <strong style="color:${NAVY};">${esc(hoisted.toLowerCase())}</strong>.` : ""}${whyAgreed > 0 ? ` ${whyAgreed} other change${whyAgreed === 1 ? " is" : "s are"} backed by what the calls show and are not listed.` : ""}</div>
     ${whyHtml}
   </td></tr>`
       : ""
@@ -664,13 +675,14 @@ export function renderPipelineDigestEmail(args: {
     });
   else t.push("- Nothing needs attention.");
   if (whyShown.length) {
-    t.push("", "WHAT MOVED THE NUMBER, AND WHO MOVED IT");
-    t.push("Changes your reps made this week that the calls do not support.");
+    t.push("", "WHAT MOVED THE NUMBER, AND WHAT CHANGED ON THE DEAL");
+    t.push("Changes your reps made this week, each with what actually happened on the deal since");
+    t.push("the last time that value was set. DealRipe does not guess at why; this is the record.");
     if (hoisted) t.push(`On ${sharedN} of them, ${hoisted.toLowerCase()}.`);
     for (const c of whyShown) {
       t.push(`- ${c.account}. ${c.headline}.`);
-      const own = c.evidence.text.split(".")[0];
-      if (!hoisted || own !== hoisted) t.push(`  ${c.evidence.text}`);
+      const own = hoisted && tail(c.evidence.text) === hoisted ? head(c.evidence.text) : c.evidence.text;
+      if (own) t.push(`  ${capitaliseFirst(own)}`);
     }
     if (whyAgreed > 0) t.push(`  ${whyAgreed} other change(s) are backed by what the calls show.`);
   }

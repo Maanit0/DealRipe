@@ -57,8 +57,64 @@ const FIELD_LABEL: Record<WatchedField, string> = {
 
 const BAND_RANK: Record<string, number> = { Omitted: 0, Pipeline: 1, Expect: 2, Commit: 3 };
 
+/**
+ * How recently a call must have happened for a close-date push to be plausibly
+ * informed by it.
+ *
+ * Fourteen days rather than something tighter, because a rep often updates the
+ * CRM well after the conversation that changed their mind. The question this
+ * answers is not "did they update promptly", it is "could anything the customer
+ * said have caused this", and a fortnight is generous to the rep on purpose:
+ * the claim we make when it fails is that NOTHING was learned, which needs to
+ * be safe.
+ */
+const DAYS_A_PUSH_CAN_BE_INFORMED_BY = 14;
+
+/**
+ * Two changes closer together than this are one editing session, not two
+ * decisions, so the second one's baseline reaches back past the first.
+ */
+const SAME_SESSION_MS = 2 * 86_400_000;
+
+function joinList(xs: string[]): string {
+  if (xs.length === 0) return "";
+  if (xs.length === 1) return xs[0];
+  return `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+}
+
+function capitalise(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
+}
+
+/**
+ * A gap phrased as what the deal NEEDS, not as what it lacks.
+ *
+ * criticalGapsOpen states absences ("no executive or economic buyer engaged"),
+ * which is right where it is listing what is missing and wrong the moment a
+ * sentence says "the new date still needs ...". That rendered as "still needs no
+ * executive or economic buyer engaged", which is not English and, worse, says
+ * the opposite of what is meant.
+ */
+function asRequirement(gap: string): string {
+  const g = gap.replace(/ \(never raised on any call\)/, "");
+  if (g.includes("economic buyer")) return "an economic buyer on a call";
+  if (g.includes("budget")) return "a budget";
+  if (g.includes("decision process")) return "a mapped decision process";
+  if (g.includes("close date")) return "a date the customer agrees to";
+  if (g.includes("competitor")) return "a named competitor";
+  return g;
+}
+
 export type ForecastChange = {
   dealId: string;
+  /**
+   * When the same field last changed on this opportunity, if it has before.
+   *
+   * The window this opens is the whole point of the section: it lets us report
+   * what happened on the deal BETWEEN the last time the rep set this value and
+   * the time they changed it, without ever guessing why they changed it.
+   */
+  previousChangeAt?: string | null;
   account: string;
   /** The person who made the change, from CreatedBy.Name. The point of this
    *  module: a change with no name on it is a weather report. */
@@ -238,22 +294,81 @@ function evidenceFor(
   batch: LossBatch | null,
 ): ForecastChange["evidence"] {
   if (c.field === "CloseDate") {
-    const gaps = s.criticalGapsOpen;
-    if (gaps.status !== "read") {
-      return { verdict: "no_evidence", text: `no captured call to check the date against (${gaps.reason})` };
+    // WE DO NOT KNOW WHY THE REP MOVED THE DATE, and we must not pretend to.
+    //
+    // Three earlier versions of this got that wrong in escalating ways. The
+    // first asserted "no call has ever validated a close date", true on most of
+    // the book and therefore background rather than a reason. The second added
+    // Magaya's push base rate, which describes the population and gives a
+    // leader nothing to coach. The third assembled buyer signals and presented
+    // them AS the reason, which is the worst of the three: it reads as
+    // causation and DealRipe cannot see inside a rep's head.
+    //
+    // What is knowable, exactly, is what happened on the deal BETWEEN the last
+    // time this date was set and the moment it moved. Stating that and stopping
+    // is unbiased, is sourced entirely from records, and is usually more
+    // damning than any guess: the common answer is that nothing happened at all.
+    // A leader reads "nothing changed since the last date was set" and draws
+    // their own conclusion, which is theirs to draw.
+    const since = c.previousChangeAt ? Date.parse(c.previousChangeAt) : null;
+    const now = Date.now();
+
+    const callDays = s.daysSinceLastCall.status === "read" ? s.daysSinceLastCall.value : null;
+    const custDays = s.daysSinceCustomerReply.status === "read" ? s.daysSinceCustomerReply.value : null;
+    const booked = s.nextMeetingBooked.status === "read" ? s.nextMeetingBooked.value : null;
+    const waiting = s.awaitingReply.status === "read" && s.awaitingReply.value;
+    const waitedDays = s.daysSinceOurMessage.status === "read" ? s.daysSinceOurMessage.value : null;
+
+    // A signal falls INSIDE the window when it is more recent than the previous
+    // change. Null `since` means this is the first recorded change, so there is
+    // no window and we say so rather than inventing one.
+    const inWindow = (days: number | null): boolean | null => {
+      if (days === null || since === null) return null;
+      return now - days * 86_400_000 >= since;
+    };
+
+    const happened: string[] = [];
+    const didNot: string[] = [];
+
+    const spoke = inWindow(callDays);
+    if (spoke === true) happened.push(`a call ${callDays} days ago`);
+    else if (spoke === false) didNot.push("no conversation");
+
+    const wrote = inWindow(custDays);
+    if (wrote === true) happened.push(`the customer wrote ${custDays} days ago`);
+    else if (wrote === false) didNot.push("no message from the customer");
+
+    if (booked === false) didNot.push("nothing booked since");
+    if (waiting && waitedDays !== null && waitedDays >= 5) {
+      didNot.push(`our message of ${waitedDays} days ago still unanswered`);
     }
-    const dateNeverSet = gaps.value.some((g) => g.includes("close date"));
-    const slips = s.closeDateSlips.status === "read" ? s.closeDateSlips.value : null;
-    if (dateNeverSet) {
+
+    if (since === null) {
       return {
-        verdict: "contradicts",
-        text:
-          `no call has ever validated a close date with this customer` +
-          (slips !== null && slips >= 2 ? `, and this is push number ${slips + 1}` : "") +
-          `. The new date is the rep's estimate, not the customer's.`,
+        verdict: "no_evidence",
+        text: "first recorded change to this date, so there is no previous setting to measure against",
       };
     }
-    return { verdict: "supports", text: "the calls did establish a date with the customer, so this is a real revision" };
+
+    const windowDays = Math.max(1, Math.round((Date.parse(c.at) - since) / 86_400_000));
+    const window = `${windowDays} day${windowDays === 1 ? "" : "s"}`;
+
+    if (happened.length === 0) {
+      return {
+        verdict: "contradicts",
+        text: `nothing happened on this deal in the ${window} between the last date being set and this one: ${joinList(didNot)}`,
+      };
+    }
+    if (didNot.length === 0) {
+      return {
+        verdict: "supports",
+        text: `in the ${window} since the last date was set: ${joinList(happened)}`,
+      };
+    }
+    return {
+      verdict: "no_evidence",
+      text: `in the ${window} since the last date was set: ${joinList(happened)}, but ${joinList(didNot)}`,
+    };
   }
 
   if (c.field === "ForecastCategoryName") {
@@ -473,6 +588,7 @@ export async function getForecastWhy(args: {
     if (from === null && to === null) continue;
     staged.push({
       dealId: deal.id,
+      previousChangeAt: null,
       account: deal.account,
       actor: row.CreatedBy?.Name ?? "someone",
       at: row.CreatedDate,
@@ -494,6 +610,33 @@ export async function getForecastWhy(args: {
     } catch {
       // Left absent, which evidenceFor reports as no_evidence rather than as
       // agreement.
+    }
+  }
+
+  // Fill in each change's predecessor on the same opportunity and field. The
+  // rows arrive newest-first, so the NEXT matching row is the previous change.
+  // A BASELINE HAS TO BE FAR ENOUGH BACK TO MEAN SOMETHING.
+  //
+  // A rep correcting a date twice in one sitting produces two rows minutes
+  // apart, and taking the nearer one as the baseline yields "nothing happened
+  // in the 1 days between the last date being set and this one", which is both
+  // meaningless and slightly absurd. Fmgloballogistics did exactly that.
+  //
+  // Same rule as detectLossBatches: consecutive edits inside one session are
+  // one action, so the baseline skips back past them to the last time this
+  // value was genuinely settled.
+  const seenKey = new Map<string, Array<Omit<ForecastChange, "headline" | "evidence">>>();
+  for (const c of staged) {
+    const key = `${c.dealId}:${c.field}`;
+    (seenKey.get(key) ?? seenKey.set(key, []).get(key)!).push(c);
+  }
+  for (const list of seenKey.values()) {
+    // Newest first, as the SOQL returned them.
+    for (let i = 0; i < list.length; i++) {
+      const at = Date.parse(list[i].at);
+      let j = i + 1;
+      while (j < list.length && at - Date.parse(list[j].at) < SAME_SESSION_MS) j += 1;
+      list[i].previousChangeAt = j < list.length ? list[j].at : null;
     }
   }
 
