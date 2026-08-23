@@ -294,8 +294,12 @@ export function renderPipelineDigestEmail(args: {
   // Only no-shows inside this digest's own window. Using the current-state flag
   // relisted missed meetings from weeks earlier under a "week of" heading, which
   // grew the section to nine items and trained the reader to skip it.
+  const shownAbove = new Set(priority.ranked.map((r) => r.deal.dealId));
   const noShows = pc.deals
-    .filter((d) => d.noShowInWindow)
+    // A deal with a full card above does not need its no-show repeated at the
+    // bottom. Pxgl appeared twice on the 2026-08-24 send, once as deal 3 with
+    // the no-show in its blockers and again in this list.
+    .filter((d) => d.noShowInWindow && !shownAbove.has(d.dealId))
     .sort((a, b) => Date.parse(b.lastConversationAt ?? "") - Date.parse(a.lastConversationAt ?? ""))
     .slice(0, 6);
   // A deal that leaves the attention list must not leave the digest. These are
@@ -385,6 +389,20 @@ export function renderPipelineDigestEmail(args: {
     )
     .join("");
 
+  // Name what closed. A CRO reading "won/lost 1/3" wants to know which, and it
+  // is the one piece of good news in the email.
+  const inWin = (iso: string | null) => {
+    if (!iso) return false;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) && t >= Date.parse(pc.window.sinceIso) && t <= Date.parse(pc.window.untilIso);
+  };
+  const wonNames = pc.closedOut.filter((d) => d.outcome === "won" && inWin(d.closedAt)).map((d) => d.account);
+  const lostNames = pc.closedOut.filter((d) => d.outcome === "lost" && inWin(d.closedAt)).map((d) => d.account);
+  const closedLine =
+    wonNames.length + lostNames.length > 0
+      ? `${wonNames.length > 0 ? `Won: ${wonNames.join(", ")}.` : ""}${wonNames.length > 0 && lostNames.length > 0 ? " " : ""}${lostNames.length > 0 ? `Lost: ${lostNames.join(", ")}.` : ""}`
+      : "";
+
   const h = pc.headline;
 
   // Blocker texts already printed in full on an earlier card this send.
@@ -396,7 +414,14 @@ export function renderPipelineDigestEmail(args: {
   // Rolldog deals only. A pre-opportunity row with no stage and no value has
   // the same gap trivially, and padding the list with those makes a real
   // coaching signal about the forecast look like a generic complaint.
-  const buyerGapDeals = attention.filter((d) => d.inRolldog && d.economicBuyer && !d.economicBuyer.engaged);
+  // NOT gated on inRolldog any more. The gate was there so a pre-opportunity row
+  // with no stage and no value could not pad the list, but on 2026-08-24 four of
+  // the six attention deals were pre-opportunity and every one of them carried
+  // the same "nobody who can sign it" blocker, so the pattern that exists to say
+  // it once stayed silent and it was printed four times instead. A shared
+  // blocker across most of the list is a coaching signal whether or not the reps
+  // have created the opportunity yet.
+  const buyerGapDeals = attention.filter((d) => d.economicBuyer && !d.economicBuyer.engaged);
   const patternHtml =
     buyerGapDeals.length >= 3
       ? `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};margin:0 0 16px 0;"><strong style="color:${NAVY};">${buyerGapDeals.length} of the deals below share one blocker:</strong> the person who signs has never been on a call. ${esc(
@@ -620,6 +645,7 @@ export function renderPipelineDigestEmail(args: {
         ? `<div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-bottom:${patternHtml ? "14px" : "12px"};">Ranked by what is recoverable: value at stake, then how likely it is to bite, then whether anyone can move it this week. ${priority.valueUnknown.all} of these ${h.dealsNeedingAttention} carry no amount in Rolldog or Salesforce, so they are ranked on risk alone.</div>`
         : `<div style="margin-bottom:${patternHtml ? "14px" : "0"};"></div>`
     }
+    ${closedLine ? `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${INK};margin:0 0 14px 0;">${esc(closedLine)}</div>` : ""}
     ${patternHtml}
   </td></tr>
   ${attention.length ? attentionCards : `<tr><td style="padding-top:12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${CARD};border:1px solid ${BORDER};border-radius:14px;"><tr><td style="padding:20px 22px;font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">Nothing needs your attention this week.</td></tr></table></td></tr>`}
@@ -661,6 +687,7 @@ export function renderPipelineDigestEmail(args: {
 
   const t: string[] = [`DealRipe pipeline changes, week of ${weekLabel}`, "", `Pipeline ${money(h.totalPipelineAnnual)} · ${h.dealsChanged} changed · ${h.dealsNeedingAttention} to look at · won/lost ${h.closedWon}/${h.closedLost}`];
   if (softAmount > 0) t.push("", `Reps have ${money(repForecast)} in Commit and Expect. DealRipe rates ${money(softAmount)} of it softer than the forecast, on ${softDeals.length} deal(s).`);
+  if (closedLine) t.push("", closedLine);
   t.push("", "DEALS TO LOOK AT");
   if (priority.valueUnknown.all > 0) {
     t.push(`Ranked by what is recoverable: value at stake, then how likely it is to bite, then whether`);

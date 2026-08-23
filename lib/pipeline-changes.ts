@@ -245,7 +245,7 @@ export type PipelineChanges = {
   /** Deals excluded because they are resolved (outcome_label set), so a
    *  consumer can say "6 closed this period" instead of silently showing
    *  fewer rows than last week. */
-  closedOut: { account: string; outcome: "won" | "lost" }[];
+  closedOut: { account: string; outcome: "won" | "lost"; closedAt: string | null }[];
 };
 
 // ---------------------------------------------------------------------------
@@ -1281,6 +1281,11 @@ export async function getPipelineChanges(
     closedOut: closedOut.map((d) => ({
       account: d.account,
       outcome: d.outcome_label as "won" | "lost",
+      // The NAME, which is the point. "1 won" without one is the least useful
+      // way to report the best news in the email. No amount: a closed deal is
+      // excluded from `records` long before sizes are computed, and plumbing a
+      // second size lookup here to print one figure is not worth the surface.
+      closedAt: d.outcome_close_date,
     })),
   };
 }

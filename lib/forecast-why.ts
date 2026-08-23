@@ -76,6 +76,14 @@ const DAYS_A_PUSH_CAN_BE_INFORMED_BY = 14;
  */
 const SAME_SESSION_MS = 2 * 86_400_000;
 
+/**
+ * How much an amount has to move to be a decision rather than a rounding
+ * artifact. Either test passing is enough, so a small deal is judged on the
+ * fraction and a large one on the absolute.
+ */
+const MATERIAL_AMOUNT_USD = 500;
+const MATERIAL_AMOUNT_FRACTION = 0.05;
+
 function joinList(xs: string[]): string {
   if (xs.length === 0) return "";
   if (xs.length === 1) return xs[0];
@@ -586,6 +594,22 @@ export async function getForecastWhy(args: {
     const to = str(row.NewValue);
     // A "change" with neither end is a Salesforce artifact, not an event.
     if (from === null && to === null) continue;
+
+    // NOR IS A FOURTEEN DOLLAR AMOUNT EDIT.
+    //
+    // Medovlog reached the 2026-08-24 digest as "Andres Rubio changed the
+    // amount from 8842.9300001 to 8828.999", a $14 move on an $8.8k deal, sat
+    // in a section a CRO reads to understand why his number moved. Precision
+    // like that is a rounding artifact from a rate calculation, not a decision,
+    // and printing it teaches the reader the section is noise.
+    if (field === "Amount" && from !== null && to !== null) {
+      const a = Number(from);
+      const b = Number(to);
+      if (Number.isFinite(a) && Number.isFinite(b) && a !== 0) {
+        const moved = Math.abs(b - a);
+        if (moved < MATERIAL_AMOUNT_USD && moved / Math.abs(a) < MATERIAL_AMOUNT_FRACTION) continue;
+      }
+    }
     staged.push({
       dealId: deal.id,
       previousChangeAt: null,
