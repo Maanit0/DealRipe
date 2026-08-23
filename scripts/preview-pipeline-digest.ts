@@ -15,7 +15,7 @@ config({ path: ".env.local" });
 
 import { mkdirSync, writeFileSync } from "node:fs";
 
-import { attachFlags, rankForDigest } from "../lib/digest-priority";
+import { attachFlags, attachNarratives, rankForDigest } from "../lib/digest-priority";
 import { attachDoThis } from "../lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "../lib/emails/weekly-digest";
 import { getForecastWhy } from "../lib/forecast-why";
@@ -48,6 +48,11 @@ async function main(): Promise<void> {
   const why = await getForecastWhy({ tenantId, sinceIso, untilIso }).catch(() => null);
   const priority = rankForDigest(pc.deals);
   await attachFlags(priority, tenantId);
+  const changesByDeal = new Map<string, string[]>();
+  for (const c of why?.changes ?? []) {
+    (changesByDeal.get(c.dealId) ?? changesByDeal.set(c.dealId, []).get(c.dealId)!).push(c.headline);
+  }
+  await attachNarratives(priority, tenantId, changesByDeal);
   await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
   const h = pc.headline;
 

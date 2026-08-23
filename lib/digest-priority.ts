@@ -50,6 +50,7 @@
  */
 
 import { computeDealFlags, type Flag } from "./deal-flags";
+import { buildDealNarrative } from "./digest-narrative";
 import { assessDeal, computeBuyerSignals } from "./deal-signals-buyer";
 import type { DealChangeRecord } from "./pipeline-changes";
 import { resolveSalesforceSnapshots } from "./salesforce-stage";
@@ -107,6 +108,15 @@ export type DigestRank = {
    * that renders these runs it.
    */
   flags: Flag[];
+  /**
+   * Where this deal actually stands, written from its history rather than its
+   * checklist. Null when the deal has no stored recap to read.
+   *
+   * See lib/digest-narrative.ts. It is a genuinely independent read: that
+   * function cannot see the flags on this same object, by parameter rather than
+   * by instruction, which is what makes agreement between them mean anything.
+   */
+  narrative: string | null;
 };
 
 export type DigestPriority = {
@@ -232,6 +242,7 @@ export function rankForDigest(
         ? `$${Math.round(annual / 1000)}k at stake, ${why}`
         : `value not recorded in Rolldog, ${why}`,
       flags: [],
+      narrative: null,
     });
   }
 
@@ -301,6 +312,36 @@ export async function attachFlags(priority: DigestPriority, tenantId: string): P
           `[digest-priority] flags failed for ${r.deal.account}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    }),
+  );
+}
+
+
+/**
+ * Fill in the narrative for the deals the digest will print.
+ *
+ * Six model calls, one per printed deal, run in parallel and best effort. A
+ * deal whose narrative fails keeps its card and loses one paragraph.
+ *
+ * `crmChanges` are passed through from forecast-why so the narrative can say
+ * what the rep did this week without recomputing it, and WITHOUT seeing the
+ * verdict forecast-why attached to it. The narrative gets the facts; the
+ * verdicts stay in their own section.
+ */
+export async function attachNarratives(
+  priority: DigestPriority,
+  tenantId: string,
+  changesByDeal: ReadonlyMap<string, string[]>,
+): Promise<void> {
+  await Promise.all(
+    priority.ranked.map(async (r) => {
+      const n = await buildDealNarrative({
+        tenantId,
+        dealId: r.deal.dealId,
+        account: r.deal.account,
+        crmChanges: changesByDeal.get(r.deal.dealId) ?? [],
+      });
+      r.narrative = n?.text ?? null;
     }),
   );
 }

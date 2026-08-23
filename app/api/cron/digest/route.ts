@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { envValue } from "@/lib/env-value";
 
-import { attachFlags, rankForDigest } from "@/lib/digest-priority";
+import { attachFlags, attachNarratives, rankForDigest } from "@/lib/digest-priority";
 import { attachDoThis } from "@/lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
 import { getForecastWhy } from "@/lib/forecast-why";
@@ -100,6 +100,15 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     // priority.ranked[].flags; best effort, so a flag read that fails costs the
     // section and never the digest.
     await attachFlags(priority, tenantId);
+    // Where each printed deal actually stands, read from its history. Runs
+    // after the ranking so it only costs six model calls, and after the why so
+    // it can name what the rep changed. Best effort per deal.
+    const why = await whyPromise;
+    const changesByDeal = new Map<string, string[]>();
+    for (const c of why?.changes ?? []) {
+      (changesByDeal.get(c.dealId) ?? changesByDeal.set(c.dealId, []).get(c.dealId)!).push(c.headline);
+    }
+    await attachNarratives(priority, tenantId, changesByDeal);
     await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
     const weekLabel = new Date().toLocaleDateString("en-US", {
       month: "long",
@@ -108,7 +117,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     });
     const email = renderPipelineDigestEmail({
       pc,
-      why: await whyPromise,
+      why,
       // The same object the synthesis was given, so the two sets cannot drift.
       priority,
       weekLabel,

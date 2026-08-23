@@ -473,6 +473,11 @@ export function renderPipelineDigestEmail(args: {
   // blockers: every one carries a MOVE. A blocker says what is wrong; a flag
   // says what to do about it, and the move is the only part a leader forwards.
   const flagsByDeal = new Map(priority.ranked.map((r) => [r.deal.dealId, r.flags] as const));
+  // Where the deal stands, written from its history rather than its checklist.
+  // Leads the card, because it is the only part that can say something a gate
+  // list cannot: "the field has narrowed to Magaya and CargoWise, and the CHB
+  // team is leaning CargoWise on prior familiarity". See lib/digest-narrative.ts.
+  const narrativeByDeal = new Map(priority.ranked.map((r) => [r.deal.dealId, r.narrative] as const));
 
   const attentionCards = attention
     .map((d: DealChangeRecord, i) => {
@@ -489,6 +494,7 @@ export function renderPipelineDigestEmail(args: {
       // which reads as boilerplate even though each instance is true. Say it in
       // full once, then name the person and move on. The shared pattern across
       // deals is called out above the list instead, where it is actually useful.
+      const narrative = narrativeByDeal.get(d.dealId) ?? null;
       const rawBlocker = d.blockers[0] ?? "";
       let blockerText = rawBlocker;
       if (rawBlocker && seenBlockers.has(rawBlocker)) {
@@ -521,7 +527,17 @@ export function renderPipelineDigestEmail(args: {
         : "";
       // On diverging cards the top blocker is already the divergence reason, so
       // drop it here to avoid saying it twice.
-      const shownBlockers = diverges && d.blockers.length > 1 ? d.blockers.slice(1) : d.blockers;
+      // WITH A NARRATIVE, THE BLOCKER LIST IS MOSTLY REPETITION.
+      //
+      // The narrative already says who is missing and what is unresolved, with
+      // the context a bare list cannot carry, so printing four bullets that
+      // restate it in checklist language is the "too much text" problem this
+      // digest keeps having. Two is enough to anchor it; the rest is in the
+      // paragraph above and on the deal page.
+      //
+      // Without a narrative the full list is all the card has, so it stays.
+      const afterHero = diverges && d.blockers.length > 1 ? d.blockers.slice(1) : d.blockers;
+      const shownBlockers = narrative ? afterHero.slice(0, 2) : afterHero;
       const blockersHtml = (shownBlockers.length ? shownBlockers : ["Worth a look."])
         .map(
           (b) =>
@@ -531,6 +547,10 @@ export function renderPipelineDigestEmail(args: {
       // Critical and warning only. `watch` flags are context on a deal page and
       // noise in an email, and the whole point of gating them is that a leader
       // reads this section every week.
+      const narrativeHtml = narrative
+        ? `<div style="font-family:${SANS};font-size:15px;line-height:24px;color:${INK};margin-top:12px;">${esc(narrative)}</div>`
+        : "";
+
       const drFlags = (flagsByDeal.get(d.dealId) ?? []).filter((f) => f.severity !== "watch");
       const drFlagsHtml = drFlags.length
         ? `<div style="${LABEL}margin-top:17px;">What DealRipe caught</div>` +
@@ -583,6 +603,7 @@ export function renderPipelineDigestEmail(args: {
             ${whatChangedHtml}
 
             <div style="${LABEL}margin-top:18px;">What's blocking</div>
+            ${narrativeHtml}
             ${blockersHtml}
             ${drFlagsHtml}
             ${contactBlock}
@@ -697,12 +718,15 @@ export function renderPipelineDigestEmail(args: {
     attention.forEach((d, i) => {
       t.push(`${i + 1}. ${d.account} (${d.stageName ?? "no stage"}, ${d.forecastCategory ?? "no band"}, closes ${dstr(d.closeDate) || "no date"})`);
       if (fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory)) t.push(`   ${d.repName} has this at ${d.forecastCategory}, DealRipe rates it ${d.dealRipeCategory}: ${d.blockers[0] ?? ""}`);
+      const nar = narrativeByDeal.get(d.dealId);
+      if (nar) t.push(`   ${nar}`);
       t.push(`   Moved this week: ${d.movement.summary}`);
       const fcMoveT = d.changes.find((c) => c.kind === "forecast" && c.from && c.to && c.from !== c.to);
       if (fcMoveT) t.push(`     - ${d.repName} moved this from ${fcMoveT.from} to ${fcMoveT.to} this week.`);
       for (const w of d.whatChanged) t.push(`     - ${w.label ? `${w.label}: ` : ""}${w.text}`);
+      const tBlockers = nar ? d.blockers.slice(0, 2) : d.blockers;
       t.push(`   Blocking:`);
-      for (const b of (d.blockers.length ? d.blockers : ["Worth a look."])) t.push(`     - ${b}`);
+      for (const b of (tBlockers.length ? tBlockers : ["Worth a look."])) t.push(`     - ${b}`);
       const tFlags = (flagsByDeal.get(d.dealId) ?? []).filter((f) => f.severity !== "watch").slice(0, 3);
       if (tFlags.length) {
         t.push(`   What DealRipe caught:`);
