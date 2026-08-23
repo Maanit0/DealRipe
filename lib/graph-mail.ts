@@ -344,8 +344,26 @@ export async function listMailboxMessages(args: {
 export type DraftRecipient = { email: string; name?: string };
 
 export type DraftResult = {
-  /** Graph message id of the created draft. */
+  /**
+   * Graph message id of the created draft.
+   *
+   * Per-mailbox AND per-folder: Outlook assigns a new one when the draft moves
+   * to Sent Items, so this cannot be used to recognise the sent copy. Kept for
+   * addressing the draft while it is still a draft.
+   */
   id: string;
+  /**
+   * RFC 5322 Message-ID, assigned at draft creation and PRESERVED on send.
+   *
+   * This is the join key that answers "did the rep send the draft we wrote".
+   * Same stability property as the calendar's iCalUId against its per-mailbox
+   * id, and the same trap: using `id` here would silently never match, because
+   * the sent copy has a different one.
+   *
+   * Null when Graph omits it, which it does on some drafts, and a caller must
+   * treat that as "cannot be joined" rather than as "not sent".
+   */
+  internetMessageId: string | null;
   /** Deep link that opens the draft in Outlook on the web. */
   webLink: string | null;
 };
@@ -435,9 +453,9 @@ export async function createDraft(args: {
     }),
   });
   if (!res.ok) throw new GraphMailError(res.status, await res.text());
-  const json = (await res.json()) as { id?: string; webLink?: string };
+  const json = (await res.json()) as { id?: string; webLink?: string; internetMessageId?: string };
   if (!json.id) throw new GraphMailError(res.status, "Graph returned no message id");
-  return { id: json.id, webLink: json.webLink ?? null };
+  return { id: json.id, internetMessageId: json.internetMessageId ?? null, webLink: json.webLink ?? null };
 }
 
 /**
@@ -482,6 +500,7 @@ export async function createReplyDraft(args: {
   const draft = (await createRes.json()) as {
     id?: string;
     webLink?: string;
+    internetMessageId?: string;
     body?: { content?: string; contentType?: string };
   };
   if (!draft.id) throw new GraphMailError(createRes.status, "Graph returned no draft id");
@@ -521,5 +540,5 @@ export async function createReplyDraft(args: {
   });
   if (!patchRes.ok) throw new GraphMailError(patchRes.status, await patchRes.text());
 
-  return { id: draft.id, webLink: draft.webLink ?? null };
+  return { id: draft.id, internetMessageId: draft.internetMessageId ?? null, webLink: draft.webLink ?? null };
 }

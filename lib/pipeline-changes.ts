@@ -21,6 +21,7 @@ import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { prettyAccount, repName } from "./display-names";
 import { loadFramework, type Framework } from "./framework";
 import { isConsumerMailShell, rolldogOppIdForDeal } from "./pilot-config";
+import { championMistakenForBuyer, resolveEconomicBuyer, type ContactLike } from "./economic-buyer";
 import { getRolldogSummary, daysSince, type RolldogSummary } from "./rolldog-summary";
 import type { DealSignals } from "./snapshot";
 import { supabaseAdmin } from "./supabase";
@@ -783,17 +784,23 @@ export async function getPipelineChanges(
     );
     const engaged = cts.filter((c) => c.last_contacted_at);
 
-    // Economic buyer by name + role (or unknown), and whether they've engaged.
-    const buyerContact = cts.find(
-      (c) => String(c.relationship) === "economic_buyer" || BUYER_RE.test(String(c.role ?? "")) || BUYER_RE.test(String(c.relationship ?? "")),
-    );
-    const economicBuyer = buyerContact
-      ? {
-          name: cleanBuyerName(String(buyerContact.name ?? "").trim() || null),
-          role: String(buyerContact.role ?? "").trim() || null,
-          engaged: !!buyerContact.last_contacted_at,
-        }
-      : { name: null, role: null, engaged: false };
+    // WHO SIGNS, resolved in one place for the whole product.
+    //
+    // See lib/economic-buyer.ts. The order is what the TRANSCRIPT said first,
+    // then the job title, because contacts-extract already reads every call and
+    // labels who the buyer is, and a title is an inference about authority
+    // where a sentence on a call is the thing itself. The previous version here
+    // matched titles against a Fortune-500 regex and missed 9 of Eduardo's 21
+    // deals, including a Company Director who agreed to sign an NDA on a call.
+    const buyerRead = resolveEconomicBuyer(cts as unknown as ContactLike[]);
+    const economicBuyer = {
+      name: buyerRead.status === "unidentified" ? null : cleanBuyerName(buyerRead.name),
+      role: buyerRead.status === "unidentified" ? null : buyerRead.role,
+      engaged: buyerRead.status === "engaged",
+    };
+    // The champion the rep may be mistaking for the signer. Named so the flag
+    // can say who rather than gesture at the problem.
+    const confusedChampion = championMistakenForBuyer(cts as unknown as ContactLike[]);
     // How we refer to the buyer: "Brian (Budget Owner)" or, when unnamed, "the CEO"
     // / "the economic buyer". Role is trimmed of location noise ("CEO, based in Miami").
     const buyerRoleShort = (economicBuyer.role ?? "").split(",")[0].split("(")[0].trim();
@@ -1011,7 +1018,7 @@ export async function getPipelineChanges(
     // economic buyer has never been on a call". The second is a claim we cannot
     // make: not knowing who signs is not the same as knowing they are absent,
     // and it is this project's signature error pointed at a person.
-    const buyerKnown = !!economicBuyer.name || !!(economicBuyer.role ?? "").trim();
+    const buyerKnown = buyerRead.status !== "unidentified";
     const buyerGap = buyerKnown && !economicBuyer.engaged;
     const buyerUnknown = !buyerKnown;
     const gaps: string[] = [];
@@ -1094,6 +1101,14 @@ export async function getPipelineChanges(
       blockers.push(`The ${noShowTitle ? `"${noShowTitle}" ` : "last "}meeting was a no-show${who}, so this may not be live.`);
     }
     if (buyerGap || buyerUnknown) blockers.push(buyerBlocker);
+    // The most expensive mistake in mid-market selling, and the one a forecast
+    // never shows until the deal stalls at signature.
+    if (confusedChampion) {
+      blockers.push(
+        `${confusedChampion.name ?? "The main contact"}${confusedChampion.role ? ` (${confusedChampion.role.split(",")[0].trim()})` : ""} ` +
+          `is engaged and reads as a champion rather than the signer. Worth confirming who actually approves.`,
+      );
+    }
     const GAP_BLOCK: Record<string, string> = {
       "Why now": "The business driver (why now) is not established.",
       Budget: "Budget is not confirmed on any call.",

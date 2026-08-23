@@ -845,7 +845,27 @@ export async function generateFollowUpDraft(
 /** Generate AND write the draft into the rep's Drafts folder. Never sends. */
 export async function createFollowUpDraft(
   input: FollowUpDraftInput,
-): Promise<{ created: boolean; draft: FollowUpDraft | null; webLink?: string | null; reason?: string }> {
+): Promise<{
+  created: boolean;
+  draft: FollowUpDraft | null;
+  webLink?: string | null;
+  /**
+   * The draft's RFC 5322 Message-ID, which SURVIVES being sent.
+   *
+   * Returned so the caller can persist it. Without it there is no way to join a
+   * message the rep SENT back to the draft it came from, so "did they send
+   * ours" can only be answered by matching on time and recipient, which cannot
+   * separate a rep who sent our draft from one who ignored it and happened to
+   * write something similar. scripts/draft-adoption.ts says so in its own
+   * output; this is what removes the caveat.
+   *
+   * Deliberately NOT Graph's `id`: Outlook assigns a new one when the draft
+   * moves to Sent Items, so a join on it would silently never match. Same trap
+   * as iCalUId against the per-mailbox event id.
+   */
+  draftId?: string | null;
+  reason?: string;
+}> {
   const draft = await generateFollowUpDraft(input);
   if (!draft) return { created: false, draft: null, reason: "generation returned nothing" };
 
@@ -861,7 +881,7 @@ export async function createFollowUpDraft(
   if (!draft.replyToMessageId) {
     try {
       const res = await fresh();
-      return { created: true, draft, webLink: res.webLink };
+      return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId };
     } catch (e) {
       return { created: false, draft, reason: e instanceof Error ? e.message : String(e) };
     }
@@ -889,7 +909,7 @@ export async function createFollowUpDraft(
       // which is right when we could not establish who the customer was.
       toRecipients: draft.to,
     });
-    return { created: true, draft, webLink: res.webLink };
+    return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId };
   } catch (replyErr) {
     const msg = replyErr instanceof Error ? replyErr.message : String(replyErr);
     console.warn(
@@ -897,7 +917,7 @@ export async function createFollowUpDraft(
     );
     try {
       const res = await fresh();
-      return { created: true, draft, webLink: res.webLink };
+      return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId };
     } catch (e) {
       return {
         created: false,
@@ -1075,7 +1095,16 @@ export async function autoDraftFollowUpForCall(args: {
     // Inspecting exactly what was put in a rep's mailbox is the whole point.
     html: draftArchiveHtml(res.draft),
     text: res.draft.body,
-    providerId: null,
+    // GRAPH'S DRAFT ID, in the provider column.
+    //
+    // Not an overload: for a draft, Graph IS the provider. Nothing was emailed,
+    // so there is no Resend id to conflict with, and all 39 existing
+    // followup_draft rows carry null here.
+    //
+    // This is what turns "did the rep send our draft" from a guess into a join.
+    // Until now the id was returned by createDraft and discarded one line
+    // later, so adoption could only be inferred from time and recipient.
+    providerId: res.draftId ?? null,
   });
   return { created: true };
 }
