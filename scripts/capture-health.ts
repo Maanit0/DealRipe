@@ -36,6 +36,7 @@
  *   npx tsx scripts/capture-health.ts
  *   npx tsx scripts/capture-health.ts --days 30
  *   npx tsx scripts/capture-health.ts --days 14 --detail
+ *   npx tsx scripts/capture-health.ts --days 14 --lobby
  */
 
 import { config } from "dotenv";
@@ -287,6 +288,7 @@ function printTally(heading: string, t: Tally, indent = ""): void {
 async function main(): Promise<void> {
   const days = Number(arg("--days") ?? "14");
   const detail = process.argv.includes("--detail");
+  const lobbyBreakdown = process.argv.includes("--lobby");
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
   const tenantId = await resolveTenantId("magaya");
@@ -310,9 +312,28 @@ async function main(): Promise<void> {
   const byRep = new Map<string, Tally>();
   const detailRows: Array<{ row: Row; verdict: CaptureVerdict }> = [];
 
+  // WHO OWNS THE DOOR, for the lobby timeouts specifically.
+  //
+  // The single largest loss in this pilot and the only one whose remedy is a
+  // policy change rather than a code change. A bot stuck in a MAGAYA-organized
+  // lobby is fixed by Ernesto loosening the Teams lobby policy, once, for
+  // everyone. A bot stuck in the CUSTOMER's lobby can only be let in by the rep
+  // who is already in the room. Those are different asks to different people,
+  // and the split decides which one is worth chasing.
+  const lobbyByHost = new Map<string, Array<{ when: string; account: string; title: string }>>();
+
   for (const r of rows) {
     const v = verdictFor(r);
     add(overall, v);
+    if (v.category === "lobby_timeout") {
+      const side = hostSideOf(r.organizer_email, "magaya.com");
+      const list = lobbyByHost.get(side) ?? lobbyByHost.set(side, []).get(side)!;
+      list.push({
+        when: String(r.scheduled_start ?? r.call_date ?? "").slice(0, 10),
+        account: r.deals.account,
+        title: String(r.title ?? "").slice(0, 44),
+      });
+    }
     const rep = r.deals.rep_email ?? "(no rep on the deal)";
     if (!byRep.has(rep)) byRep.set(rep, emptyTally());
     add(byRep.get(rep) as Tally, v);
@@ -354,6 +375,8 @@ async function main(): Promise<void> {
     }
   }
 
+  if (lobbyBreakdown) printLobby(lobbyByHost);
+
   if (detail && detailRows.length > 0) {
     console.log(`\n${"-".repeat(78)}\nEVERY CALL THAT DID NOT PRODUCE A TRANSCRIPT\n${"-".repeat(78)}`);
     for (const { row, verdict } of detailRows) {
@@ -369,6 +392,43 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n${"=".repeat(78)}\n`);
+}
+
+
+/**
+ * Who owns the door, for the lobby timeouts specifically.
+ *
+ * The single largest capture loss in this pilot and the only one whose remedy
+ * is a policy change rather than a code change. A bot stuck in a MAGAYA
+ * organized lobby is fixed by loosening the Teams lobby policy, once, for
+ * everyone. A bot stuck in the CUSTOMER's lobby can only be let in by the rep
+ * who is already in the room. Those are different asks to different people, so
+ * the split is what decides which one is worth chasing.
+ */
+function printLobby(byHost: Map<string, Array<{ when: string; account: string; title: string }>>): void {
+  const total = [...byHost.values()].reduce((n, l) => n + l.length, 0);
+  if (total === 0) {
+    console.log(`\nNo lobby timeouts in this window.`);
+    return;
+  }
+  console.log(`\n${"-".repeat(78)}`);
+  console.log(`LOBBY TIMEOUTS BY WHO ORGANIZED THE MEETING (${total})`);
+  console.log(`A bot outside a room cannot see whether anyone is inside it, so these are never`);
+  console.log(`counted as failures. This says who can actually open the door.`);
+  console.log(`${"-".repeat(78)}`);
+  // Keys are hostSideOf's own return values. Writing "ours"/"theirs" here once
+  // silently fell through to the raw enum for the two largest groups, which is
+  // the small version of re-deriving a rule instead of importing it.
+  const label: Record<string, string> = {
+    our_side: "MAGAYA organized. One Teams lobby policy change fixes all of these at once.",
+    customer_side: "CUSTOMER organized. Only the rep already in the room can admit the bot.",
+    unknown: "Organizer not recorded, so we cannot say who owns the door.",
+  };
+  for (const [side, list] of [...byHost.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    console.log(`\n  ${list.length}x  ${label[side] ?? side}`);
+    for (const x of list.slice(0, 8)) console.log(`      ${x.when}  ${x.account.padEnd(22)} ${x.title}`);
+    if (list.length > 8) console.log(`      and ${list.length - 8} more`);
+  }
 }
 
 main().catch((e) => {
