@@ -291,6 +291,27 @@ export function renderPipelineDigestEmail(args: {
   // and genuinely not rescuable by an agenda item, which is a different
   // conversation rather than a lower priority. Dropping them silently is how
   // No Decision / Non-Responsive stays Magaya's most recorded loss reason.
+  // OUR FAILURE, SAID AS OURS.
+  //
+  // Until 2026-08-23 these were reported in the no-show section, so a bot that
+  // was never admitted to a Teams lobby read to the CRO as a customer standing
+  // his rep up. Four of the six "no-shows" on the 2026-08-24 send were this.
+  //
+  // Still worth printing, because 19 of 24 lobby timeouts in the last fortnight
+  // were on MAGAYA-organised meetings, which is one policy change away from
+  // fixed. A CRO can act on that; he cannot act on a phantom no-show.
+  const missedAll = pc.deals.filter((d) => d.captureFailedInWindow);
+  const missed = missedAll.slice(0, 6);
+  const missedRows = missed
+    .map(
+      (d, i) => `
+      <tr>
+        <td valign="top" width="18" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};font-weight:700;">&#9679;</td>
+        <td valign="top" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(d.account, d.dealId)}.</strong> ${esc(d.captureFailedTitle ?? "A meeting")} went ahead without DealRipe.</td>
+      </tr>`,
+    )
+    .join("");
+
   const dark = priority.goingDark.slice(0, 6);
   const darkRows = dark
     .map(
@@ -553,6 +574,16 @@ export function renderPipelineDigestEmail(args: {
       : ""
   }
 
+  ${
+    missedRows
+      ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
+    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin:0 0 6px 0;">DealRipe missed ${missedAll.length} deal${missedAll.length === 1 ? "" : "s"} this week</div>
+    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">The meeting happened and we were not in it, so there is no recap and no field write-back for these. Most are the notetaker waiting outside a Teams lobby. Across the last fortnight, 19 of 24 lobby timeouts were on meetings <strong style="color:${NAVY};">Magaya organised</strong>, which one lobby policy change fixes for every rep at once.${missedAll.length > missed.length ? ` Showing ${missed.length} of ${missedAll.length}.` : ""}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${missedRows}</table>
+  </td></tr>`
+      : ""
+  }
+
   ${base ? `<tr><td style="padding:20px 6px 0 6px;"><a href="${base}/review" style="display:inline-block;background:${NAVY};color:#FFFFFF;font-family:${SANS};font-size:14px;font-weight:600;text-decoration:none;padding:11px 22px;border-radius:10px;">Open pipeline changes in DealRipe</a></td></tr>` : ""}
   <tr><td style="padding:18px 6px 0 6px;"><div style="font-family:${SANS};font-size:13px;line-height:21px;color:${MUTED};">Ranked by what needs you most, from what your calls caught this week. Reply with anything you want tracked.</div></td></tr>
 </table>
@@ -592,6 +623,12 @@ export function renderPipelineDigestEmail(args: {
   if (noShows.length) {
     t.push("", "NO-SHOWS");
     for (const d of noShows) t.push(`- ${d.account}: ${dstr(d.lastConversationAt) || "recent"} meeting${d.primaryContact ? ` with ${d.primaryContact.name}` : ""} was a no-show.`);
+  }
+  if (missed.length) {
+    t.push("", `DEALRIPE MISSED ${missedAll.length} DEAL(S) THIS WEEK`);
+    t.push("The meeting happened and we were not in it, so there is no recap or write-back.");
+    t.push("Most are the notetaker waiting outside a Teams lobby. Across the last fortnight, 19 of 24 lobby timeouts were on meetings Magaya organised, which one policy change fixes for every rep at once.");
+    for (const d of missed) t.push(`- ${d.account}: ${d.captureFailedTitle ?? "a meeting"} went ahead without DealRipe.`);
   }
   return { subject, html, text: t.join("\n") };
 }

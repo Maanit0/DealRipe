@@ -26,7 +26,33 @@ import type { DealSignals } from "./snapshot";
 import { supabaseAdmin } from "./supabase";
 import { getUpcomingCallForDeal } from "./supabase-queries";
 
-const NO_SHOW_OUTCOMES = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
+/**
+ * A no-show is the CUSTOMER not turning up. Nothing else belongs here.
+ *
+ * This set used to contain capture_failed, rescheduled and placeholder, and the
+ * digest reported all of them to the CRO as "the meeting was a no-show". On the
+ * 2026-08-24 send that would have told Mark six of his reps were stood up in one
+ * week. Four of the six were our own bot sitting in a MAGAYA-organised Teams
+ * lobby and never being admitted, and one was Dunavant, which Eduardo had
+ * already told us in writing was "rescheduled on the spot per their request".
+ *
+ * Reporting our capture failure as the customer's behaviour is the worst
+ * available version of this project's signature bug: it is wrong, it is about
+ * someone else, and the rep who reads it knows it is wrong.
+ *
+ * capture_failed is still worth telling Mark about. It is just a different
+ * sentence with a different owner, which is why it has its own set below.
+ */
+const NO_SHOW_OUTCOMES = new Set(["no_conversation", "no_show"]);
+
+/**
+ * We could not capture the call. Ours to explain, never the customer's.
+ *
+ * `rescheduled` and `placeholder` are in neither set on purpose: a moved
+ * meeting and a holder row are not events worth a line in a CRO's digest at
+ * all.
+ */
+const CAPTURE_FAILED_OUTCOMES = new Set(["capture_failed"]);
 const BUYER_RE = /budget|cfo|chief financ|owner|final (say|decision)|economic|controller/i;
 const COMPETITION_KEY_RE = /compet/i;
 const SIGNATURE_KEY_RE = /signature|agreement|sign.?off|contract/i;
@@ -188,6 +214,17 @@ export type DealChangeRecord = {
    * the section entirely.
    */
   noShowInWindow: boolean;
+  /**
+   * DealRipe could not capture a call on this deal inside the window.
+   *
+   * Deliberately separate from noShowInWindow. One is the customer's behaviour
+   * and the other is ours, and until 2026-08-23 they were the same field, so
+   * the digest reported our bot being locked out of a Teams lobby as the
+   * customer failing to turn up.
+   */
+  captureFailedInWindow: boolean;
+  /** The meeting we could not capture, for naming it honestly. */
+  captureFailedTitle: string | null;
 };
 
 export type ForecastBucket = { category: string; deals: number; annual: number };
@@ -840,6 +877,16 @@ export async function getPipelineChanges(
     const noShowTitle = noShowRow ? String(noShowRow.title ?? "").trim() || null : null;
     const noShowInvitees = noShowRow ? customerInviteeNames(noShowRow.participants) : [];
 
+    // Ours, not theirs. Same window, different owner and a different sentence.
+    const captureFailedCall = (callsBy[d.id] ?? []).find((c) => {
+      if (!c.outcome || !CAPTURE_FAILED_OUTCOMES.has(String(c.outcome))) return false;
+      const t = Date.parse(String(c.scheduled_start ?? c.call_date ?? ""));
+      return Number.isFinite(t) && t >= sinceMs && t <= Date.now();
+    });
+    const captureFailedTitle = captureFailedCall
+      ? String(captureFailedCall.title ?? "").trim() || null
+      : null;
+
     // What the calls surfaced THIS WEEK, with specifics: qualification gates newly
     // answered (carrying the real captured answer, e.g. the budget figure or the
     // competitor name) and notable stakeholders first engaged in the window. This
@@ -1154,6 +1201,8 @@ export async function getPipelineChanges(
       needsAttention,
       isNoShow: anyNoShow,
       noShowInWindow: isNoShow,
+      captureFailedInWindow: !!captureFailedCall,
+      captureFailedTitle,
     });
   }
 
