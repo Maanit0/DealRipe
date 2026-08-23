@@ -53,7 +53,26 @@ const NO_SHOW_OUTCOMES = new Set(["no_conversation", "no_show"]);
  * all.
  */
 const CAPTURE_FAILED_OUTCOMES = new Set(["capture_failed"]);
-const BUYER_RE = /budget|cfo|chief financ|owner|final (say|decision)|economic|controller/i;
+/**
+ * Who signs, at a logistics SME.
+ *
+ * The original list was budget|cfo|chief financ|owner|final say|economic|
+ * controller, which is a Fortune-500 org chart and misses most of Magaya's
+ * actual buyers. Measured 2026-08-23 on Eduardo's book: 9 of 21 open deals
+ * carry a buyer-level contact and NONE of them matched, because the titles are
+ * "Company Director (Finance, Admin, IT)", "Managing Director", "Head of
+ * Operations", "Technical Director", "Global Head of Product". Paul Todd at
+ * Oceanbridge is a Company Director who agreed to sign the NDA on the Aug 13
+ * call, and the digest was about to tell Mark the economic buyer had never been
+ * on a call.
+ *
+ * `director` deliberately catches "Director of Product Management" too, which
+ * is a false positive in a big company and the right call in a fifty-person
+ * freight forwarder. Being slightly too generous here names a real person; being
+ * too strict claims nobody exists.
+ */
+const BUYER_RE =
+  /budget|cfo|coo|ceo|chief|coo|owner|founder|president|managing director|company director|technical director|\bdirector\b|\bvp\b|vice president|head of|general manager|partner|final (say|decision)|economic|controller/i;
 const COMPETITION_KEY_RE = /compet/i;
 const SIGNATURE_KEY_RE = /signature|agreement|sign.?off|contract/i;
 
@@ -785,7 +804,10 @@ export async function getPipelineChanges(
         : "the economic buyer";
     // The blocker line, WITH the reason it matters (they sign off), so Mark isn't
     // left asking why that person needs to be on a call.
-    const buyerBlocker = `${buyerLabel.charAt(0).toUpperCase()}${buyerLabel.slice(1)}, who signs off on a purchase this size, has never been on a call.`;
+    const buyerNamed = !!economicBuyer.name || !!buyerRoleShort;
+    const buyerBlocker = buyerNamed
+      ? `${buyerLabel.charAt(0).toUpperCase()}${buyerLabel.slice(1)}, who signs off on a purchase this size, has never been on a call.`
+      : `No one has been identified as the person who signs off on a purchase this size.`;
 
     // Captured (the real answers) and Missing (the gaps), matched from the gate
     // keys directly so this holds up even when the framework fails to load. This
@@ -982,9 +1004,19 @@ export async function getPipelineChanges(
     // stage with critical gaps, named specifically.
     const committed = category != null && (COMMIT_RE.test(category) || EXPECT_RE.test(category));
     const advanced = committed || (rank != null && rank >= 4);
-    const buyerGap = !economicBuyer.engaged;
+    // THREE STATES, NOT TWO.
+    //
+    // `engaged` was false both when a known buyer had not been on a call and
+    // when no buyer had been IDENTIFIED at all, and both rendered as "the
+    // economic buyer has never been on a call". The second is a claim we cannot
+    // make: not knowing who signs is not the same as knowing they are absent,
+    // and it is this project's signature error pointed at a person.
+    const buyerKnown = !!economicBuyer.name || !!(economicBuyer.role ?? "").trim();
+    const buyerGap = buyerKnown && !economicBuyer.engaged;
+    const buyerUnknown = !buyerKnown;
     const gaps: string[] = [];
     if (buyerGap) gaps.push(`${buyerLabel} has never been on a call`);
+    else if (buyerUnknown) gaps.push("nobody has been identified as the person who signs");
     if (missingKey.includes("Budget")) gaps.push("budget is unconfirmed");
     if (missingKey.includes("Timeline / close date")) gaps.push("the close date is not validated by the customer");
     if (missingKey.includes("Agreement / signature") && rank != null && rank >= 4) gaps.push("no agreement or signature yet");
@@ -1006,7 +1038,7 @@ export async function getPipelineChanges(
 
     // Economic buyer never engaged, when the optimism flag did not already say it.
     // Names the buyer + role, or says explicitly that they are still unidentified.
-    if (buyerGap && !optimismFired && (economicBuyer.name || gatesConfirmed >= 4)) {
+    if ((buyerGap || buyerUnknown) && !optimismFired && (economicBuyer.name || gatesConfirmed >= 4)) {
       flags.push({ kind: "dark_buyer", severity: "high", text: buyerBlocker });
     }
 
@@ -1061,7 +1093,7 @@ export async function getPipelineChanges(
       const who = noShowInvitees.length ? ` (${noShowInvitees.join(", ")} did not join)` : "";
       blockers.push(`The ${noShowTitle ? `"${noShowTitle}" ` : "last "}meeting was a no-show${who}, so this may not be live.`);
     }
-    if (buyerGap) blockers.push(buyerBlocker);
+    if (buyerGap || buyerUnknown) blockers.push(buyerBlocker);
     const GAP_BLOCK: Record<string, string> = {
       "Why now": "The business driver (why now) is not established.",
       Budget: "Budget is not confirmed on any call.",

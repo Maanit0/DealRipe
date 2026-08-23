@@ -155,7 +155,15 @@ function fixability(d: DealChangeRecord, quiet: number | null): { f: number; why
     return { f: 1, why: "a meeting was agreed and is not on the calendar" };
   }
   if (d.economicBuyer && !d.economicBuyer.engaged) {
-    return { f: 1, why: "the person who signs has never been on a call" };
+    // Same three-state rule as the blocker text in pipeline-changes: not
+    // knowing who signs is not the same as knowing they have been absent, and
+    // saying the second when we mean the first is a claim about a person we
+    // cannot support.
+    const known = !!d.economicBuyer.name || !!(d.economicBuyer.role ?? "").trim();
+    return {
+      f: 1,
+      why: known ? "the person who signs has never been on a call" : "nobody has been identified as the person who signs",
+    };
   }
   if (d.missing.length > 0 && d.nextMeetingBooked) {
     return { f: 1, why: `${d.missing.length} gate(s) open with a meeting booked to close them` };
