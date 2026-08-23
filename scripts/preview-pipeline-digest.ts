@@ -18,6 +18,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { attachFlags, rankForDigest } from "../lib/digest-priority";
 import { attachDoThis } from "../lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "../lib/emails/weekly-digest";
+import { getForecastWhy } from "../lib/forecast-why";
 import { getPipelineChanges } from "../lib/pipeline-changes";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   // going-quiet section. A preview that can disagree with production will, and
   // the whole point of opening it on a Sunday is to see what Mark gets Monday.
   // Mirrors app/api/cron/digest/route.ts.
+  const why = await getForecastWhy({ tenantId, sinceIso, untilIso }).catch(() => null);
   const priority = rankForDigest(pc.deals);
   await attachFlags(priority, tenantId);
   await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
@@ -82,7 +84,7 @@ async function main(): Promise<void> {
       `(${priority.valueUnknown.all} across all attention deals). ${priority.belowTheFold} more are below the fold.`,
   );
 
-  const email = renderPipelineDigestEmail({ pc, priority, weekLabel: "preview", recipientName: "Mark Buman", baseUrl: process.env.DEALRIPE_APP_URL });
+  const email = renderPipelineDigestEmail({ pc, priority, why, weekLabel: "preview", recipientName: "Mark Buman", baseUrl: process.env.DEALRIPE_APP_URL });
 
   // The dash rule is enforced on delivery, so a preview that does not check it
   // hides the one lint failure Mark actually notices.

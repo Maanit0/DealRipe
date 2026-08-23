@@ -5,6 +5,7 @@ import { envValue } from "@/lib/env-value";
 import { attachFlags, rankForDigest } from "@/lib/digest-priority";
 import { attachDoThis } from "@/lib/digest-synthesis";
 import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
+import { getForecastWhy } from "@/lib/forecast-why";
 import { getPipelineChanges } from "@/lib/pipeline-changes";
 import { sendEmail } from "@/lib/mailer";
 import { recordDigestSend } from "@/lib/sent-messages";
@@ -87,6 +88,13 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     // printed 6. On the live pilot that meant 4 of the 6 deals Mark reads had
     // only fallback text, including the two largest, and 6 of 8 model calls
     // went to deals he never saw.
+    // Who moved the forecast this week and whether the calls back it. Runs in
+    // parallel with the ranking and fails soft: the digest sends without the
+    // section rather than not sending.
+    const whyPromise = getForecastWhy({ tenantId, sinceIso, untilIso }).catch((err) => {
+      console.error("[cron/digest] forecast why failed, sending without it:", err);
+      return null;
+    });
     const priority = rankForDigest(pc.deals);
     // DealRipe's own flags on exactly the deals that will print. Fills
     // priority.ranked[].flags; best effort, so a flag read that fails costs the
@@ -100,6 +108,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     });
     const email = renderPipelineDigestEmail({
       pc,
+      why: await whyPromise,
       // The same object the synthesis was given, so the two sets cannot drift.
       priority,
       weekLabel,

@@ -6,6 +6,7 @@
  */
 
 import { rankForDigest, type DigestPriority } from "../digest-priority";
+import type { ForecastWhy } from "../forecast-why";
 import type { DigestAttention, DigestMovement, DigestNoShow } from "../weekly-digest-data";
 import type { ChangeEvent, DealChangeRecord, PipelineChanges } from "../pipeline-changes";
 
@@ -260,6 +261,13 @@ export function renderPipelineDigestEmail(args: {
    *  different sets. Recomputed from pc.deals when omitted, which is pure and
    *  therefore still consistent, just wasteful. */
   priority?: DigestPriority;
+  /**
+   * Who moved the forecast this week and whether the calls back the move.
+   *
+   * Optional, and the section is omitted when absent, so every existing caller
+   * renders exactly what it rendered before. See lib/forecast-why.ts.
+   */
+  why?: ForecastWhy | null;
 }): RenderedEmail {
   const { pc, weekLabel, recipientName } = args;
   const base = (args.baseUrl ?? "").replace(/\/$/, "");
@@ -291,25 +299,66 @@ export function renderPipelineDigestEmail(args: {
   // and genuinely not rescuable by an agenda item, which is a different
   // conversation rather than a lower priority. Dropping them silently is how
   // No Decision / Non-Responsive stays Magaya's most recorded loss reason.
-  // OUR FAILURE, SAID AS OURS.
+  // NOTE, 2026-08-23: there was a "DealRipe missed N deals this week" section
+  // here and it was removed deliberately. A CRO's weekly forecast artifact is
+  // not the place for the vendor's own capture rate: it is about us rather than
+  // about his deals, the remedy belongs to IT rather than to him, and
+  // self-reporting a large miss count in the one document he reads to run his
+  // number is the wrong channel for a true fact.
   //
-  // Until 2026-08-23 these were reported in the no-show section, so a bot that
-  // was never admitted to a Teams lobby read to the CRO as a customer standing
-  // his rep up. Four of the six "no-shows" on the 2026-08-24 send were this.
+  // The information is not lost. Per deal it surfaces as the `never_heard`
+  // flag, which is a statement about the deal's evidence rather than about our
+  // uptime, and the operational number lives in capture-health --lobby where
+  // someone can act on it.
+
+  // WHAT MOVED THE NUMBER, AND WHO MOVED IT.
   //
-  // Still worth printing, because 19 of 24 lobby timeouts in the last fortnight
-  // were on MAGAYA-organised meetings, which is one policy change away from
-  // fixed. A CRO can act on that; he cannot act on a phantom no-show.
-  const missedAll = pc.deals.filter((d) => d.captureFailedInWindow);
-  const missed = missedAll.slice(0, 6);
-  const missedRows = missed
-    .map(
-      (d, i) => `
-      <tr>
-        <td valign="top" width="18" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};font-weight:700;">&#9679;</td>
-        <td valign="top" style="padding-top:${i === 0 ? "0" : "10px"};font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(d.account, d.dealId)}.</strong> ${esc(d.captureFailedTitle ?? "A meeting")} went ahead without DealRipe.</td>
-      </tr>`,
-    )
+  // Dean Hickman-Smith, CRO, on what every forecast dashboard is missing: "it
+  // doesn't call out, the reason the forecast is weakened is because Jared
+  // pulled this deal into Q4."
+  //
+  // Only the changes the CALLS DO NOT SUPPORT are printed. A change DealRipe
+  // agrees with is not news, and printing all 106 of a week's changes would
+  // bury the handful that are. The agreed count is stated so a short list reads
+  // as short rather than as complete.
+  const whyAll = (args.why?.changes ?? []).filter((c) => c.evidence.verdict === "contradicts");
+  const whyAgreed = (args.why?.changes ?? []).filter((c) => c.evidence.verdict === "supports").length;
+
+  // ONE LINE PER DEAL. A rep pushing the same close date twice in a week is one
+  // story about that deal, not two rows, and the first version printed
+  // Fmgloballogistics twice with identical reasoning underneath each.
+  const whyByDeal = new Map<string, (typeof whyAll)[number]>();
+  for (const c of whyAll) {
+    const held = whyByDeal.get(c.dealId);
+    // Keep the biggest move, which for a repeated push is the one worth naming.
+    const size = (x: typeof c) =>
+      x.field === "CloseDate" && x.from && x.to ? Math.abs(Date.parse(x.to) - Date.parse(x.from)) : 0;
+    if (!held || size(c) > size(held)) whyByDeal.set(c.dealId, c);
+  }
+  const whyShown = [...whyByDeal.values()].slice(0, 5);
+
+  // SAY THE SHARED REASON ONCE. Five identical "no call has ever validated a
+  // close date" lines read as boilerplate even though each is true, which is
+  // the same mistake the buyer sentence on the attention cards already made.
+  // When one reason dominates, hoist it and let each row carry only its number.
+  const reasonCount = new Map<string, number>();
+  for (const c of whyShown) {
+    const key = c.evidence.text.split(".")[0];
+    reasonCount.set(key, (reasonCount.get(key) ?? 0) + 1);
+  }
+  const [sharedReason, sharedN] = [...reasonCount.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  const hoisted = sharedN >= 3 ? sharedReason : null;
+
+  const whyHtml = whyShown
+    .map((c, i) => {
+      const own = c.evidence.text.split(".")[0];
+      const line = hoisted && own === hoisted ? "" : `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${AMBER};margin-top:3px;">${esc(c.evidence.text)}</div>`;
+      return `
+      <div style="${i === 0 ? "" : `margin-top:12px;padding-top:12px;border-top:1px solid ${BORDER};`}">
+        <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};"><strong style="color:${NAVY};font-weight:600;">${name(c.account, c.dealId)}.</strong> ${esc(c.headline)}.</div>
+        ${line}
+      </div>`;
+    })
     .join("");
 
   const dark = priority.goingDark.slice(0, 6);
@@ -556,6 +605,16 @@ export function renderPipelineDigestEmail(args: {
   ${attention.length ? attentionCards : `<tr><td style="padding-top:12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${CARD};border:1px solid ${BORDER};border-radius:14px;"><tr><td style="padding:20px 22px;font-family:${SANS};font-size:15px;line-height:23px;color:${MUTED};">Nothing needs your attention this week.</td></tr></table></td></tr>`}
 
   ${
+    whyHtml
+      ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
+    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 6px 0;">What moved the number, and who moved it</div>
+    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">Stage, band, amount and close-date changes your reps made this week that the calls do not support.${hoisted ? ` On ${sharedN} of them, <strong style="color:${NAVY};">${esc(hoisted.toLowerCase())}</strong>.` : ""}${whyAgreed > 0 ? ` ${whyAgreed} other change${whyAgreed === 1 ? " is" : "s are"} backed by what the calls show and are not listed.` : ""}</div>
+    ${whyHtml}
+  </td></tr>`
+      : ""
+  }
+
+  ${
     darkRows
       ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
     <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 6px 0;">Going quiet</div>
@@ -574,15 +633,6 @@ export function renderPipelineDigestEmail(args: {
       : ""
   }
 
-  ${
-    missedRows
-      ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
-    <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin:0 0 6px 0;">DealRipe missed ${missedAll.length} deal${missedAll.length === 1 ? "" : "s"} this week</div>
-    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">The meeting happened and we were not in it, so there is no recap and no field write-back for these. Most are the notetaker waiting outside a Teams lobby. Across the last fortnight, 19 of 24 lobby timeouts were on meetings <strong style="color:${NAVY};">Magaya organised</strong>, which one lobby policy change fixes for every rep at once.${missedAll.length > missed.length ? ` Showing ${missed.length} of ${missedAll.length}.` : ""}</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${missedRows}</table>
-  </td></tr>`
-      : ""
-  }
 
   ${base ? `<tr><td style="padding:20px 6px 0 6px;"><a href="${base}/review" style="display:inline-block;background:${NAVY};color:#FFFFFF;font-family:${SANS};font-size:14px;font-weight:600;text-decoration:none;padding:11px 22px;border-radius:10px;">Open pipeline changes in DealRipe</a></td></tr>` : ""}
   <tr><td style="padding:18px 6px 0 6px;"><div style="font-family:${SANS};font-size:13px;line-height:21px;color:${MUTED};">Ranked by what needs you most, from what your calls caught this week. Reply with anything you want tracked.</div></td></tr>
@@ -613,6 +663,17 @@ export function renderPipelineDigestEmail(args: {
       t.push(`   Rep's next move: ${d.doThis ?? doThisText(d)}`);
     });
   else t.push("- Nothing needs attention.");
+  if (whyShown.length) {
+    t.push("", "WHAT MOVED THE NUMBER, AND WHO MOVED IT");
+    t.push("Changes your reps made this week that the calls do not support.");
+    if (hoisted) t.push(`On ${sharedN} of them, ${hoisted.toLowerCase()}.`);
+    for (const c of whyShown) {
+      t.push(`- ${c.account}. ${c.headline}.`);
+      const own = c.evidence.text.split(".")[0];
+      if (!hoisted || own !== hoisted) t.push(`  ${c.evidence.text}`);
+    }
+    if (whyAgreed > 0) t.push(`  ${whyAgreed} other change(s) are backed by what the calls show.`);
+  }
   if (dark.length) {
     t.push("", "GOING QUIET");
     t.push("Nobody has spoken to these and nothing is booked. Each needs a decision: work it deliberately, or stop.");
@@ -623,12 +684,6 @@ export function renderPipelineDigestEmail(args: {
   if (noShows.length) {
     t.push("", "NO-SHOWS");
     for (const d of noShows) t.push(`- ${d.account}: ${dstr(d.lastConversationAt) || "recent"} meeting${d.primaryContact ? ` with ${d.primaryContact.name}` : ""} was a no-show.`);
-  }
-  if (missed.length) {
-    t.push("", `DEALRIPE MISSED ${missedAll.length} DEAL(S) THIS WEEK`);
-    t.push("The meeting happened and we were not in it, so there is no recap or write-back.");
-    t.push("Most are the notetaker waiting outside a Teams lobby. Across the last fortnight, 19 of 24 lobby timeouts were on meetings Magaya organised, which one policy change fixes for every rep at once.");
-    for (const d of missed) t.push(`- ${d.account}: ${d.captureFailedTitle ?? "a meeting"} went ahead without DealRipe.`);
   }
   return { subject, html, text: t.join("\n") };
 }
