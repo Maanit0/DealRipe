@@ -20,6 +20,7 @@ import type { ExtractionMap } from "./briefing-magaya";
 import { getFrameworkForDeal, type Framework } from "./framework";
 import { runWithAuthorizedOpportunities } from "./crm-scope";
 import { isFreeMailDomain, rolldogOppIdForDeal } from "./pilot-config";
+import { resolveSalesforceSnapshots } from "./salesforce-stage";
 import { accountContextLines, loadAccountContext, resolveAccount } from "./salesforce-context";
 import { readRolldogSummary, stageKeyFromSummary } from "./rolldog-summary";
 import { buildBriefingHistory } from "./briefing-history";
@@ -216,6 +217,8 @@ export async function getDealContext(
   }
 
   let crmStageStatus: DealContext["crmStageStatus"] = opp ? "unavailable" : "no_opportunity";
+  /** The close date the CRM holds right now, as opposed to the cached column. */
+  let liveCloseDate: string | null = null;
   if (opp) {
     try {
       // Authorize this one opportunity for the duration of the read. The scope
@@ -226,6 +229,7 @@ export async function getDealContext(
       const read = await runWithAuthorizedOpportunities([opp], () => readRolldogSummary(opp));
       if (read.status === "ok") {
         crmStageKey = stageKeyFromSummary(read.summary);
+        liveCloseDate = read.summary.closeDate ?? null;
         // Rolldog answered. A null key here is a stage name we could not parse,
         // which is a different thing from Rolldog not answering, and only the
         // second is worth chasing.
@@ -246,6 +250,23 @@ export async function getDealContext(
       // opportunity, and "unavailable" is the honest label for it.
       console.warn(
         `[deal-context] Rolldog summary read blocked for opportunity ${opp}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // Salesforce answers for the deals with no Rolldog opportunity, which at this
+  // stage of the pilot is most of them. One extra round trip, and only on the
+  // deals where Rolldog gave us nothing, so a Rolldog deal pays nothing for it.
+  if (!liveCloseDate) {
+    try {
+      const snaps = await resolveSalesforceSnapshots(tenantId, [dealId]);
+      const read = snaps.get(dealId);
+      if (read?.status === "read") liveCloseDate = read.snapshot.closeDate ?? null;
+    } catch (err) {
+      // Falls back to the cached column, which is what it did before. Logged
+      // because a briefing quietly carrying a stale date is how this bug began.
+      console.warn(
+        `[deal-context] Salesforce close-date read failed for ${dealId}, briefing falls back to the cached column: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -443,7 +464,20 @@ export async function getDealContext(
     reachedStageKey: ds.reachedStageKey,
     topGaps: ds.topGaps,
     nextStepAnswer: ds.nextStepAnswer,
-    closeDate: deal.repForecastCloseDate || null,
+    // LIVE FIRST, CACHED ONLY AS A FALLBACK.
+    //
+    // deals.rep_forecast_close_date is a cached column and goes stale the
+    // moment a rep edits the CRM. On 2026-08-23 the IFF briefing told Eduardo
+    // "close date was August 17 and has already passed" while Salesforce held
+    // September 21, which Eduardo himself had set three days earlier. A rep who
+    // reads a date they personally changed stops trusting the whole briefing,
+    // and it is the same email that carries the questions we want them to ask.
+    //
+    // Rolldog is preferred where the deal has an opportunity, since that is
+    // where the sales team lives. Salesforce answers for the deals that have no
+    // Rolldog opportunity yet, which is most of them at this stage of the
+    // pilot: Magaya does not create one until after the discovery call.
+    closeDate: liveCloseDate ?? deal.repForecastCloseDate ?? null,
     attendees: attendeesFrom(deal),
     contacts: deal.contacts,
     lastCallDate,

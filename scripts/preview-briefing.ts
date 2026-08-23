@@ -11,6 +11,7 @@ config({ path: ".env.local" });
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { ExtractionMap } from "../lib/briefing-magaya";
+import { briefingStateFromContext, getDealContext } from "../lib/deal-context";
 import { attendeesFrom, generateBriefingFromState } from "../lib/generate-briefing";
 import { loadFramework } from "../lib/framework";
 import { renderPreCallBriefingEmail } from "../lib/emails/pre-call-briefing";
@@ -54,24 +55,26 @@ async function main(): Promise<void> {
   const framework = await loadFramework(tenantId, dealRow.data.framework_id);
   if (!framework) throw new Error("loadFramework returned null");
 
-  let stageKey = deal.stageKey;
-  const opp = rolldogOppIdForDeal(ext);
-  if (opp) {
-    try {
-      stageKey = stageKeyFromSummary(await getRolldogSummary(opp)) ?? deal.stageKey;
-    } catch {
-      /* fall back to deal stage */
-    }
-  }
+  // THE SAME STATE briefing-sync BUILDS, not a second one assembled here.
+  //
+  // This script used to construct the state itself from deal.stageKey and
+  // deal.repForecastCloseDate, which is a cached column. On 2026-08-23 that
+  // made the preview show IFF's close date as August 17, already past, while
+  // both Rolldog and Salesforce held September 21. The bug was real and in the
+  // cache, but the preview could not have told anyone whether the fix landed,
+  // because it never went through the code the fix was in.
+  //
+  // getDealContext does the live CRM reads, the stage-gate checklist, the BDR
+  // record and the prior-call history, none of which this reconstruction had.
+  // A preview that can disagree with production will.
+  const ctx = await getDealContext(tenantId, dealRow.data.id);
+  if (!ctx) throw new Error(`getDealContext returned null for ${ext}`);
+  const stageKey = ctx.effectiveStageKey;
 
   const attendees = deal.contacts.length > 0 ? attendeesFrom(deal) : undefined;
   const briefing = await generateBriefingFromState({
-    account: deal.account,
-    stageKey,
-    closeDate: deal.repForecastCloseDate || undefined,
+    ...briefingStateFromContext(ctx),
     attendees: attendees ?? `the ${deal.account} team`,
-    framework,
-    extraction: deal.extraction as unknown as ExtractionMap,
   });
   if (!briefing) throw new Error("briefing generation returned null");
 
