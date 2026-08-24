@@ -798,6 +798,40 @@ export type Database = {
         };
         Relationships: [];
       };
+      email_events: {
+        Row: {
+          id: string;
+          /** Null when the provider id matches no sent_messages row we hold. */
+          tenant_id: string | null;
+          /** Resend's message id. sent_messages.provider_id is the join. */
+          provider_id: string;
+          /** "email.delivered", "email.opened", "email.bounced", verbatim. */
+          event: string;
+          /** RESEND's timestamp, not ours: a retry must not look like a later open. */
+          occurred_at: string;
+          received_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id?: string | null;
+          provider_id: string;
+          event: string;
+          occurred_at: string;
+          received_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string | null;
+          provider_id?: string;
+          event?: string;
+          occurred_at?: string;
+          received_at?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       deal_messages: {
         Row: {
           id: string;
