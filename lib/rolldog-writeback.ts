@@ -48,7 +48,32 @@ export function resolveWriteTarget(deal: {
   external_id?: string | null;
   rolldog_opportunity_id?: string | null;
   rolldog_link_confidence?: string | null;
+  outcome_label?: string | null;
 }): WriteTarget {
+  // A deal that RESOLVED is not a deal we write to any more.
+  //
+  // 2026-08-24: Dpworld was closed lost on 08-07 in Mitch Nemmers's hygiene
+  // sweep, and seventeen days later DealRipe briefed the rep for it, drafted a
+  // no-show follow-up, and appended July call context to opportunity 83048.
+  // getPipelineChanges already drops resolved deals, so the DIGEST was clean
+  // while the operational loop carried on working a deal the customer's own VP
+  // had closed. The reporting layer knew and the writing layer did not.
+  //
+  // The gate lives here rather than at each call site for the reason this
+  // function exists at all: it is the single source of "will this deal write
+  // back", and a fourth caller reimplementing the rule is how the last bug of
+  // this shape happened.
+  //
+  // Refused rather than silently skipped. A call on a resolved deal may mean the
+  // deal reopened, which is worth surfacing, and a silent skip would make that
+  // indistinguishable from nothing having happened.
+  if (deal.outcome_label) {
+    return {
+      authorized: false,
+      opportunityId: deal.rolldog_opportunity_id ?? null,
+      reason: `deal is resolved (${deal.outcome_label}); DealRipe does not write to closed deals`,
+    };
+  }
   const staticOpp = rolldogOppIdForDeal(deal.external_id ?? "");
   if (staticOpp) {
     return { authorized: true, opportunityId: staticOpp, route: "static", runtimeAuth: [] };
@@ -105,7 +130,7 @@ export async function logNoShowToRolldog(
 
   const dealRow = await db
     .from("deals")
-    .select("id, external_id, rolldog_opportunity_id, rolldog_link_confidence")
+    .select("id, external_id, rolldog_opportunity_id, rolldog_link_confidence, outcome_label")
     .eq("tenant_id", tenantId)
     .eq("id", callRow.data.deal_id)
     .maybeSingle();
@@ -247,7 +272,7 @@ export async function writeBackDealToRolldog(
   const db = supabaseAdmin();
   const dealRow = await db
     .from("deals")
-    .select("id, rolldog_opportunity_id, rolldog_link_confidence, dealripe_last_write_hash, dealripe_last_next_step")
+    .select("id, external_id, rolldog_opportunity_id, rolldog_link_confidence, outcome_label, dealripe_last_write_hash, dealripe_last_next_step")
     .eq("tenant_id", tenantId)
     .eq("external_id", dealExternalId)
     .maybeSingle();

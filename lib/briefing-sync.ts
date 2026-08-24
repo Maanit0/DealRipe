@@ -58,6 +58,8 @@ export type BriefingSyncCounts = {
   sent: number;
   alreadySent: number;
   skippedNoDeal: number;
+  /** Meeting on a deal that has already resolved (won/lost). Counted, not dropped. */
+  skippedClosedDeal: number;
   skippedNoCall: number;
   /** Rows briefing-sync created itself because calendar-sync had not yet. */
   createdCallRow: number;
@@ -106,6 +108,7 @@ export async function runBriefingSync(
     sent: 0,
     alreadySent: 0,
     skippedNoDeal: 0,
+    skippedClosedDeal: 0,
     skippedNoCall: 0,
     createdCallRow: 0,
     deadConnections: 0,
@@ -242,7 +245,7 @@ async function processEvent(
   // Resolve the deal by external_id slug.
   const dealRow = await db
     .from("deals")
-    .select("id, framework_id, rep_email")
+    .select("id, framework_id, rep_email, outcome_label")
     .eq("tenant_id", tenantId)
     .eq("external_id", dealExternalId)
     .maybeSingle();
@@ -250,6 +253,20 @@ async function processEvent(
   if (!dealRow.data) {
     counts.skippedNoDeal += 1;
     emit({ kind: "no-deal", dealExternalId, eventId: ev.eventId });
+    return;
+  }
+  // Do not brief a deal that has RESOLVED.
+  //
+  // Dpworld was closed lost on 2026-08-07 and DealRipe briefed Juan for it on
+  // 08-24, then drafted him a no-show follow-up for a customer who is no longer
+  // one. getPipelineChanges already excludes resolved deals, so the digest was
+  // right while this path was not.
+  //
+  // Counted rather than dropped: a meeting on a resolved deal may mean it
+  // reopened, and a silent skip makes that indistinguishable from no meeting.
+  if (dealRow.data.outcome_label) {
+    counts.skippedClosedDeal += 1;
+    console.warn(`[briefing-sync] skipping ${dealExternalId}: deal resolved (${dealRow.data.outcome_label})`);
     return;
   }
   const dealId = dealRow.data.id;

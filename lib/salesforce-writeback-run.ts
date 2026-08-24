@@ -168,7 +168,7 @@ export async function writeBackDealToSalesforce(
 
   const dealRow = await db
     .from("deals")
-    .select("id, account, external_id, rolldog_opportunity_id, rolldog_link_confidence")
+    .select("id, account, external_id, rolldog_opportunity_id, rolldog_link_confidence, outcome_label")
     .eq("tenant_id", tenantId)
     .eq("external_id", dealExternalId)
     .maybeSingle();

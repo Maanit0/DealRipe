@@ -85,7 +85,13 @@ const asDate = (v: string | null | undefined): string | null => {
     return;
   }
   const db = supabaseAdmin();
-  const { error } = await db.from("forecast_predictions").upsert(rows, { onConflict: "deal_id,predicted_on" });
+  // forecast_predictions is newer than lib/database.types.ts, which is generated.
+  // Cast rather than hand-editing the generated file, which the next regeneration
+  // would silently revert.
+  const table = db.from("forecast_predictions" as never);
+  const { error } = await (table as unknown as {
+    upsert: (rows: unknown[], opts: { onConflict: string }) => Promise<{ error: { message: string } | null }>;
+  }).upsert(rows, { onConflict: "deal_id,predicted_on" });
   if (error) throw new Error(error.message);
   console.log(`\n  WROTE ${rows.length} prediction row(s) dated ${today}.\n`);
 })().catch((e) => {
