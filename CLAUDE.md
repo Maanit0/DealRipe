@@ -543,6 +543,17 @@ including the two largest, and 6 of 8 model calls went to deals he never saw.
 `lib/digest-priority.ts` is the single order now, on recoverable value, and the
 synthesis follows the display order rather than leading it.
 
+**A snapshot diff over the raw blob reports change every single day.**
+`deal_signal_snapshots.signals` carries `capturedAt`, written on every run, so a
+byte comparison of consecutive days differs always. Measured on IFF Inc
+2026-08-24: 47 "changes" across 48 days raw, and 8 in truth. `daysInStage` is
+the same trap more slowly, since it increments daily by definition and would
+make a stalled deal look maximally active. `lib/snapshot-diff.ts` owns the
+exclusion list; anything asking whether a deal moved calls `snapshotChanged`
+rather than comparing. Same class as reading our own refusal as a CRM saying no:
+a field we write ourselves mistaken for a fact about the deal. Across the book,
+107 of 115 deals moved at least once in 30 days and 8 never moved at all.
+
 **Capture failures are admission failures, not recording failures.** Fourteen
 calls carried "bot done but media unavailable". Not one had lost media: thirteen
 bots were never admitted to the meeting and one had a dead join link. The cause
