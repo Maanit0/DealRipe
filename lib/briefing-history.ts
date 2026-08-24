@@ -167,12 +167,32 @@ export async function buildBriefingHistory(
     lines.push("");
   }
 
-  // What we said we would do. An outstanding promise is the single most useful
-  // thing to open a call with, and the most embarrassing thing to have missed.
+  // What we said we would do.
+  //
+  // CAREFUL: "still owed" is a claim DealRipe cannot currently support.
+  //
+  // These come from the tasks table filtered on status != 'done', and NOTHING
+  // IN THIS CODEBASE EVER WRITES 'done'. Measured 2026-08-23: 206 tasks, 205
+  // todo, 1 in_progress, zero done. So the filter is a no-op and the list is
+  // every commitment ever extracted from any call on the deal, whether or not
+  // the rep delivered it days later.
+  //
+  // The old heading said "STILL OWED TO THE CUSTOMER FROM LAST TIME", and the
+  // IFF briefing turned that into "multiple deliverables owed to Carrie and Ana
+  // are past due by weeks", which DealRipe has no way of knowing. Telling a rep
+  // they are behind on work they may well have done is worse than saying
+  // nothing: it is wrong, it is about their competence, and the same email is
+  // asking them to trust our questions.
+  //
+  // So the framing is now what we can actually stand behind: these were agreed,
+  // here is when, and we cannot see whether they were delivered. Closing the
+  // loop properly needs delivery evidence (an email with the attachment, a
+  // later call referencing it), which prescription-scoring already does for
+  // questions and does not yet do for deliverables.
   try {
     const tasks = await db
       .from("tasks")
-      .select("title, detail, status, deadline, priority")
+      .select("title, detail, status, deadline, priority, created_at")
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
       .neq("status", "done")
@@ -185,10 +205,17 @@ export async function buildBriefingHistory(
       .limit(6);
     const open = tasks.data ?? [];
     if (open.length > 0) {
-      lines.push("STILL OWED TO THE CUSTOMER FROM LAST TIME:");
+      lines.push("WHAT WE COMMITTED TO ON EARLIER CALLS:");
+      lines.push(
+        "  DealRipe cannot see whether these were delivered, so do NOT tell the rep they are overdue,",
+      );
+      lines.push(
+        "  late, or that they have missed anything. Treat them as things to confirm, not to chase.",
+      );
       for (const t of open) {
-        const due = t.deadline ? ` (due ${shortDate(t.deadline)})` : "";
-        lines.push(`  ${t.title}${due}`);
+        const agreed = t.created_at ? ` (agreed ${shortDate(t.created_at)})` : "";
+        const due = t.deadline ? `, said for ${shortDate(t.deadline)}` : "";
+        lines.push(`  ${t.title}${agreed}${due}`);
       }
       lines.push("");
     }
