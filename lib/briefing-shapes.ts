@@ -111,12 +111,16 @@ const SHAPES: Record<string, BriefingShape> = {
   demo: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
     questionBudget: 1,
-    // 480 rather than 430. Measured across live demo briefings: Dunavant 442,
-    // IFF 465, Protrans 483, all of them tight and none padded. A shape
-    // carrying showThis AND fork simply needs more words than one that does
-    // not, and a budget every good output misses is not a budget, it is a
-    // regeneration tax. 480 words is still about two minutes of dense reading.
-    maxWords: 480,
+    // 540, raised twice and each time to match measured output rather than a
+    // guess. First 430 -> 480 because a shape carrying showThis AND fork needs
+    // more room. Then 480 -> 540 when the plain-language rule landed: writing
+    // complete sentences instead of compressed fragments took Dunavant from 435
+    // to 524 words, and that is the trade we chose deliberately. "Month to month
+    // with CargoWise and ready to move" is shorter than "they are on a
+    // month-to-month contract with CargoWise, so they can leave whenever they
+    // want", and the second one is the only one a rep can read at a glance.
+    // Clear beats short, so the budget pays for clear.
+    maxWords: 540,
     purpose:
       "Show the two or three things this customer actually said hurt, in their order, and leave with the next step booked. They have already told us their pain: do not re-ask it. Asking discovery questions on a demo is the single most common way this briefing gets ignored.",
   },
@@ -162,8 +166,8 @@ const SHAPES: Record<string, BriefingShape> = {
   proposal: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
     questionBudget: 2,
-    // Also carries fork. Same reasoning as demo.
-    maxWords: 460,
+    // Also carries fork, and pays the same plain-language cost. See demo.
+    maxWords: 500,
     purpose:
       "Get the decision machinery on the record: who else is being evaluated, what the champion has done internally, and the exact path from yes to signature. Never ask whether budget EXISTS: a number is already in front of them, so ask whether it works.",
   },

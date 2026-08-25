@@ -89,28 +89,29 @@ function render(cards: Card[]): string {
   }).join("");
 
   return `<!doctype html><meta charset=utf-8><title>DealRipe briefings</title><style>
-:root{--ink:#111;--dim:#6b7280;--line:#e5e7eb;--accent:#1d4ed8;--warn:#b45309;--bg:#fafafa}
+:root{--ink:#111;--dim:#3f4652;--line:#e5e7eb;--accent:#1d4ed8;--warn:#b45309;--bg:#fafafa}
 *{box-sizing:border-box}
 body{margin:0;padding:28px;background:var(--bg);color:var(--ink);
- font:15px/1.55 -apple-system,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+ font:16px/1.6 -apple-system,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
 h1{font-size:17px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:0 0 18px}
 article{background:#fff;border:1px solid var(--line);border-radius:10px;padding:22px 24px;margin:0 auto 20px;max-width:760px}
 header{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:6px}
 h2{margin:0 0 6px;font-size:20px;letter-spacing:-.3px}
-.meta{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--dim)}
+.meta{display:flex;gap:11px;flex-wrap:wrap;align-items:center;font-size:13.5px;color:var(--dim)}
 .pill{background:var(--accent);color:#fff;border-radius:99px;padding:2px 9px;font-weight:600;letter-spacing:.3px}
 .ok{color:#15803d}.over{color:var(--warn);font-weight:600}
-.why{font-size:11.5px;color:var(--dim);margin-top:7px;font-style:italic}
+.why{font-size:13px;color:var(--dim);margin-top:8px}
 section{margin-top:15px}
-h3{font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase;color:var(--dim);margin:0 0 5px;font-weight:700}
+h3{font-size:11.5px;letter-spacing:1.1px;text-transform:uppercase;color:var(--dim);margin:0 0 5px;font-weight:700}
 p{margin:0}
 ul{margin:0;padding-left:17px}li{margin-bottom:5px}
-.dim{color:var(--dim);font-size:13.5px}
+.dim{color:var(--dim);font-size:15px}
 .owe{margin-bottom:8px}
-.owe>span{display:inline-block;font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--warn);font-weight:700;margin-bottom:3px}
-.flag{margin-top:15px;padding:9px 12px;background:#fffbeb;border-left:3px solid var(--warn);border-radius:4px;font-size:13.5px}
+.owe>span{display:inline-block;font-size:11.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--warn);font-weight:700;margin-bottom:3px}
+.flag{margin-top:16px;padding:11px 14px;background:#fffbeb;border-left:3px solid var(--warn);border-radius:4px;font-size:15px;color:#78350f}
 @media (prefers-color-scheme:dark){
- :root{--ink:#e5e7eb;--dim:#9ca3af;--line:#27272a;--bg:#0b0b0c}
+ .flag{color:#fbbf24}
+ :root{--ink:#e9ebef;--dim:#c2c7d0;--line:#2b2b30;--bg:#0b0b0c}
  article{background:#141416}.flag{background:#1c1917}}
 </style>
 <h1>DealRipe pre-call briefings &middot; ${cards.length} deal(s)</h1>

@@ -248,21 +248,60 @@ async function resolveFromHistoryAndSubject(args: {
       subtypes[0],
     );
 
-    // The subject may legitimately advance the deal past its history: a deal
-    // whose last call was a demo, with "Proposal Review" on the invite, is a
-    // proposal call. It may never take it BACKWARDS.
-    if (fromSubject && (ADVANCEMENT[fromSubject.type] ?? 0) > (ADVANCEMENT[furthest] ?? 0)) {
+    // AN EXPLICIT TITLE WINS, forwards OR backwards.
+    //
+    // This used to let the subject advance a deal past its history and never
+    // take it backwards, which is right about the deal's STAGE and wrong about
+    // the MEETING. Dunavant is at proposal stage with an invite that says
+    // "Magaya Demo", and on 2026-08-25 that resolved to proposal and lost the
+    // showThis block on a call that is a demo. Its own doNotDo line then said
+    // "do not run a full discovery demo", which is the briefing arguing with
+    // itself.
+    //
+    // A deal past proposal can absolutely hold another demo: a technical
+    // deep-dive, a second module, a new stakeholder who has not seen it. The
+    // title is evidence about THIS ROOM and the history is evidence about
+    // previous ones, so for choosing the SHAPE the title should win.
+    //
+    // The one exception is the reason the old rule existed: a title reading as
+    // DISCOVERY must never take a deal backwards, because briefing discovery to
+    // a customer who has already demoed is the Cargoservicesgroup failure this
+    // whole file exists to prevent.
+    if (fromSubject && !(fromSubject.type === "discovery" && (ADVANCEMENT[furthest] ?? 0) >= 2)) {
+      const ahead = (ADVANCEMENT[fromSubject.type] ?? 0) > (ADVANCEMENT[furthest] ?? 0);
       return {
         type: fromSubject.type,
         source: "subject",
-        reason: `${fromSubject.reason}, ahead of the last captured call (${latest})`,
+        reason: ahead
+          ? `${fromSubject.reason}, ahead of the last captured call (${latest})`
+          : `${fromSubject.reason}, which is explicit about this meeting even though the deal has had a ${furthest} call`,
       };
     }
 
     // Never brief discovery on a deal that has already demoed or quoted.
     if ((ADVANCEMENT[furthest] ?? 0) >= 2) {
+      // A DEMO THAT ALREADY HAPPENED IS NOT THE NEXT CALL.
+      //
+      // This returned "demo" when the furthest captured call was a demo, which
+      // briefs a rep to run the demo they already ran. IFF and Protrans both
+      // got the demo shape on 2026-08-25 and Protrans' own content was a
+      // negotiation: "get Maya's full negotiation list on the table", with a
+      // two-year versus three-year pricing comparison under showThis.
+      //
+      // It also contradicted the gates tier below, which reads the same fact
+      // (sql2_demo_completed) and concludes follow_up. Two paths drawing
+      // opposite conclusions from one fact is how this codebase's worst bugs
+      // start, so they now agree.
+      const resolved = furthest === latest ? latest : furthest;
+      if (resolved === "demo") {
+        return {
+          type: "follow_up",
+          source: "history",
+          reason: "the demo has already been given, so this call picks up from it",
+        };
+      }
       return {
-        type: furthest === latest ? latest : furthest,
+        type: resolved,
         source: "history",
         reason: `this deal has already had a ${furthest} call`,
       };

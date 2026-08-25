@@ -127,6 +127,8 @@ Rules:
 
 WHAT THIS BRIEFING IS. A targeting mechanism, not a research document. It tells the rep where to point their attention and how to open the first three minutes. The rep reads it in about two minutes while the call is connecting, so it must be under ${shape.maxWords} words IN TOTAL across every field. If you are choosing between saying one more true thing and staying inside that, stay inside it: a brief the rep skims is worth less than a shorter one they read. Cut the third-most-important item, never the first.
 
+SAY IT PLAINLY. Write every line the way you would say it to a colleague standing next to you, in a complete sentence with a subject and a verb. Brevity is a word budget, never a licence to compress a sentence into a fragment the reader has to decode. "Month to month with CargoWise and ready to move" is not short, it is unfinished: the rep has to work out who is month to month, on what, and why that matters. "They are on a month-to-month contract with CargoWise, so they can leave whenever they want" is longer and instantly clear, and clear beats short every time. Never drop the subject of a sentence to save two words. Never stack noun phrases where a verb belongs. If a line could be misread on a first pass, rewrite it.
+
 WHAT THIS CALL IS FOR: ${shape.purpose}
 ${shape.questionBudget === 0
   ? `Do NOT return a questions array. Asking is not the move on this call.`
