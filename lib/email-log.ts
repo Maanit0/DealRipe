@@ -228,7 +228,50 @@ export type EmailEngagement = {
   /** Total non-calendar messages either way, for judging thread depth. */
   total: number;
   evidence: string;
+  /**
+   * The last message each way, with WHAT IT WAS ABOUT.
+   *
+   * "We wrote 4 days ago" is a statistic. "We emailed Carrie and Winnie 4 days
+   * ago about the delivery order and they have not replied" is a fact a rep can
+   * act on. The subject is stored already; it was simply never carried.
+   */
+  lastOutbound: MessageBrief | null;
+  lastInbound: MessageBrief | null;
 };
+
+export type MessageBrief = {
+  /** Cleaned subject: reply chains and forward prefixes stripped. */
+  topic: string | null;
+  /** Customer-side people it went to, or came from. */
+  people: string[];
+  sentAt: string;
+  daysAgo: number;
+};
+
+/**
+ * A subject line reduced to what it is about.
+ *
+ * Real Magaya subjects nest: "RE: BI Session & Follow up ABI  Re: IFF & Magaya
+ * ABI - Customs & Next Steps & Example Reports". A briefing that prints that
+ * whole string is worse than printing nothing, because the rep stops reading.
+ * Take the first segment, strip the prefixes, cap the length.
+ */
+export function subjectTopic(subject: string | null | undefined): string | null {
+  if (!subject) return null;
+  let s = String(subject).trim();
+  // Cut at the second reply marker: everything after it is an older subject.
+  const nested = s.search(/\s(?:re|fw|fwd)\s*:/i);
+  if (nested > 0) s = s.slice(0, nested);
+  // Strip any leading chain of prefixes.
+  for (let i = 0; i < 6; i++) {
+    const next = s.replace(/^\s*(?:re|fw|fwd|aw|tr)\s*:\s*/i, "");
+    if (next === s) break;
+    s = next;
+  }
+  s = s.replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  return s.length > 60 ? s.slice(0, 57).trimEnd() + "..." : s;
+}
 
 /**
  * Engagement for one deal.
@@ -245,7 +288,7 @@ export async function readEmailEngagement(args: {
   const db = supabaseAdmin();
   const res = await db
     .from("deal_messages")
-    .select("direction, customer_side, from_email, sent_at, is_calendar_response")
+    .select("direction, customer_side, from_email, to_emails, subject, sent_at, is_calendar_response")
     .eq("tenant_id", args.tenantId)
     .eq("deal_id", args.dealId)
     .eq("is_calendar_response", false)
@@ -257,6 +300,8 @@ export async function readEmailEngagement(args: {
     direction: string;
     customer_side: boolean;
     from_email: string | null;
+    to_emails: string[] | null;
+    subject: string | null;
     sent_at: string | null;
   }>;
   const nowMs = (args.now ?? new Date()).getTime();
@@ -282,7 +327,29 @@ export async function readEmailEngagement(args: {
       : `the customer last wrote ${dCust} day(s) ago`
     : `${fromUs.length} message(s) sent and the customer has never written back`;
 
+  // The last message each way, with its topic and the customer-side people on
+  // it. `people` is filtered to the customer: naming our own colleagues back to
+  // the rep is noise, and on a thread with a solution engineer cc'd it is most
+  // of the addresses.
+  const isInternal = (e: string) => {
+    const d = e.split("@")[1]?.toLowerCase() ?? "";
+    return d === (fromUs[0]?.from_email ?? "").split("@")[1]?.toLowerCase();
+  };
+  const brief = (r: (typeof rows)[number] | undefined, side: "out" | "in"): MessageBrief | null => {
+    if (!r?.sent_at) return null;
+    const raw =
+      side === "out"
+        ? (Array.isArray(r.to_emails) ? r.to_emails : [])
+        : [String(r.from_email ?? "")];
+    const people = raw
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.includes("@") && !isInternal(e));
+    return { topic: subjectTopic(r.subject), people, sentAt: r.sent_at, daysAgo: days(r.sent_at) ?? 0 };
+  };
+
   return {
+    lastOutbound: brief(fromUs[0], "out"),
+    lastInbound: brief(fromCustomer[0], "in"),
     daysSinceCustomerMessage: dCust,
     daysSinceOurMessage: dOurs,
     customerWriters: writers.size,
@@ -318,13 +385,37 @@ export function emailLinesForBriefing(
       `EMAIL: no messages on record for this deal. That means we hold no thread, NOT that the customer has gone quiet. Say nothing about email.`,
     ];
   }
+  const who = (p: string[]): string => {
+    // FIRST NAMES ONLY. Deriving a surname from an address means guessing its
+    // casing, and "Carrie Mcgregor" in a rep-facing artifact is worse than
+    // "Carrie". The attendee block carries real names from the invite.
+    const names = p.map((x) => {
+      const first = x.split("@")[0].split(/[._-]/)[0];
+      return first.charAt(0).toUpperCase() + first.slice(1);
+    });
+    if (names.length === 0) return "";
+    if (names.length <= 2) return names.join(" and ");
+    return `${names[0]} and ${names.length - 1} others`;
+  };
   const out: string[] = [`EMAIL, what the customer has actually done. Ranks above the CRM below and below the calls above.`];
-  if (e.daysSinceCustomerMessage === null) {
-    out.push(`- The customer has NEVER written to us. Every message on this deal is ours.`);
-  } else {
-    out.push(`- The customer last wrote ${e.daysSinceCustomerMessage} day(s) ago.`);
+
+  // The last message each way, WITH its topic. "We wrote 4 days ago" is a
+  // statistic; "we emailed Carrie and Winnie 4 days ago about the delivery
+  // order" is something a rep can open a call with.
+  if (e.lastOutbound) {
+    const w = who(e.lastOutbound.people);
+    out.push(
+      `- We emailed${w ? ` ${w}` : ""} ${e.lastOutbound.daysAgo} day(s) ago${e.lastOutbound.topic ? ` about "${e.lastOutbound.topic}"` : ""}.`,
+    );
   }
-  if (e.daysSinceOurMessage !== null) out.push(`- We last wrote ${e.daysSinceOurMessage} day(s) ago.`);
+  if (e.lastInbound) {
+    const w = who(e.lastInbound.people);
+    out.push(
+      `- They last wrote ${e.lastInbound.daysAgo} day(s) ago${w ? ` (${w})` : ""}${e.lastInbound.topic ? ` about "${e.lastInbound.topic}"` : ""}.`,
+    );
+  } else {
+    out.push(`- The customer has NEVER written to us. Every message on this deal is ours.`);
+  }
   if (e.awaitingReply) {
     out.push(
       `- WE WROTE LAST AND THEY HAVE NOT ANSWERED. This is the single most useful fact here and no CRM holds it.`,
@@ -337,7 +428,6 @@ export function emailLinesForBriefing(
       : `- ${e.customerWriters} person/people on the customer side have written on this thread.`,
     `- ${e.total} message(s) on the thread in total, excluding calendar responses.`,
   );
-  if (e.evidence) out.push(`- ${e.evidence}`);
   out.push(
     `Use this to judge momentum and who is engaged. Never quote an email back to the customer on the call, and never say "I see you have not replied".`,
   );
