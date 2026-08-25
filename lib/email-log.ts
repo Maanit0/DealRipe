@@ -33,6 +33,7 @@
 
 import type { Database } from "./database.types";
 import { domainOf, isCalendarResponseSubject, listMailboxMessages, type MailMessage } from "./graph-mail";
+import { getMessageBody } from "./graph-mail";
 import { supabaseAdmin } from "./supabase";
 
 /** Free-mail domains never identify a company. CLAUDE.md: matching %@gmail.com
@@ -242,6 +243,18 @@ export type EmailEngagement = {
 export type MessageBrief = {
   /** Cleaned subject: reply chains and forward prefixes stripped. */
   topic: string | null;
+  /**
+   * Enough to fetch the BODY from Graph on demand.
+   *
+   * deal_messages deliberately stores metadata only: Magaya is under NDA and
+   * duplicating message bodies into our database would double the NDA surface
+   * for signal we can fetch when we actually need it. A briefing needs it about
+   * twice a day, so it is fetched then and never stored.
+   */
+  mailbox: string | null;
+  graphMessageId: string | null;
+  /** Trimmed plain-text excerpt, present only when a body fetch succeeded. */
+  excerpt?: string | null;
   /** Customer-side people it went to, or came from. */
   people: string[];
   sentAt: string;
@@ -288,7 +301,7 @@ export async function readEmailEngagement(args: {
   const db = supabaseAdmin();
   const res = await db
     .from("deal_messages")
-    .select("direction, customer_side, from_email, to_emails, subject, sent_at, is_calendar_response")
+    .select("direction, customer_side, from_email, to_emails, subject, sent_at, is_calendar_response, mailbox, graph_message_id")
     .eq("tenant_id", args.tenantId)
     .eq("deal_id", args.dealId)
     .eq("is_calendar_response", false)
@@ -303,6 +316,8 @@ export async function readEmailEngagement(args: {
     to_emails: string[] | null;
     subject: string | null;
     sent_at: string | null;
+    mailbox: string | null;
+    graph_message_id: string | null;
   }>;
   const nowMs = (args.now ?? new Date()).getTime();
   const days = (iso: string | null): number | null => {
@@ -344,7 +359,14 @@ export async function readEmailEngagement(args: {
     const people = raw
       .map((e) => e.trim().toLowerCase())
       .filter((e) => e.includes("@") && !isInternal(e));
-    return { topic: subjectTopic(r.subject), people, sentAt: r.sent_at, daysAgo: days(r.sent_at) ?? 0 };
+    return {
+      topic: subjectTopic(r.subject),
+      people,
+      sentAt: r.sent_at,
+      daysAgo: days(r.sent_at) ?? 0,
+      mailbox: r.mailbox ?? null,
+      graphMessageId: r.graph_message_id ?? null,
+    };
   };
 
   return {
@@ -407,12 +429,20 @@ export function emailLinesForBriefing(
     out.push(
       `- We emailed${w ? ` ${w}` : ""} ${e.lastOutbound.daysAgo} day(s) ago${e.lastOutbound.topic ? ` about "${e.lastOutbound.topic}"` : ""}.`,
     );
+    if (e.lastOutbound.excerpt) {
+      out.push(`  What we said, verbatim: ${e.lastOutbound.excerpt}`);
+      out.push(`  Summarise that in the briefing as what we ASKED FOR or PROMISED. A subject line is not a summary.`);
+    }
   }
   if (e.lastInbound) {
     const w = who(e.lastInbound.people);
     out.push(
       `- They last wrote ${e.lastInbound.daysAgo} day(s) ago${w ? ` (${w})` : ""}${e.lastInbound.topic ? ` about "${e.lastInbound.topic}"` : ""}.`,
     );
+    if (e.lastInbound.excerpt) {
+      out.push(`  What they said, verbatim: ${e.lastInbound.excerpt}`);
+      out.push(`  Summarise that as what they WANTED or COMMITTED TO, in their words. This is the last thing the customer actually told us.`);
+    }
   } else {
     out.push(`- The customer has NEVER written to us. Every message on this deal is ours.`);
   }
@@ -432,4 +462,47 @@ export function emailLinesForBriefing(
     `Use this to judge momentum and who is engaged. Never quote an email back to the customer on the call, and never say "I see you have not replied".`,
   );
   return out;
+}
+
+
+/**
+ * Fill in the message bodies for the last email each way.
+ *
+ * Separate from readEmailEngagement so the cheap metadata read stays cheap: the
+ * flag engine and /read call that hundreds of times and need none of this. Only
+ * the briefing needs to know what the email SAID, and it needs it twice a day.
+ *
+ * Fails soft in both directions. A Graph failure leaves the excerpt null and the
+ * briefing falls back to the subject line, which is worse but not wrong. It must
+ * never turn into "the customer said nothing".
+ */
+export async function attachMessageExcerpts(
+  e: EmailEngagement,
+  args: { tenantIdOrDomain: string; maxChars?: number },
+): Promise<EmailEngagement> {
+  const cap = args.maxChars ?? 700;
+  const fetchOne = async (m: MessageBrief | null): Promise<MessageBrief | null> => {
+    if (!m?.mailbox || !m.graphMessageId) return m;
+    try {
+      const body = await getMessageBody({
+        tenantIdOrDomain: args.tenantIdOrDomain,
+        mailbox: m.mailbox,
+        messageId: m.graphMessageId,
+      });
+      if (!body) return m;
+      // Cut the quoted history. A reply carries the whole thread underneath it,
+      // and the part that matters is what THIS message added on top.
+      const trimmed = body
+        .split(/\n\s*(?:From:|On .{0,60} wrote:|-----Original Message-----|_{5,})/)[0]
+        .replace(/\r/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      const excerpt = trimmed.length > cap ? trimmed.slice(0, cap).trimEnd() + "..." : trimmed;
+      return { ...m, excerpt: excerpt || null };
+    } catch {
+      return m;
+    }
+  };
+  const [outbound, inbound] = await Promise.all([fetchOne(e.lastOutbound), fetchOne(e.lastInbound)]);
+  return { ...e, lastOutbound: outbound, lastInbound: inbound };
 }
