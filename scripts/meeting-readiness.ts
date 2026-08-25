@@ -22,6 +22,7 @@
  * which costs a model call each, so it is off by default.
  */
 
+import { standText } from "../lib/briefing-blocks";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
@@ -269,7 +270,7 @@ async function main(): Promise<void> {
             continue;
           }
           console.log(`   objective   ${b.callObjective}`);
-          console.log(`   stands      ${b.whereItStands}`);
+          console.log(`   stands      ${standText(b.whereItStands)}`);
           b.questions.forEach((q, i) => console.log(`   ask ${i + 1}       ${q.ask}`));
           console.log(`   next step   ${b.nextStepCommitment}`);
         } catch (e) {

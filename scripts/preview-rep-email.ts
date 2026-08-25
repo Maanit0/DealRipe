@@ -16,6 +16,7 @@ import { resolveTenantId } from "../lib/tenant-deal-lookup";
 import { getDealContext, briefingStateFromContext } from "../lib/deal-context";
 import { generateBriefingFromState } from "../lib/generate-briefing";
 import { buildAttendeeContext } from "../lib/attendee-context";
+import { briefingRoster } from "../lib/attendees";
 import { resolvePreCallType } from "../lib/call-type-precall";
 import { renderPreCallBriefingEmail } from "../lib/emails/pre-call-briefing";
 
@@ -62,8 +63,14 @@ const names = argv.reduce<string[]>((a, v, i) => (v === "--deal" ? [...a, argv[i
       account: d.account,
       stageKey: ctx.effectiveStageKey,
       attendees: ctx.attendees,
+      roster: briefingRoster({
+        meetingAttendees: (Array.isArray(meeting.participants) ? meeting.participants : []) as never,
+        crmContacts: ctx.crmContacts,
+        dealContacts: ctx.contacts,
+      }),
+      callType: callType.type,
       minutesUntil: 35,
-    } as never);
+    });
     parts.push(email.html);
   }
   mkdirSync(".previews", { recursive: true });

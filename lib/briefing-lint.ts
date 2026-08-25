@@ -19,6 +19,8 @@
  * not having one.
  */
 
+import { standText } from "./briefing-blocks";
+
 export type BriefingFinding = {
   level: "error" | "warn";
   field: string;
@@ -29,7 +31,7 @@ export type BriefingFinding = {
 /** The shape this linter needs. Structurally compatible with MagayaBriefing. */
 type LintableBriefing = {
   callObjective?: string | null;
-  whereItStands?: string | null;
+  whereItStands?: unknown;
   nextStepCommitment?: string | null;
   whatsAtRisk?: string | null;
   signalFlag?: string | null;
@@ -132,7 +134,15 @@ export function lintBriefing(
 
   const scalars: Array<[string, string]> = [
     ["callObjective", text(briefing.callObjective)],
-    ["whereItStands", text(briefing.whereItStands)],
+    // FLATTENED, NEVER text().
+    //
+    // whereItStands became an array of labelled lines on 2026-08-25. text()
+    // returns "" for anything that is not a string, so reading it through text()
+    // would have silently stopped scanning the one block these patterns exist
+    // for, and every finding would have been "clean". A linter that cannot see
+    // its own subject reports no problems, which is the exact failure this
+    // codebase keeps paying for.
+    ["whereItStands", standText(briefing.whereItStands)],
     ["nextStepCommitment", text(briefing.nextStepCommitment)],
     ["whatsAtRisk", text(briefing.whatsAtRisk)],
     ["signalFlag", text(briefing.signalFlag)],

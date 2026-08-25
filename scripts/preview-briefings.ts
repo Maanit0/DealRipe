@@ -14,6 +14,7 @@
  * Writes .previews/briefings.html and opens it. That directory is gitignored:
  * Magaya is under NDA and these carry customer names and quotes.
  */
+import { dealNumbers, standPoints } from "../lib/briefing-blocks";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import { execFile } from "node:child_process";
@@ -71,14 +72,14 @@ function render(cards: Card[]): string {
   </header>
   ${section("Commit to", p(c.b.callObjective))}
   ${section("If you don't", p(c.b.whatsAtRisk))}
-  ${section("In the room", ul(c.b.inTheRoom, (x: { person: string; note: string }) => `<b>${esc(x.person)}</b> &middot; ${esc(x.note)}`))}
+  ${section("What they care about", ul(c.b.inTheRoom, (x: { person: string; note: string }) => `<b>${esc(x.person)}</b> &middot; ${esc(x.note)}`))}
   ${section("Open items", [
     c.b.openItems?.us?.length ? `<div class="owe"><span>we owe</span>${ul(c.b.openItems.us, (x: string) => esc(x))}</div>` : "",
     c.b.openItems?.them?.length ? `<div class="owe"><span>they owe</span>${ul(c.b.openItems.them, (x: string) => esc(x))}</div>` : "",
   ].join(""))}
   ${section("Since last contact", p(c.b.sinceLastContact))}
-  ${section("The numbers", ul(c.b.theNumbers, (x: string) => esc(x)))}
-  ${section("Where it stands", p(c.b.whereItStands))}
+  ${section("The numbers", ul(dealNumbers(c.b.theNumbers), (x: { label: string; value: string; note?: string | null }) => `${x.label ? `<b>${esc(x.label)}</b> ` : ""}${esc(x.value)}${x.note ? `<br><span class="dim">${esc(x.note)}</span>` : ""}`))}
+  ${section("Where it stands", ul(standPoints(c.b.whereItStands), (x: { label: string; point: string }) => `${x.label ? `<b>${esc(x.label)}</b><br>` : ""}${esc(x.point)}`))}
   ${section("Show this", ul(c.b.showThis, (x: { item: string; why: string }) => `<b>${esc(x.item)}</b><br><span class="dim">${esc(x.why)}</span>`))}
   ${section("Ask", ul(c.b.questions, (x: { ask: string; why: string }) => `${esc(x.ask)}<br><span class="dim">${esc(x.why)}</span>`))}
   ${section("If they say", ul(c.b.fork?.branches, (x: { ifThey: string; then: string }) => `<b>${esc(x.ifThey)}</b> &rarr; ${esc(x.then)}`))}

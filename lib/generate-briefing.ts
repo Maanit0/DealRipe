@@ -13,6 +13,7 @@
 
 import { runModel } from "./model-run";
 import { shapeForCallType } from "./briefing-shapes";
+import type { DealNumber, StandPoint } from "./briefing-blocks";
 import {
   briefingErrors,
   describeFindings,
@@ -42,7 +43,8 @@ export type BriefingQuestion = {
 
 export type MagayaBriefing = {
   callObjective: string;
-  whereItStands: string;
+  /** Labelled lines as of 2026-08-25. String is the legacy shape; read both through lib/briefing-blocks.ts. */
+  whereItStands: string | StandPoint[];
   /** Optional as of 2026-08-25: a call where asking is not the move returns none. */
   questions: BriefingQuestion[];
   nextStepCommitment: string;
@@ -62,7 +64,7 @@ export type MagayaBriefing = {
   inTheRoom?: Array<{ person: string; note: string }> | null;
   openItems?: { us: string[]; them: string[] } | null;
   sinceLastContact?: string | null;
-  theNumbers?: string[] | null;
+  theNumbers?: Array<string | DealNumber> | null;
   showThis?: Array<{ item: string; why: string }> | null;
   fork?: { question: string; branches: Array<{ ifThey: string; then: string }> } | null;
   doNotDo?: string | null;

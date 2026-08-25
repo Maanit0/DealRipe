@@ -64,6 +64,26 @@ export type BriefingShape = {
   questionBudget: number;
   /** What this call is FOR. Stated to the model as the job, not as a description. */
   purpose: string;
+  /**
+   * The order of the three cards the rep reads: what to DO on this call, what
+   * to SAY, and the background they need to KNOW.
+   *
+   * Every shape uses act, say, know. NOTHING overrides it, and the field is
+   * kept because the override was TRIED and is worth not trying again.
+   *
+   * Discovery was briefly inverted to act, know, say, on the reasoning that the
+   * asks are the output of what we already know so the state should come first.
+   * Read as an artifact it was plainly worse: the questions, which are the whole
+   * point of a discovery call and the thing the rep needs in their hand when the
+   * customer joins, sat under six lines of "where it stands" and two of open
+   * items. Nobody scrolls past the history to find the questions.
+   *
+   * The rule that came out of it: the rep ACTS from the top of the page and
+   * reads DOWN for context, never the reverse. Commitment, then the words, then
+   * the background. Five different skeletons would be five templates again,
+   * which is the mistake this file exists to undo.
+   */
+  cardOrder?: ReadonlyArray<"act" | "say" | "know">;
 };
 
 /** Everything the briefing always emits, whatever the call type. */
@@ -91,7 +111,7 @@ export const CORE_FIELDS = ["callObjective", "whereItStands", "nextStepCommitmen
 const DEFAULT_SHAPE: BriefingShape = {
   blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
-  maxWords: 620,
+  maxWords: 700,
   purpose:
     "We could not tell what kind of call this is, so do not assume a stage. Lead with what is open and what the customer last said, ask only what is genuinely unknown, and leave with a dated commitment. Never open as though meeting for the first time unless the deal has no history at all.",
 };
@@ -112,16 +132,18 @@ const SHAPES: Record<string, BriefingShape> = {
   demo: {
     blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
     questionBudget: 1,
-    // 540, raised twice and each time to match measured output rather than a
-    // guess. First 430 -> 480 because a shape carrying showThis AND fork needs
-    // more room. Then 480 -> 540 when the plain-language rule landed: writing
-    // complete sentences instead of compressed fragments took Dunavant from 435
-    // to 524 words, and that is the trade we chose deliberately. "Month to month
+    // Raised three times, each time to match measured output rather than a
+    // guess. 430 -> 480 because a shape carrying showThis AND fork needs more
+    // room. 480 -> 540 when the plain-language rule landed: "month to month
     // with CargoWise and ready to move" is shorter than "they are on a
     // month-to-month contract with CargoWise, so they can leave whenever they
-    // want", and the second one is the only one a rep can read at a glance.
-    // Clear beats short, so the budget pays for clear.
-    maxWords: 700,
+    // want", and only the second is readable at a glance, so the budget pays
+    // for clear. 700 -> 780 for the labels: a two-word label on a line of
+    // "where it stands" and a four-word label on a figure are the difference
+    // between a block a rep scans and a block a rep skips, so they earn their
+    // words several times over. Every raise so far has bought structure or
+    // clarity. A raise that buys another true sentence is the one to refuse.
+    maxWords: 780,
     purpose:
       "Show the two or three things this customer actually said hurt, in their order, and leave with the next step booked. They have already told us their pain: do not re-ask it. Asking discovery questions on a demo is the single most common way this briefing gets ignored.",
   },
@@ -142,7 +164,7 @@ const SHAPES: Record<string, BriefingShape> = {
   discovery: {
     blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
     questionBudget: 3,
-    maxWords: 620,
+    maxWords: 700,
     purpose:
       "Learn what actually hurts, what they run today, and who decides, then leave with a dated next step. Asking is the main move. Do not pitch.",
   },
@@ -168,7 +190,7 @@ const SHAPES: Record<string, BriefingShape> = {
     blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
     questionBudget: 2,
     // Also carries fork, and pays the same plain-language cost. See demo.
-    maxWords: 680,
+    maxWords: 740,
     purpose:
       "Get the decision machinery on the record: who else is being evaluated, what the champion has done internally, and the exact path from yes to signature. Never ask whether budget EXISTS: a number is already in front of them, so ask whether it works.",
   },
@@ -183,7 +205,7 @@ const SHAPES: Record<string, BriefingShape> = {
   follow_up: {
     blocks: ["bookThis", "openItems", "sinceLastContact", "questions", "doNotDo"],
     questionBudget: 2,
-    maxWords: 520,
+    maxWords: 580,
     purpose:
       "Pick up exactly what was left open and close it. Never re-open the relationship or re-ask what they have already told us.",
   },
@@ -199,7 +221,7 @@ const SHAPES: Record<string, BriefingShape> = {
   customer: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "doNotDo"],
     questionBudget: 1,
-    maxWords: 480,
+    maxWords: 520,
     purpose:
       "They are already a customer. Brief on making what they bought succeed and on what is unresolved operationally. Do not qualify them, do not propose a demo, and never ask what is driving them to look at a new solution.",
   },
@@ -219,10 +241,10 @@ export function shapeForCallType(callType: string | null | undefined): BriefingS
  * which parts to skip, is how the current schema became a template.
  */
 const BLOCK_CONTRACT: Record<BlockName, string> = {
-  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 4 people, the ones who decide what happens in this room. note is up to 30 words and must carry what THEY care about, in their own words where we have them, not just a job title: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "CIO. Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
+  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 3 people, the ones who decide what happens in this room. "person" is the NAME ONLY, exactly as it appears in the attendee list: their job title is already printed beside it and repeating it wastes the line. "note" is up to 30 words and carries what THEY care about, in their own words where we have them: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
   openItems: `"openItems": { "us": [string], "them": [string] }   // Up to 3 per side. Each line names the item, when it was agreed, and its STATUS in plain words: "sent Aug 21", "still not sent", "agreed Aug 13 for Thursday, never booked". A rep needs to know which ones are outstanding at a glance, so never leave the status off. Empty array when a side owes nothing.`,
   sinceLastContact: `"sinceLastContact": string   // ONE or TWO sentences, no more. What we last said, what they last said, how long ago. Summarise the CONTENT, never the subject line.`,
-  theNumbers: `"theNumbers": [string]   // AT MOST 4, each a FRAGMENT not a sentence ("$34,400/month", "20 users"). Omit anything you do not actually have; never write "not recorded".   // every quantity this deal has: proposal amount, monthly price, user count, volumes, current spend. Empty array if none. A rep asked "how much budget do you have" who cannot answer "how much do I need" sounds unprepared.`,
+  theNumbers: `"theNumbers": [ { "label": string, "value": string, "note": string | null } ]   // AT MOST 4 figures: what we quoted, what they pay today, user or seat counts, volumes, contract terms. Empty array if we hold none. NEVER a bare number. "label" says what the figure IS and WHOSE it is, in two to four words: "What we quoted, monthly", "Their CargoWise spend today", "Users in scope". A rep who reads "$34,400 per month" without knowing which side of the table it sits on will say it out loud and be wrong. "value" is the figure alone. "note" is where it came from and when, one short clause, for example "quoted August 14, Debra said it is within her range", or null when we do not know.`,
   questions: `"questions": [ { "ask": string, "why": string, "targetFields": [string], "targetLabel": string } ]`,
   showThis: `"showThis": [ { "item": string, "why": string } ]   // 2 or 3, in the order THEY would care about. "why" is ONE line, at most 16 words, tied to something they said. Not a feature tour.`,
   fork: `"fork": { "question": string, "branches": [ { "ifThey": string, "then": string } ] } | null   // ONE fork, 2 or 3 branches. "ifThey" and "then" are each ONE short line. Null when there is no real fork; do not invent one.`,
@@ -233,7 +255,13 @@ const BLOCK_CONTRACT: Record<BlockName, string> = {
 export function contractFor(shape: BriefingShape): string {
   const core = [
     `  "callObjective": string,`,
-    `  "whereItStands": string,`,
+    // LABELLED LINES, NEVER A PARAGRAPH.
+    //
+    // This is the densest block in the brief. Six sentences of prose is a wall,
+    // and a rep scanning for the money finds it only by reading the timeline
+    // first. The facts were never joined by anything except being true, so they
+    // are separated here and each one is told what it is about.
+    `  "whereItStands": [ { "label": string, "point": string } ],   // 3 to 6 lines, ordered most consequential first. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.`,
     `  "nextStepCommitment": string,`,
     `  "whatsAtRisk": string,`,
     `  "signalFlag": string | null`,

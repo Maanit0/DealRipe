@@ -14,6 +14,7 @@
  * Requires ANTHROPIC_API_KEY in .env.local.
  */
 
+import { standText } from "../lib/briefing-blocks";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
@@ -157,7 +158,7 @@ async function main(): Promise<void> {
   console.log("");
   console.log(`Objective: ${br.callObjective ?? "(missing)"}`);
   console.log("");
-  console.log(`Where it stands: ${br.whereItStands ?? "(missing)"}`);
+  console.log(`Where it stands: ${standText(br.whereItStands) || "(missing)"}`);
   console.log("");
   console.log("Ask these:");
   if (Array.isArray(br.questions)) {

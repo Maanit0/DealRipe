@@ -20,7 +20,7 @@ import { renderPreCallBriefingEmail } from "./emails/pre-call-briefing";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
-import { attendeeLineFromMeeting } from "./attendees";
+import { attendeeLineFromMeeting, briefingRoster } from "./attendees";
 import { buildAttendeeContext } from "./attendee-context";
 import {
   describeContext,
@@ -513,6 +513,17 @@ async function processEvent(
     stageKey: ctx.effectiveStageKey,
     standingLabel: standingLabel(context),
     attendees,
+    // The same invite the prompt was given, as rows rather than a sentence, so
+    // the rep sees who accepted with their title and where they sit on the
+    // decision. briefingRoster falls back to the deal's contacts exactly where
+    // attendeeLineFromMeeting does, so the two cannot disagree about who is
+    // coming.
+    roster: briefingRoster({
+      meetingAttendees: ev.attendees ?? [],
+      crmContacts: ctx.crmContacts,
+      dealContacts: ctx.contacts,
+    }),
+    callType: callType?.type ?? null,
     minutesUntil,
   });
 

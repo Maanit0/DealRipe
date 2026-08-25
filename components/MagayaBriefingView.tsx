@@ -1,3 +1,4 @@
+import { standPoints } from "@/lib/briefing-blocks";
 import type { MagayaBriefing } from "@/lib/generate-briefing";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -47,7 +48,14 @@ export function MagayaBriefingView({
       </Section>
 
       <Section label="Where it stands">
-        <p className="text-[13px] text-ink leading-relaxed">{briefing.whereItStands}</p>
+        <ul className="space-y-2">
+          {standPoints(briefing.whereItStands).map((p, i) => (
+            <li key={i} className="text-[13px] text-ink leading-relaxed">
+              {p.label ? <span className="font-semibold">{p.label}. </span> : null}
+              {p.point}
+            </li>
+          ))}
+        </ul>
       </Section>
 
       <Section label={`Ask these (${briefing.questions.length})`}>
