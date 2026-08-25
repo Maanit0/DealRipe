@@ -30,6 +30,7 @@ import type { ExtractionResult } from "./scotsman";
 import type { Contact } from "./seed-data";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
+import { emailLinesForBriefing, readEmailEngagement, type EmailEngagement } from "./email-log";
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
 
@@ -90,6 +91,28 @@ export type DealContext = {
    * are opposite instructions to give a rep walking into a room.
    */
   uncapturedCalls: Array<{ date: string; reason: string }>;
+  /**
+   * What the mailbox says about this customer, ranked between the calls and the
+   * CRM deliberately.
+   *
+   * The calls are the customer speaking to us directly, so they win. Email is
+   * next because it is also the CUSTOMER acting: who replied, how fast, who
+   * else appeared on the thread, who went quiet. Rolldog and Salesforce come
+   * last because they record what a REP typed, which is a summary of the first
+   * two and ages the moment it is saved.
+   *
+   * Null when we hold no email record for this deal. See emailStatus for why,
+   * because "they have never written to us" and "we have not read the mailbox"
+   * are opposite facts that produced the same empty briefing.
+   */
+  email: EmailEngagement | null;
+  emailStatus:
+    /** We have messages on this deal and read them. */
+    | "present"
+    /** The log holds nothing for this deal. Not the same as silence. */
+    | "no_record"
+    /** The read failed. We do not know what the mailbox says. */
+    | "unavailable";
   /**
    * Salesforce Sales Development context, rendered for the briefing prompt.
    *
@@ -296,6 +319,23 @@ export async function getDealContext(
   const ds = deriveDealState(framework, extraction, effectiveStageKey);
 
   // Most recent real (non-no-show) captured call.
+  // The mailbox. Read alongside the calls because it answers the same question
+  // from the other side: what has the CUSTOMER actually done lately.
+  let email: EmailEngagement | null = null;
+  let emailStatus: DealContext["emailStatus"] = "no_record";
+  try {
+    email = await readEmailEngagement({ tenantId, dealId });
+    emailStatus = email ? "present" : "no_record";
+  } catch (err) {
+    // Never let a mailbox failure look like a quiet customer. A briefing that
+    // says "they have not written in 3 weeks" when we simply could not read is
+    // worse than one that says nothing, because the rep acts on it.
+    emailStatus = "unavailable";
+    console.warn(
+      `[deal-context] email read failed for deal ${dealId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   let lastCallDate: string | null = null;
   const uncapturedCalls: Array<{ date: string; reason: string }> = [];
   try {
@@ -502,6 +542,8 @@ export async function getDealContext(
     contacts: deal.contacts,
     lastCallDate,
     uncapturedCalls: uncapturedCalls.sort((a, b) => a.date.localeCompare(b.date)),
+    email,
+    emailStatus,
     crmContext,
     crmContextStatus,
     stageGates,
@@ -526,6 +568,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   history?: string;
   rolldogNarrative?: string | null;
   uncapturedCalls?: Array<{ date: string; reason: string }>;
+  emailContext?: string | null;
 } {
   return {
     account: ctx.account,
@@ -539,5 +582,8 @@ export function briefingStateFromContext(ctx: DealContext): {
     history: ctx.history ?? undefined,
     rolldogNarrative: ctx.rolldogNarrative,
     uncapturedCalls: ctx.uncapturedCalls,
+    // Rendered here rather than in the prompt builder so the ranking decision
+    // (calls, then email, then CRM) lives with the context that knows all three.
+    emailContext: emailLinesForBriefing(ctx.email, ctx.emailStatus).join("\n"),
   };
 }

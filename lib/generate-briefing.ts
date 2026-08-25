@@ -102,6 +102,11 @@ export type BriefingState = {
    * DealContext.uncapturedCalls for why a rep must be told.
    */
   uncapturedCalls?: Array<{ date: string; reason: string }>;
+  /**
+   * What the mailbox says, rendered. Ranks below the calls and above the CRM.
+   * See emailLinesForBriefing for why it carries facts and not a verdict.
+   */
+  emailContext?: string | null;
 };
 
 /**
@@ -142,6 +147,7 @@ export async function generateBriefingFromState(
     meetingDate: state.meetingDate,
     stageGates: state.stageGates,
     uncapturedCalls: state.uncapturedCalls,
+    emailContext: state.emailContext,
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
     callType: state.callType,

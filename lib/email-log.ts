@@ -291,3 +291,55 @@ export async function readEmailEngagement(args: {
     evidence,
   };
 }
+
+
+/**
+ * EmailEngagement rendered for the briefing prompt.
+ *
+ * Facts only, no verdict. The model is given what the customer DID and decides
+ * what it means for this call; a pre-baked "they have gone quiet" would be a
+ * judgement made without the call type, the stage or the agreed next step, all
+ * of which the model has and this function does not.
+ *
+ * Every line is the customer's behaviour or ours, never an inference. "They
+ * have not replied in 12 days" is a fact. "They are cooling" is not.
+ */
+export function emailLinesForBriefing(
+  e: EmailEngagement | null,
+  status: "present" | "no_record" | "unavailable",
+): string[] {
+  if (status === "unavailable") {
+    return [
+      `EMAIL: not read for this deal. Do NOT infer anything from silence; we did not look. Say nothing about email.`,
+    ];
+  }
+  if (status === "no_record" || !e) {
+    return [
+      `EMAIL: no messages on record for this deal. That means we hold no thread, NOT that the customer has gone quiet. Say nothing about email.`,
+    ];
+  }
+  const out: string[] = [`EMAIL, what the customer has actually done. Ranks above the CRM below and below the calls above.`];
+  if (e.daysSinceCustomerMessage === null) {
+    out.push(`- The customer has NEVER written to us. Every message on this deal is ours.`);
+  } else {
+    out.push(`- The customer last wrote ${e.daysSinceCustomerMessage} day(s) ago.`);
+  }
+  if (e.daysSinceOurMessage !== null) out.push(`- We last wrote ${e.daysSinceOurMessage} day(s) ago.`);
+  if (e.awaitingReply) {
+    out.push(
+      `- WE WROTE LAST AND THEY HAVE NOT ANSWERED. This is the single most useful fact here and no CRM holds it.`,
+      `  Do not open the call by asking whether they saw the email. If it is relevant, raise what was in it, not the fact of it.`,
+    );
+  }
+  out.push(
+    e.customerWriters === 0
+      ? `- Nobody on the customer side has written. We are single-threaded by email.`
+      : `- ${e.customerWriters} person/people on the customer side have written on this thread.`,
+    `- ${e.total} message(s) on the thread in total, excluding calendar responses.`,
+  );
+  if (e.evidence) out.push(`- ${e.evidence}`);
+  out.push(
+    `Use this to judge momentum and who is engaged. Never quote an email back to the customer on the call, and never say "I see you have not replied".`,
+  );
+  return out;
+}

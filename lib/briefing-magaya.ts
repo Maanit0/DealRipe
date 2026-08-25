@@ -190,6 +190,15 @@ export function buildMagayaBriefingUserMessage(args: {
    */
   uncapturedCalls?: Array<{ date: string; reason: string }>;
   /**
+   * The mailbox, rendered by emailLinesForBriefing.
+   *
+   * Placed between the calls and the CRM in this prompt on purpose. The calls
+   * are the customer speaking to us. Email is the customer ACTING: replying,
+   * not replying, adding people, going quiet. The CRM is a rep's summary of
+   * both, written once and ageing since.
+   */
+  emailContext?: string | null;
+  /**
    * The rep's own notes from Rolldog's narrative tabs. Ranks above the BDR
    * record: the rep has spoken to this customer and the BDR filled in a form.
    */
@@ -366,6 +375,14 @@ export function buildMagayaBriefingUserMessage(args: {
       ``,
       `This is the rep's own record of the work, so treat every ticked item as done and never ask the customer to confirm it happened. If a demo, a proposal or a site visit is ticked, that call has already occurred: brief for what comes after it. These ticks are a claim rather than evidence, so they may be used to rule a question OUT but never to fill a qualification gap IN.`,
     );
+  }
+
+  // Email goes ABOVE both CRM blocks. Ranking, stated once so it is not
+  // re-litigated: the calls are the customer speaking to us, email is the
+  // customer ACTING, and the CRM is a rep's summary of both that ages from the
+  // moment it is saved. A reply that never came outranks a note about it.
+  if (args.emailContext) {
+    lines.push(``, args.emailContext);
   }
 
   if (args.rolldogNarrative) {
