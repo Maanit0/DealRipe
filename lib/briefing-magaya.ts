@@ -181,6 +181,15 @@ export function buildMagayaBriefingUserMessage(args: {
    */
   stageGates?: string | null;
   /**
+   * Meetings on this deal DealRipe could not capture. Passed as a FACT rather
+   * than handled by instruction: the prompt already told the model that an
+   * empty record does not mean a first conversation, and on 2026-08-24 it
+   * still wrote "First conversation DealRipe has data on for ATI" for a deal
+   * whose rep had met the same people four days earlier in a meeting that died
+   * in a Teams lobby. An instruction can be hedged around. A date cannot.
+   */
+  uncapturedCalls?: Array<{ date: string; reason: string }>;
+  /**
    * The rep's own notes from Rolldog's narrative tabs. Ranks above the BDR
    * record: the rep has spoken to this customer and the BDR filled in a form.
    */
@@ -322,6 +331,18 @@ export function buildMagayaBriefingUserMessage(args: {
         `This conversation is already in progress. Never open as though meeting them for the first time and never re-ask what they have already told us. Pick up what was left open.`,
       );
     }
+  }
+
+  if (args.uncapturedCalls?.length) {
+    const when = args.uncapturedCalls
+      .map((c) => new Date(c.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }))
+      .join(", ");
+    lines.push(
+      ``,
+      `MEETINGS WE MISSED. DealRipe could not capture this deal's meeting(s) on ${when}. As far as anyone knows those conversations HAPPENED and we have no record of them.`,
+      `So this is NOT a first conversation, and you must not write that it is. Say plainly, once, that the ${when} call could not be captured and that this briefing therefore has no history behind it.`,
+      `Frame every gap below as UNKNOWN TO US rather than as unasked. Telling a rep to ask what he already asked on ${when} is the fastest way to make him stop opening these.`,
+    );
   }
 
   if (args.meetingSubject) {

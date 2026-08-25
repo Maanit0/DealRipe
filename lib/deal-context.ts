@@ -79,6 +79,18 @@ export type DealContext = {
   /** Most recent captured call date (real DealRipe activity). */
   lastCallDate: string | null;
   /**
+   * Meetings on this deal that were SCHEDULED and that DealRipe could not
+   * capture. Not no-shows: as far as we know these conversations happened and
+   * we have no record of them.
+   *
+   * Without this a briefing says "first conversation DealRipe has data on" and
+   * the rep reads "first conversation", which on 2026-08-24 was wrong for
+   * Ativzla: Ariel had a meeting with the same roster on 08-20 that died in a
+   * Teams lobby. The gaps in that briefing were unknown, not unasked, and those
+   * are opposite instructions to give a rep walking into a room.
+   */
+  uncapturedCalls: Array<{ date: string; reason: string }>;
+  /**
    * Salesforce Sales Development context, rendered for the briefing prompt.
    *
    * Present while we have no captured calls of our own, whatever the CRM says.
@@ -285,11 +297,12 @@ export async function getDealContext(
 
   // Most recent real (non-no-show) captured call.
   let lastCallDate: string | null = null;
+  const uncapturedCalls: Array<{ date: string; reason: string }> = [];
   try {
     const nowIso = new Date().toISOString();
     const calls = await db
       .from("calls")
-      .select("scheduled_start, call_date, outcome")
+      .select("scheduled_start, call_date, outcome, capture_class")
       .eq("tenant_id", tenantId)
       .eq("deal_id", dealId)
       .lte("scheduled_start", nowIso);
@@ -299,6 +312,13 @@ export async function getDealContext(
     // wrong one, and it also flips the BDR-context branch below.
     if (calls.error) throw new Error(calls.error.message);
     for (const c of calls.data ?? []) {
+      // A capture failure is not a no-show. The meeting most likely ran and we
+      // were locked out of it, so it is history the rep has and we do not.
+      if (c.outcome === "capture_failed") {
+        const when = c.scheduled_start ?? c.call_date;
+        if (when) uncapturedCalls.push({ date: when, reason: c.capture_class ?? "not captured" });
+        continue;
+      }
       if (c.outcome && NO_CONTENT.has(c.outcome)) continue;
       const when = c.scheduled_start ?? c.call_date;
       if (when && (!lastCallDate || new Date(when).getTime() > new Date(lastCallDate).getTime())) {
@@ -481,6 +501,7 @@ export async function getDealContext(
     attendees: attendeesFrom(deal),
     contacts: deal.contacts,
     lastCallDate,
+    uncapturedCalls: uncapturedCalls.sort((a, b) => a.date.localeCompare(b.date)),
     crmContext,
     crmContextStatus,
     stageGates,
@@ -504,6 +525,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   stageGates?: string | null;
   history?: string;
   rolldogNarrative?: string | null;
+  uncapturedCalls?: Array<{ date: string; reason: string }>;
 } {
   return {
     account: ctx.account,
@@ -516,5 +538,6 @@ export function briefingStateFromContext(ctx: DealContext): {
     stageGates: ctx.stageGates ? stageGateLines(ctx.stageGates) : null,
     history: ctx.history ?? undefined,
     rolldogNarrative: ctx.rolldogNarrative,
+    uncapturedCalls: ctx.uncapturedCalls,
   };
 }

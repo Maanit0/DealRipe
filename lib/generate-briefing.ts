@@ -96,6 +96,12 @@ export type BriefingState = {
    * must not infer these.
    */
   dealFlags?: string | null;
+  /**
+   * Meetings on this deal DealRipe could not capture. Optional and absent by
+   * default, so every existing caller behaves exactly as before. See
+   * DealContext.uncapturedCalls for why a rep must be told.
+   */
+  uncapturedCalls?: Array<{ date: string; reason: string }>;
 };
 
 /**
@@ -135,6 +141,7 @@ export async function generateBriefingFromState(
     meetingSubject: state.meetingSubject,
     meetingDate: state.meetingDate,
     stageGates: state.stageGates,
+    uncapturedCalls: state.uncapturedCalls,
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
     callType: state.callType,
