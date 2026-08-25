@@ -86,6 +86,14 @@ export async function runReengageSweep(args: {
   const onlyDeal = args.onlyDeal?.toLowerCase();
 
   const rows = await loadPortfolioRead({ tenantId });
+  // Account ids for the standing check. One read for the whole sweep.
+  const dealRows = await supabaseAdmin()
+    .from("deals")
+    .select("id, salesforce_account_id")
+    .eq("tenant_id", tenantId);
+  const sfByDeal = new Map(
+    ((dealRows.data ?? []) as Array<{ id: string; salesforce_account_id: string | null }>).map((d) => [d.id, d.salesforce_account_id]),
+  );
   const draftableIds = new Set(DRAFTABLE.map((d) => d.id));
 
   let candidates = rows.filter((r) => r.flags.some((f) => draftableIds.has(f.id)));
@@ -125,7 +133,13 @@ export async function runReengageSweep(args: {
       continue;
     }
     if (r.crmRead?.status === "no_open_opportunity") {
-      skips.push({ account: r.account, why: "every opportunity on the Salesforce account is closed, so this deal is over" });
+      // Deliberately not phrased as "this deal is over". Best is a Magaya
+      // customer since 2026-07-17 with an Active implementation, and every
+      // opportunity on the account being closed means they BOUGHT, not that the
+      // relationship ended. Skipping is still right, because there is no open
+      // opportunity to write about, but the reason matters: this is the state an
+      // expansion conversation starts from.
+      skips.push({ account: r.account, why: "no open opportunity on the Salesforce account, so there is nothing to write about" });
       continue;
     }
     if (r.crmRead?.status === "unavailable") {
@@ -151,6 +165,7 @@ export async function runReengageSweep(args: {
       customerEmails,
       signals: r.signals,
       flags: r.flags,
+      salesforceAccountId: sfByDeal.get(r.dealId) ?? null,
     });
     if (!draft) {
       failed += 1;

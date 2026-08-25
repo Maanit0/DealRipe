@@ -42,6 +42,7 @@
  */
 
 import { computeDealFlags, type Flag } from "./deal-flags";
+import { readCustomerStanding, type CustomerStanding } from "./salesforce-context";
 import { assessDeal, computeBuyerSignals, type BuyerSignals } from "./deal-signals-buyer";
 import { allowedMailboxes, createDraft, createReplyDraft, domainOf } from "./graph-mail";
 import { findCustomerThread } from "./followup-draft";
@@ -213,6 +214,17 @@ export async function generateReengageDraft(args: {
   customerEmails: string[];
   signals: BuyerSignals;
   flags: Flag[];
+  /**
+   * The Salesforce account, so we can find out whether this is a CUSTOMER
+   * before writing to them like a prospect.
+   *
+   * Added 2026-08-25. Five deals awaiting a reply resolve to `only_historical`,
+   * meaning every closed opportunity on the account predates our first call.
+   * Best closed WON on 2026-06-30. Without this they get "are you still looking
+   * to get that demo and pricing in front of you" sent to someone who already
+   * bought, which is the Cargoservicesgroup error with a stamp on it.
+   */
+  salesforceAccountId?: string | null;
 }): Promise<ReengageDraft | null> {
   const chosen = chooseFlag(args.flags);
   if (!chosen) return null;
@@ -224,6 +236,23 @@ export async function generateReengageDraft(args: {
   const quiet =
     args.signals.daysSinceLastCall.status === "read" ? args.signals.daysSinceLastCall.value : null;
 
+  // Customer or prospect. Fails OPEN: an unavailable read must never turn a
+  // customer into a prospect, and it must never turn a prospect into a customer
+  // either, so an unknown standing simply adds no instruction.
+  let standing: CustomerStanding | null = null;
+  if (args.salesforceAccountId) {
+    standing = await readCustomerStanding(args.salesforceAccountId).catch(() => null);
+  }
+  const standingLines: string[] =
+    standing?.status === "customer"
+      ? [
+          ``,
+          `THIS ACCOUNT IS ALREADY A MAGAYA CUSTOMER${standing.since ? `, since ${standing.since.slice(0, 10)}` : ""}${standing.implementation ? `, implementation status "${standing.implementation}"` : ""}.`,
+          `Do NOT write to them as a prospect. Never ask what is driving them to look at a new solution, never offer to "get a demo and pricing in front of you", and never reintroduce Magaya.`,
+          `They bought already. Write about the thing that is actually open: the expansion, the module, the renewal, or whatever the calls say this conversation is about.`,
+        ]
+      : [];
+
   const prompt = [
     `Account: ${args.account}`,
     ctx?.when ? `Last call: ${ctx.when.slice(0, 10)}${quiet !== null ? `, ${quiet} days ago` : ""}` : "No captured call.",
@@ -231,6 +260,7 @@ export async function generateReengageDraft(args: {
     `WHY YOU ARE WRITING: ${chosen.flag.title}.`,
     `The evidence: ${chosen.flag.evidence}`,
     `Your goal: ${chosen.goal}`,
+    ...standingLines,
     ``,
     `WHAT THE CALLS ESTABLISHED, in their words where we have them:`,
     ctx?.summary || "(nothing captured)",
