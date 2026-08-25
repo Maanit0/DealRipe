@@ -18,6 +18,12 @@ const KIND_META: Record<ActivityKind, { label: string; cls: string }> = {
   no_show_draft: { label: "No-show draft", cls: "bg-warn/10 text-warn" },
   followup_draft: { label: "Follow-up draft", cls: "bg-warn/10 text-warn" },
   digest: { label: "Digest", cls: "bg-ink/[0.06] text-muted" },
+  link_escalation: { label: "Link escalation", cls: "bg-ink/[0.06] text-muted" },
+  // A kind the log does not recognise. Deliberately dull and deliberately
+  // vague: until 2026-08-24 an unknown kind rendered as "Recap", and a log that
+  // confidently names the wrong artifact is worse than one that admits it does
+  // not know.
+  unknown: { label: "Message", cls: "bg-ink/[0.06] text-muted" },
   rolldog_write: { label: "Rolldog", cls: "bg-accent/10 text-accent" },
   // Distinct colour on purpose. The whole point of this row is to say which
   // customer system the data went into, and two identically styled chips would

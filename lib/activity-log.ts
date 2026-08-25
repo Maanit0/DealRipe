@@ -15,6 +15,8 @@ export type ActivityKind =
   | "no_show_draft"
   | "followup_draft"
   | "digest"
+  | "link_escalation"
+  | "unknown"
   | "rolldog_write"
   | "salesforce_write";
 
@@ -50,6 +52,8 @@ const KIND_TITLE: Record<Exclude<ActivityKind, "rolldog_write" | "salesforce_wri
   no_show_draft: "No-show follow-up drafted",
   followup_draft: "Follow-up email drafted",
   digest: "Weekly digest sent",
+  link_escalation: "Link escalation sent",
+  unknown: "Message sent",
 };
 
 const DISPLAY: Record<string, string> = {
@@ -179,7 +183,11 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
 
   const out: ActivityEntry[] = [];
 
-  for (const m of (sentRes.data ?? []) as Array<{
+  // recap_claim is the lock recap-sync takes before generating, so a retry
+  // cannot double-send. It is not an artifact anyone received, and showing it
+  // made every recap look like it was sent twice.
+  const DELIVERED = (k: string) => k !== "recap_claim";
+  for (const m of ((sentRes.data ?? []) as Array<{
     id: string;
     deal_id: string | null;
     call_id: string | null;
@@ -188,11 +196,19 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     to_email: string | null;
     sent_at: string;
     body_html: string | null;
-  }>) {
-    // Unknown kinds fall back to "recap", so any new kind MUST be listed here
-    // or it silently shows up in the log as a recap, which is worse than not
-    // showing at all: the operator inspects the wrong thing and trusts it.
-    const kind = (["briefing", "recap", "no_show_draft", "followup_draft", "digest"].includes(m.kind) ? m.kind : "recap") as Exclude<ActivityKind, "rolldog_write" | "salesforce_write">;
+  }>).filter((m) => DELIVERED(m.kind))) {
+    // 2026-08-24: the warning that used to live here came true. Unknown kinds
+    // fell back to "recap", so five link_escalation emails displayed as
+    // "Post-call recap sent" against calls from three days earlier, and the
+    // operator reasonably concluded DealRipe was mailing reps recaps for
+    // meetings it had never captured. It was not. The log lied and was believed,
+    // which is the one thing an activity log must never do.
+    //
+    // A kind we do not recognise is now labelled "Message sent" rather than
+    // impersonating a known artifact. Wrong-but-vague is recoverable;
+    // wrong-but-specific is what costs an evening.
+    const KNOWN = ["briefing", "recap", "no_show_draft", "followup_draft", "digest", "link_escalation"];
+    const kind = (KNOWN.includes(m.kind) ? m.kind : "unknown") as Exclude<ActivityKind, "rolldog_write" | "salesforce_write">;
     // Prefer the call_id stored on the message (hard link, set on every recap /
     // briefing / no-show draft going forward). Fall back to nearest-in-time only
     // for legacy rows written before call_id was stored.
