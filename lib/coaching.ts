@@ -40,6 +40,29 @@ const MIN_PATTERN = 6;
 const DEAL_LOOKBACK_DAYS = 90;
 const REP_LOOKBACK_DAYS = 60;
 
+/**
+ * Above this, the rep already does it and the briefing says nothing.
+ *
+ * Half. Not a target, just the line above which a habit is not the thing most
+ * worth spending the page on.
+ */
+const EMPHASIS_THRESHOLD = 0.5;
+
+/**
+ * What a weak pattern turns into, as an instruction about THIS call.
+ *
+ * Written as the move rather than the deficiency, because these reach a rep
+ * and the difference between "you rarely book the next meeting" and "the
+ * booking sentence is the highest-value line on this page" is the difference
+ * between a tool they resent and one they use.
+ */
+const EMPHASIS: Record<string, string> = {
+  end_commitment:
+    "the booking sentence is the highest-value line on this page. Deals on this book agree a next step out loud and it never reaches a calendar, so treat getting a date said out loud as the outcome of this call.",
+  question:
+    "the asks below are the whole point of this page. Keep them few, short and specific enough to be said verbatim while the customer is talking.",
+};
+
 type PrescriptionRow = {
   deal_id: string | null;
   text: string | null;
@@ -136,12 +159,19 @@ export async function buildCoachingContext(args: {
 
   // ---- This rep, across their book ----
   //
-  // Deliberately by KIND rather than a single rate. "You follow through on the
-  // questions and not on the booking" is actionable; "your follow-through is
-  // 22%" is a score, and a score is something a rep argues with rather than
-  // acts on. The measured split says these are genuinely different behaviours:
-  // asks run about 19% and end commitments about 23%, and the deals that stall
-  // are the ones missing the second.
+  // NEVER AS A NUMBER, AND NEVER QUOTED TO THE REP.
+  //
+  // The first version rendered "2 of 15 asks DealRipe asked for were done on
+  // the call" and the model dutifully put it in the red SIGNAL box: a rep
+  // scorecard, in the most alarming container on the page, in an email that
+  // rep reads two minutes before talking to a customer. Maanit, 2026-08-25:
+  // "that looks very bad. It should be practical coaching that is useful for
+  // them, not being mean to them or exposing gaps. Those are sales leader
+  // flags, and they should go to a sales leader, not to the rep."
+  //
+  // So the pattern still decides WHAT to emphasise and never appears as a
+  // fact. The counts stay available to the leader-facing paths, which is where
+  // a follow-through rate belongs and where it is already reported.
   if (args.repEmail) {
     const repSince = new Date(Date.now() - REP_LOOKBACK_DAYS * 86_400_000).toISOString();
     const deals = await db
@@ -174,14 +204,15 @@ export async function buildCoachingContext(args: {
         else e.no++;
         byKind.set(k, e);
       }
-      for (const [kind, e] of byKind) {
+      for (const [kind, hint] of Object.entries(EMPHASIS)) {
+        const e = byKind.get(kind);
+        if (!e) continue;
         const n = e.yes + e.no;
-        if (n < MIN_PATTERN) continue;
-        lines.push(
-          `THIS REP, last ${REP_LOOKBACK_DAYS} days: ${e.yes} of ${n} ${
-            KIND_LABEL[kind] ?? kind
-          }s DealRipe asked for were actually done on the call.`,
-        );
+        // Only a weak pattern earns emphasis, and only on a real population.
+        // A rep who already does this well needs no line: praise from a tool
+        // is noise, and a briefing that congratulates you is one you skim.
+        if (n < MIN_PATTERN || e.yes / n >= EMPHASIS_THRESHOLD) continue;
+        lines.push(`EMPHASIS: ${hint}`);
       }
     }
   }
@@ -200,8 +231,9 @@ export async function buildCoachingContext(args: {
 export function coachingLinesForBriefing(read: CoachingRead): string | null {
   if (read.status !== "present") return null;
   return [
-    "COACHING FROM PRIOR CALLS. What DealRipe asked this rep to do before, and what the transcript shows happened.",
+    "COACHING FROM PRIOR CALLS. What DealRipe asked for on earlier calls for THIS DEAL, and what the transcript shows happened.",
     "Only rows the scorer DECIDED appear here. A call with no transcript produces no row, so absence here is never evidence the rep skipped something.",
+    "NEVER QUOTE ANY OF THIS AS A COUNT, A RATE OR A TALLY, and never write a sentence about the rep's record. An EMPHASIS line is an instruction to YOU about which part of the page matters most on this call; it is never repeated to the rep in any form. Turn everything here into a specific move on THIS call.",
     ...read.lines.map((l) => `- ${l}`),
   ].join("\n");
 }

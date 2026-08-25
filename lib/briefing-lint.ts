@@ -55,6 +55,29 @@ const INSIDER_PATTERNS: ReadonlyArray<{ re: RegExp; rule: string }> = Object.fre
 ]);
 
 /**
+ * The rep's own record, in an email the rep reads.
+ *
+ * The coaching block put "this rep completed 2 of 15 coached asks in the last
+ * 60 days" into the red SIGNAL box, which is a performance scorecard in the
+ * most alarming container on a page someone reads two minutes before speaking
+ * to a customer. Maanit, 2026-08-25: "that looks very bad, those are sales
+ * leader flags and they should go to a sales leader, not to the rep."
+ *
+ * These are an ERROR rather than a warning. The briefing regenerates, and a
+ * briefing that keeps doing it is suppressed, because a rep who reads their own
+ * follow-through rate in a pre-call email stops trusting the product in one
+ * sitting and the tally was never theirs to receive.
+ */
+const REP_SCORECARD_PATTERNS: ReadonlyArray<{ re: RegExp; rule: string }> = Object.freeze([
+  { re: /\bthis rep\b/i, rule: "describes the rep's own record to the rep" },
+  { re: /\b\d+\s+of\s+\d+\s+(coached\s+)?(asks?|questions?|commitments?|prescriptions?)\b/i, rule: "quotes a follow-through tally to the rep" },
+  { re: /\bcoached\s+asks?\b/i, rule: "quotes a follow-through tally to the rep" },
+  { re: /\bfollow[- ]?through\s+(rate|record)\b/i, rule: "quotes a follow-through tally to the rep" },
+  { re: /\byou (completed|raised|asked)\s+\d+\b/i, rule: "quotes a follow-through tally to the rep" },
+  { re: /\bin the last \d+ days,? (you|this rep)\b/i, rule: "describes the rep's own record to the rep" },
+]);
+
+/**
  * Language describing the emptiness of our own database. A rep does not care
  * what we hold, and being told we hold nothing reads as an apology.
  */
@@ -104,6 +127,40 @@ const LATE_STAGE_SUBJECT_RE = /\b(proposal|pricing|quote|contract|redline|negoti
 
 function text(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+/**
+ * Every string in the optional blocks, as [path, value] pairs.
+ *
+ * The scalars list is the five core fields and predates the block shape, so a
+ * rule applied only to it now covers less than half the page. coachThis is
+ * exactly where a rep scorecard would appear and it is not a scalar.
+ */
+function blockText(b: LintableBriefing): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const SKIP = new Set(["targetFields", "targetLabel", "questions"]);
+  const walk = (v: unknown, path: string): void => {
+    if (typeof v === "string") {
+      out.push([path, v]);
+      return;
+    }
+    if (Array.isArray(v)) {
+      v.forEach((x, i) => walk(x, `${path}[${i}]`));
+      return;
+    }
+    if (v && typeof v === "object") {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (SKIP.has(k)) continue;
+        walk(x, path ? `${path}.${k}` : k);
+      }
+    }
+  };
+  const record = b as unknown as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (["callObjective", "whereItStands", "nextStepCommitment", "whatsAtRisk", "signalFlag", "questions"].includes(key)) continue;
+    walk(record[key], key);
+  }
+  return out;
 }
 
 export function lintBriefing(
@@ -174,6 +231,14 @@ export function lintBriefing(
   // Our own record, in the rep-facing narrative.
   for (const [field, value] of scalars) {
     for (const { re, rule } of OUR_RECORD_PATTERNS) {
+      if (re.test(value)) findings.push({ level: "error", field, rule, detail: value });
+    }
+  }
+
+  // The REP's record, anywhere at all. Checked across every field rather than
+  // just the narrative, because the first one to ship landed in signalFlag.
+  for (const [field, value] of [...scalars, ...asks, ...whys, ...blockText(briefing)]) {
+    for (const { re, rule } of REP_SCORECARD_PATTERNS) {
       if (re.test(value)) findings.push({ level: "error", field, rule, detail: value });
     }
   }

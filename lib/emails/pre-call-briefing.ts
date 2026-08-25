@@ -204,10 +204,29 @@ export function renderPreCallBriefingEmail(
   const notes = new Map(
     (briefing.inTheRoom ?? []).map((r) => [String(r.person ?? "").trim().toLowerCase(), String(r.note ?? "").trim()]),
   );
-  const noteFor = (name: string): string => {
-    const key = name.trim().toLowerCase();
-    const direct = notes.get(key);
-    if (direct) return direct;
+  // A person is their name OR their address. Salesforce supplies the spelled
+  // name, the invite supplies only the mailbox, and the model writes whichever
+  // it was handed. Impexx rendered "Liam La Fargue" and then "liam@impexx.co"
+  // as a second person on the same call, because the matcher compared names
+  // only and the note was keyed on the address.
+  const keysFor = (a: { name: string; email?: string | null }): string[] => {
+    const out = [a.name.trim().toLowerCase()];
+    const e = (a.email ?? "").trim().toLowerCase();
+    if (e) {
+      out.push(e);
+      const local = e.split("@")[0];
+      if (local) out.push(local.replace(/[._-]+/g, " "));
+    }
+    return out.filter(Boolean);
+  };
+
+  const noteFor = (person: { name: string; email?: string | null }): string => {
+    const keys = keysFor(person);
+    for (const k of keys) {
+      const direct = notes.get(k);
+      if (direct) return direct;
+    }
+    const key = keys[0];
     // The model writes the name it was given, which is usually but not always
     // the invite spelling. Fall back to a first-name or containment match, and
     // never to a positional one: the third row matching the third note is how a
@@ -221,7 +240,7 @@ export function renderPreCallBriefingEmail(
     }
     return "";
   };
-  const namedInRoster = new Set(rosterEntries.map((r) => r.name.trim().toLowerCase()));
+  const namedInRoster = new Set(rosterEntries.flatMap(keysFor));
   const orphanNotes = (briefing.inTheRoom ?? []).filter((r) => {
     const key = String(r.person ?? "").trim().toLowerCase();
     if (!key) return false;
@@ -246,7 +265,7 @@ export function renderPreCallBriefingEmail(
   const rosterBlock =
     rosterEntries.length || orphanNotes.length
       ? `${sub("On the call")}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${[
-          ...rosterEntries.map((r) => personRow(r.name, r.title, r.relationship, noteFor(r.name))),
+          ...rosterEntries.map((r) => personRow(r.name, r.title, r.relationship, noteFor(r))),
           ...orphanNotes.map((r) => personRow(String(r.person), null, null, String(r.note ?? ""))),
         ].join("")}</table>${colleagues.length ? asideLine(`Also from Magaya: ${colleagues.join(", ")}`) : ""}${
           mailboxes.length ? asideLine(`Also copied, shared inboxes rather than people: ${mailboxes.join(", ")}`) : ""

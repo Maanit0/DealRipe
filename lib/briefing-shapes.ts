@@ -131,7 +131,12 @@ const SHAPES: Record<string, BriefingShape> = {
    * next step.
    */
   demo: {
-    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
+    // "questions" was missing here while questionBudget said 1, so the prompt was
+    // told it could ask one question and given no field to put it in. The Impexx
+    // briefing wrote "there is one question below. Ask it" above a page with no
+    // questions block on it. A budget and a block list that disagree produce a
+    // briefing that points at something that is not there.
+    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "questions", "fork", "doNotDo"],
     questionBudget: 1,
     // Raised three times, each time to match measured output rather than a
     // guess. 430 -> 480 because a shape carrying showThis AND fork needs more

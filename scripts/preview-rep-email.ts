@@ -18,6 +18,8 @@ import { generateBriefingFromState } from "../lib/generate-briefing";
 import { buildAttendeeContext } from "../lib/attendee-context";
 import { briefingRoster } from "../lib/attendees";
 import { buildCoachingContext, coachingLinesForBriefing } from "../lib/coaching";
+import { computeDealFlags, renderFlagsForBriefing } from "../lib/deal-flags";
+import { assessDeal, computeBuyerSignals } from "../lib/deal-signals-buyer";
 import { resolvePreCallType } from "../lib/call-type-precall";
 import { renderPreCallBriefingEmail } from "../lib/emails/pre-call-briefing";
 
@@ -52,11 +54,26 @@ const names = argv.reduce<string[]>((a, v, i) => (v === "--deal" ? [...a, argv[i
     });
     process.stdout.write(`  ${d.account.padEnd(20)} ${callType.type.padEnd(14)} `);
     const coaching = await buildCoachingContext({ tenantId, dealId: d.id, repEmail: d.rep_email });
+    // THE MEASURED FLAGS, exactly as briefing-sync passes them.
+    //
+    // Without these the preview cannot produce a signalFlag at all, because the
+    // prompt forbids inventing one, so every previewed briefing came back with
+    // an empty signal box and looked like the feature had been removed. A
+    // preview that omits an input the production path supplies is not a
+    // preview of the production path.
+    let dealFlags: string | null = null;
+    try {
+      const signals = await computeBuyerSignals({ tenantId, dealId: d.id });
+      dealFlags = renderFlagsForBriefing(computeDealFlags({ signals, assessment: assessDeal(signals) }));
+    } catch (err) {
+      console.log(`(flags unavailable: ${err instanceof Error ? err.message : String(err)})`);
+    }
     process.stdout.write(`coaching:${coaching.status} `);
     const b = await generateBriefingFromState({
       ...briefingStateFromContext(ctx),
       attendeeContext: ac.lines.join("\n"),
       coachingContext: coachingLinesForBriefing(coaching),
+      dealFlags,
       meetingSubject: meeting.title,
       meetingDate: meeting.scheduled_start?.slice(0, 10) ?? null,
       callType,

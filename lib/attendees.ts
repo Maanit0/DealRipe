@@ -28,6 +28,8 @@ export type ContactTitle = { name: string; title: string | null; email: string |
 /** One person as the rep's email shows them: name, what they do, where they sit. */
 export type BriefingAttendee = {
   name: string;
+  /** The invite address, so a note written against it joins to the right row. */
+  email: string | null;
   title: string | null;
   /** champion, economic buyer, influencer, user. Null when we have not decided. */
   relationship: string | null;
@@ -280,17 +282,29 @@ export function briefingRoster(args: {
       .filter((c) => c.name)
       .map((c) => [c.name.trim().toLowerCase(), c] as const),
   );
+  // A TITLE THAT IS AN EMAIL ADDRESS IS NOT A TITLE.
+  //
+  // The Impexx roster printed "Liam La Fargue" with "liam@impexx.co" beneath it
+  // where a job title goes, because the contact row carries the address in its
+  // role field. Repeating the address as though it were a position reads as a
+  // bug on the first thing a rep looks at.
+  const usableTitle = (t: string | null | undefined): string | null => {
+    const v = (t ?? "").trim();
+    if (!v || v.includes("@")) return null;
+    return v;
+  };
+
   const relationshipOf = (name: string): { relationship: string | null; title: string | null } => {
     const hit = rel.get(name.trim().toLowerCase());
     const r = (hit?.relationship ?? "").replace(/_/g, " ").trim();
-    return { relationship: r && r !== "unknown" ? r : null, title: hit?.role ?? null };
+    return { relationship: r && r !== "unknown" ? r : null, title: usableTitle(hit?.role) };
   };
 
   const fromInvite = rosterFromMeeting(args.meetingAttendees ?? [], args.crmContacts ?? []);
   if (fromInvite.some((r) => r.side === "customer")) {
     return fromInvite.map((r) => {
       const extra = relationshipOf(r.name);
-      return { name: r.name, title: r.title ?? extra.title, relationship: extra.relationship, side: r.side };
+      return { name: r.name, email: r.email, title: usableTitle(r.title) ?? extra.title, relationship: extra.relationship, side: r.side };
     });
   }
 
@@ -308,7 +322,8 @@ export function briefingRoster(args: {
     const r = (c.relationship ?? "").replace(/_/g, " ").trim();
     return {
       name: c.name,
-      title: c.role ?? null,
+      email: null,
+      title: usableTitle(c.role),
       relationship: r && r !== "unknown" ? r : null,
       side: "customer" as const,
     };
