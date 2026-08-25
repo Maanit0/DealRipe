@@ -33,3 +33,10 @@ digest-generated.html
 # Build cache and scratch dirs, never in a diff.
 .tmp-probe/
 *.tsbuildinfo
+
+# Pilot context and customer notes (NDA data, never commit). Same reason as
+# .transcripts/: Kiddom's deal sizes, pipeline counts and rep names are theirs.
+.pilots/
+
+# Design canvases carry real Magaya deal names. NDA: never committed.
+.design/

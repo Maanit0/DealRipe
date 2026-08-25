@@ -17,7 +17,7 @@
 --
 -- Apply by hand:
 --   psql "$SUPABASE_DB_URL" -f supabase/add-prescription-ledger.sql
---
+--o
 -- Idempotent. Safe to re-run.
 --
 -- RLS: no policy changes needed. prescribed_actions already has select /

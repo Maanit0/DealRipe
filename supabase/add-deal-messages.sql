@@ -106,23 +106,24 @@ create index if not exists deal_messages_tenant_sent_idx
   on public.deal_messages (tenant_id, sent_at desc);
 
 -- ---------------------------------------------------------------------
--- RLS: same tenant-keyed shape as every other table.
+-- RLS: service role only, the same shape as crm_token_cache.
+--
+-- The first version of this file created a policy selecting from
+-- public.app_users, which does not exist in this project, so the whole
+-- migration rolled back inside its own transaction and the table was
+-- never created. app_users is in schema.sql and in database.types.ts but
+-- was never applied here.
+--
+-- No policy is the right answer regardless. Only the service role key
+-- reads this table, which is the same key that already holds every
+-- credential these jobs use, and RLS with no policies denies everything
+-- else by default. If the app UI ever needs to read it, add a policy then
+-- against whatever table actually carries tenant membership.
 -- ---------------------------------------------------------------------
 
 alter table public.deal_messages enable row level security;
 
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'deal_messages' and policyname = 'deal_messages_select'
-  ) then
-    create policy deal_messages_select on public.deal_messages
-      for select using (
-        tenant_id in (select tenant_id from public.app_users where user_id = auth.uid())
-      );
-  end if;
-end
-$$;
+comment on column public.deal_messages.graph_message_id is
+  'Graph''s own message id, which is PER-MAILBOX. Kept only so getMessageBody can fetch a body on demand; never used as a key.';
 
 commit;
