@@ -25,15 +25,31 @@ database, and a Scotsman framework. None of that governs today.
 (customs filing, freight forwarding, WMS). Real reps, real customers, real
 money. Mark Buman is the CRO and sponsor, Mitch Nemmers the VP.
 
+**Magaya's sales cycle is roughly 45 days on average**, with some deals running
+several months. That is Magaya's number and it is NOT Kiddom's, which is about
+120 days to PO. Conflating the two changes every conclusion about how soon an
+outcome is observable: at 45 days a deal opening now can close inside this
+quarter, which is why the outcome substrate is closer than it looks.
+
 Six reps are enrolled: Juan Lopez, Eduardo Bencomo, Alexandra Suntrup, Daniel
 Blitstein, Ariel Rodriguez, Steven Johnson. **All six connected as of
 2026-08-15**, Steven last after Mark chased him. He starts five weeks behind:
 none of his accounts are linked and calendar-sync never saw his history, so his
 first week of captures has nowhere to write until that is fixed.
 
-Their framework is SQL0 through SQL5, 27 fields, seeded by
-`scripts/seed-magaya-framework.ts`. Rolldog separately holds a 30-item
-stage-requirement checklist the reps maintain by hand.
+Their framework is **33 fields across SQL1 to SQL5**, seeded by
+`scripts/seed-magaya-framework.ts`: SQL1 has 12, SQL2 7, SQL3 8, SQL4 4, SQL5 2.
+Counted from `framework_fields` on 2026-08-25; it said 27 for a while and was
+wrong. **There are no SQL0 FIELDS at all.** SQL0 is a real Rolldog stage (id 773)
+with nothing to extract against, which is why `stageGapsOpen` uses a ceiling of
+the deal's own stage plus one rather than reading the stage's own fields.
+
+Do not confuse that framework with Rolldog's own checklist. Rolldog separately
+holds a 30-item stage-requirement checklist the reps tick BY HAND, at
+`/opportunities/{id}/opportunity-stages-requirement`. DealRipe READS it
+(`lib/stage-gates.ts`) and has never ticked it. The 33 framework fields are
+EXTRACTED FROM TRANSCRIPTS and each carries the customer's own words and a
+captured date. Two systems, two counts, two mechanisms.
 
 ## Stack
 
