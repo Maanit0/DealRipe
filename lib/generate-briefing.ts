@@ -50,6 +50,15 @@ export type MagayaBriefing = {
   signalFlag: string | null;
   // Blocks below are requested per call type by lib/briefing-shapes.ts. Absent
   // unless that shape asked for them, so a caller renders what is present.
+  /**
+   * The next meeting to get on the calendar, and the words to book it with.
+   *
+   * The most common failure in the Magaya book by a distance: GHY agreed a
+   * deeper dive 13 days ago, IFF agreed a call for Thursday 10:30 twelve days
+   * ago, Corelogistics agreed to respond 40 days ago. None of them is on a
+   * calendar. Reps leave with a verbal next step and it turns into email.
+   */
+  bookThis?: { what: string; when: string; say: string } | null;
   inTheRoom?: Array<{ person: string; note: string }> | null;
   openItems?: { us: string[]; them: string[] } | null;
   sinceLastContact?: string | null;

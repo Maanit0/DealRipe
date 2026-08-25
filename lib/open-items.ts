@@ -119,11 +119,11 @@ export async function buildOpenItems(args: {
   if (agreedOn) {
     lines.push(
       weWroteSince
-        ? `- We have written since${weWroteSince.topic ? ` about "${weWroteSince.topic}"` : ""}, ${daysBetween(weWroteSince.when, now)} day(s) ago.`
-        : `- We have NOT written to them since that call.`,
+        ? `- We have emailed them since${weWroteSince.topic ? ` about "${weWroteSince.topic}"` : ""}, ${daysBetween(weWroteSince.when, now)} day(s) ago.`
+        : `- We have NOT emailed them since that call.`,
       theyWroteSince
-        ? `- They have written since${theyWroteSince.topic ? ` about "${theyWroteSince.topic}"` : ""}, ${daysBetween(theyWroteSince.when, now)} day(s) ago.`
-        : `- They have NOT written since that call.`,
+        ? `- They have emailed us since${theyWroteSince.topic ? ` about "${theyWroteSince.topic}"` : ""}, ${daysBetween(theyWroteSince.when, now)} day(s) ago.`
+        : `- They have NOT emailed us since that call.`,
     );
   }
   lines.push(

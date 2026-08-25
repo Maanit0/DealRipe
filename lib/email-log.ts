@@ -437,25 +437,25 @@ export function emailLinesForBriefing(
   if (e.lastInbound) {
     const w = who(e.lastInbound.people);
     out.push(
-      `- They last wrote ${e.lastInbound.daysAgo} day(s) ago${w ? ` (${w})` : ""}${e.lastInbound.topic ? ` about "${e.lastInbound.topic}"` : ""}.`,
+      `- ${w || "They"} emailed us back ${e.lastInbound.daysAgo} day(s) ago${e.lastInbound.topic ? ` about "${e.lastInbound.topic}"` : ""}.`,
     );
     if (e.lastInbound.excerpt) {
       out.push(`  What they said, verbatim: ${e.lastInbound.excerpt}`);
       out.push(`  Summarise that as what they WANTED or COMMITTED TO, in their words. This is the last thing the customer actually told us.`);
     }
   } else {
-    out.push(`- The customer has NEVER written to us. Every message on this deal is ours.`);
+    out.push(`- The customer has NEVER emailed us back. Every message on this deal is ours.`);
   }
   if (e.awaitingReply) {
     out.push(
-      `- WE WROTE LAST AND THEY HAVE NOT ANSWERED. This is the single most useful fact here and no CRM holds it.`,
+      `- WE EMAILED LAST AND THEY HAVE NOT REPLIED. This is the single most useful fact here and no CRM holds it.`,
       `  Do not open the call by asking whether they saw the email. If it is relevant, raise what was in it, not the fact of it.`,
     );
   }
   out.push(
     e.customerWriters === 0
-      ? `- Nobody on the customer side has written. We are single-threaded by email.`
-      : `- ${e.customerWriters} person/people on the customer side have written on this thread.`,
+      ? `- Nobody on the customer side has replied. We are single-threaded by email.`
+      : `- ${e.customerWriters} person/people on the customer side have emailed on this thread.`,
     `- ${e.total} message(s) on the thread in total, excluding calendar responses.`,
   );
   out.push(

@@ -31,6 +31,7 @@
  */
 
 export type BlockName =
+  | "bookThis"
   | "inTheRoom"
   | "openItems"
   | "sinceLastContact"
@@ -88,9 +89,9 @@ export const CORE_FIELDS = ["callObjective", "whereItStands", "nextStepCommitmen
  * not know the meeting".
  */
 const DEFAULT_SHAPE: BriefingShape = {
-  blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+  blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
-  maxWords: 360,
+  maxWords: 620,
   purpose:
     "We could not tell what kind of call this is, so do not assume a stage. Lead with what is open and what the customer last said, ask only what is genuinely unknown, and leave with a dated commitment. Never open as though meeting for the first time unless the deal has no history at all.",
 };
@@ -109,7 +110,7 @@ const SHAPES: Record<string, BriefingShape> = {
    * next step.
    */
   demo: {
-    blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
+    blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
     questionBudget: 1,
     // 540, raised twice and each time to match measured output rather than a
     // guess. First 430 -> 480 because a shape carrying showThis AND fork needs
@@ -120,7 +121,7 @@ const SHAPES: Record<string, BriefingShape> = {
     // month-to-month contract with CargoWise, so they can leave whenever they
     // want", and the second one is the only one a rep can read at a glance.
     // Clear beats short, so the budget pays for clear.
-    maxWords: 540,
+    maxWords: 700,
     purpose:
       "Show the two or three things this customer actually said hurt, in their order, and leave with the next step booked. They have already told us their pain: do not re-ask it. Asking discovery questions on a demo is the single most common way this briefing gets ignored.",
   },
@@ -139,9 +140,9 @@ const SHAPES: Record<string, BriefingShape> = {
    * invented before you know what they want is a guess.
    */
   discovery: {
-    blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+    blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
     questionBudget: 3,
-    maxWords: 360,
+    maxWords: 620,
     purpose:
       "Learn what actually hurts, what they run today, and who decides, then leave with a dated next step. Asking is the main move. Do not pitch.",
   },
@@ -164,10 +165,10 @@ const SHAPES: Record<string, BriefingShape> = {
    * pushback lands and where a pre-positioned answer is worth most.
    */
   proposal: {
-    blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
+    blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
     questionBudget: 2,
     // Also carries fork, and pays the same plain-language cost. See demo.
-    maxWords: 500,
+    maxWords: 680,
     purpose:
       "Get the decision machinery on the record: who else is being evaluated, what the champion has done internally, and the exact path from yes to signature. Never ask whether budget EXISTS: a number is already in front of them, so ask whether it works.",
   },
@@ -180,9 +181,9 @@ const SHAPES: Record<string, BriefingShape> = {
    * first time.
    */
   follow_up: {
-    blocks: ["openItems", "sinceLastContact", "questions", "doNotDo"],
+    blocks: ["bookThis", "openItems", "sinceLastContact", "questions", "doNotDo"],
     questionBudget: 2,
-    maxWords: 300,
+    maxWords: 520,
     purpose:
       "Pick up exactly what was left open and close it. Never re-open the relationship or re-ask what they have already told us.",
   },
@@ -198,7 +199,7 @@ const SHAPES: Record<string, BriefingShape> = {
   customer: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "doNotDo"],
     questionBudget: 1,
-    maxWords: 280,
+    maxWords: 480,
     purpose:
       "They are already a customer. Brief on making what they bought succeed and on what is unresolved operationally. Do not qualify them, do not propose a demo, and never ask what is driving them to look at a new solution.",
   },
@@ -218,13 +219,14 @@ export function shapeForCallType(callType: string | null | undefined): BriefingS
  * which parts to skip, is how the current schema became a template.
  */
 const BLOCK_CONTRACT: Record<BlockName, string> = {
-  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 3 people, the ones who decide what happens in this room. note is ONE line, at most 14 words: their role and the one thing to watch. Not a biography. Six people at three sentences each is a section a rep skips.`,
-  openItems: `"openItems": { "us": [string], "them": [string] }   // AT MOST 2 per side, the ones that block this call. One line each, at most 14 words, and say done or not done. Empty array when a side owes nothing.`,
+  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 4 people, the ones who decide what happens in this room. note is up to 30 words and must carry what THEY care about, in their own words where we have them, not just a job title: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "CIO. Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
+  openItems: `"openItems": { "us": [string], "them": [string] }   // Up to 3 per side. Each line names the item, when it was agreed, and its STATUS in plain words: "sent Aug 21", "still not sent", "agreed Aug 13 for Thursday, never booked". A rep needs to know which ones are outstanding at a glance, so never leave the status off. Empty array when a side owes nothing.`,
   sinceLastContact: `"sinceLastContact": string   // ONE or TWO sentences, no more. What we last said, what they last said, how long ago. Summarise the CONTENT, never the subject line.`,
   theNumbers: `"theNumbers": [string]   // AT MOST 4, each a FRAGMENT not a sentence ("$34,400/month", "20 users"). Omit anything you do not actually have; never write "not recorded".   // every quantity this deal has: proposal amount, monthly price, user count, volumes, current spend. Empty array if none. A rep asked "how much budget do you have" who cannot answer "how much do I need" sounds unprepared.`,
   questions: `"questions": [ { "ask": string, "why": string, "targetFields": [string], "targetLabel": string } ]`,
   showThis: `"showThis": [ { "item": string, "why": string } ]   // 2 or 3, in the order THEY would care about. "why" is ONE line, at most 16 words, tied to something they said. Not a feature tour.`,
   fork: `"fork": { "question": string, "branches": [ { "ifThey": string, "then": string } ] } | null   // ONE fork, 2 or 3 branches. "ifThey" and "then" are each ONE short line. Null when there is no real fork; do not invent one.`,
+  bookThis: `"bookThis": { "what": string, "when": string, "say": string } | null   // The next meeting to get ON THE CALENDAR before this call ends. "what" is the meeting (a proposal walk-through, a technical session with their IT lead). "when" is a concrete near-term window after today. "say" is the ACTUAL SENTENCE the rep says to book it, written to be read aloud, naming the meeting and proposing a specific time. Null only when a booked meeting is genuinely not the right outcome, which is rare.`,
   doNotDo: `"doNotDo": string   // one line. The thing that would waste this call or damage it.`,
 };
 
