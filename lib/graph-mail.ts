@@ -428,6 +428,81 @@ export async function getMessageBody(args: {
   return content.length > 0 ? content : null;
 }
 
+/**
+ * What became of one message we created, by its Graph id.
+ *
+ * The one read that answers "did the rep send our draft". Three outcomes, and
+ * they must stay three: a draft still sitting in Drafts, a message that has
+ * been sent, and an id Graph no longer knows about. The third is genuinely
+ * ambiguous, because Outlook may reassign the id when a draft is sent, so it is
+ * reported as gone rather than folded into either of the other two.
+ */
+export type MessageState =
+  | { status: "draft"; conversationId: string | null; subject: string; body: string | null }
+  | { status: "sent"; conversationId: string | null; subject: string; sentAt: string | null; body: string | null }
+  /** Graph 404s on the id: sent under a new id, or deleted. Undecidable here. */
+  | { status: "gone" }
+  /** The read itself failed. NOT the same as the message being gone. */
+  | { status: "unavailable"; error: string };
+
+/**
+ * Looked up by INTERNET MESSAGE ID, not by Graph's own key.
+ *
+ * Graph's `id` is per-mailbox and Outlook reassigns it when a draft is sent, so
+ * a draft id stored at creation 404s the moment the rep actually sends, which
+ * is the one outcome this read exists to detect. Exchange assigns the RFC 5322
+ * Message-ID when the draft is CREATED and keeps it through the send, so it is
+ * the only key that survives the event we are measuring. It is also what
+ * createDraft and createReplyDraft already store on the sent_messages row.
+ *
+ * The filter searches the whole mailbox, so a message that moved from Drafts to
+ * Sent Items is still found in one call.
+ */
+export async function readMessageStateByInternetId(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  internetMessageId: string;
+}): Promise<MessageState> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  // Single quotes are the OData string delimiter and are escaped by doubling.
+  const filter = `internetMessageId eq '${args.internetMessageId.replace(/'/g, "''")}'`;
+  const url =
+    `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/messages` +
+    `?$filter=${encodeURIComponent(filter)}` +
+    `&$select=id,isDraft,conversationId,subject,sentDateTime,body`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="text"' },
+    });
+  } catch (err) {
+    return { status: "unavailable", error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!res.ok) return { status: "unavailable", error: `${res.status} ${await res.text()}` };
+  const json = (await res.json()) as {
+    value?: Array<{
+      isDraft?: boolean;
+      conversationId?: string | null;
+      subject?: string | null;
+      sentDateTime?: string | null;
+      body?: { content?: string };
+    }>;
+  };
+  const hits = json.value ?? [];
+  if (hits.length === 0) return { status: "gone" };
+  // A sent copy wins over a draft copy. Outlook can leave both behind, and the
+  // question is whether it was sent, not whether a draft still exists.
+  const m = hits.find((h) => h.isDraft === false) ?? hits[0];
+  const body = (m.body?.content ?? "").trim() || null;
+  const conversationId = m.conversationId ?? null;
+  const subject = m.subject ?? "";
+  return m.isDraft
+    ? { status: "draft", conversationId, subject, body }
+    : { status: "sent", conversationId, subject, sentAt: m.sentDateTime ?? null, body };
+}
+
 export async function createDraft(args: {
   tenantIdOrDomain: string;
   /** The rep's mailbox (userPrincipalName), e.g. jlopez@magaya.com. */

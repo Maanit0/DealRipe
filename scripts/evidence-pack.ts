@@ -50,6 +50,7 @@ import type { Tristate } from "../lib/database.types";
 import { getPipelineChanges, type DealChangeRecord } from "../lib/pipeline-changes";
 import { autoJoinRepEmails } from "../lib/pilot-config";
 import { supabaseAdmin } from "../lib/supabase";
+import { adoptionRate, readAdoptionForWindow, summarise } from "../lib/draft-adoption";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
 const TENANT_SLUG = "magaya";
@@ -385,6 +386,7 @@ async function sectionProduced(
   tenantId: string,
   sinceMs: number,
   attempts: CallRow[],
+  days: number,
 ): Promise<void> {
   heading(2, "WHAT IT PRODUCED");
 
@@ -467,6 +469,51 @@ async function sectionProduced(
         "draft that actually went into a rep's Outlook. The column is under-reporting, " +
         "not the drafts under-delivering.",
       "    ",
+    );
+  }
+
+  // ---- DID THE REPS ACTUALLY SEND THEM ----
+  //
+  // The number the drafts are worth is not how many were written. Until now
+  // the closest thing this pack could say was that a rep emailed the customer
+  // after the call, which credits a rep who ignored the draft and wrote their
+  // own. The Message-ID stored at draft creation makes the real question
+  // answerable, and the answer is allowed to be uncomfortable: an adoption
+  // figure nobody can challenge is worth more than a delivery count.
+  console.log("");
+  try {
+    const { rows, notJoinable, scanned } = await readAdoptionForWindow({ tenantId, days });
+    const counts = summarise(rows);
+    const { adopted, decided, rate } = adoptionRate(rows);
+    console.log("  DRAFTS THE REPS ACTUALLY SENT");
+    console.log(`    ${String(scanned).padStart(4)}  drafts written in the window`);
+    console.log(`    ${String(notJoinable).padStart(4)}  carry no message id, so nothing can be said about them either way`);
+    console.log(`    ${String(counts.sent_ours).padStart(4)}  sent as written`);
+    console.log(`    ${String(counts.sent_edited).padStart(4)}  sent after a rewrite`);
+    console.log(`    ${String(counts.sent_own).padStart(4)}  rep wrote their own instead`);
+    console.log(`    ${String(counts.not_sent).padStart(4)}  still sitting unsent, nothing else went out`);
+    console.log(`    ${String(counts.unknown).padStart(4)}  could not tell`);
+    console.log("");
+    if (rate === null) {
+      notMeasured(
+        "Draft adoption",
+        `no draft in the window could be decided (${notJoinable} carry no message id, ${counts.unknown} could not be read)`,
+      );
+    } else {
+      console.log(`    Adoption ${Math.round(rate * 100)}% (${adopted} of ${decided} decidable drafts)`);
+      say(
+        "'Could not tell' sits outside both sides of that fraction. A mailbox we " +
+          "could not read is not a rep who ignored us, and folding the two together " +
+          "is how a delivery metric flatters itself. Note the denominator: most " +
+          "drafts predate the id being stored, so this is a young measure and the " +
+          "count matters more than the percentage until it grows.",
+        "    ",
+      );
+    }
+  } catch (err) {
+    notMeasured(
+      "Draft adoption",
+      `the mailbox read failed (${err instanceof Error ? err.message : String(err)})`,
     );
   }
 
@@ -1259,7 +1306,7 @@ async function main(): Promise<void> {
   }>;
 
   await sectionCoverage(tenantId, days, sinceIso, calls, attempts, dealRows.length);
-  await sectionProduced(tenantId, sinceMs, attempts);
+  await sectionProduced(tenantId, sinceMs, attempts, days);
 
   // ---- The live CRM read behind sections 3, 4 and 6 ----
   //
