@@ -16,6 +16,7 @@
 
 import type { PreCallTypeRead } from "./call-type-precall";
 import type { Framework } from "./framework";
+import { contractFor, shapeForCallType, type BriefingShape } from "./briefing-shapes";
 import { CLOSING_DISCIPLINE, formatPlaysForBriefing } from "./magaya-plays";
 
 export type FieldStatus = {
@@ -100,7 +101,7 @@ export function openGapsUpToStage(
   return out.sort((a, b) => rank(a.stageKey) - rank(b.stageKey));
 }
 
-export function buildMagayaBriefingSystemPrompt(framework: Framework): string {
+export function buildMagayaBriefingSystemPrompt(framework: Framework, shape: BriefingShape = shapeForCallType(null)): string {
   return `You write pre-call briefings for B2B sales reps using the ${framework.name} qualification framework. The briefing arms the rep for their next customer call so they advance the deal toward the next stage gate and toward commitment. It is concise, scannable, and rep-facing.
 
 Rules:
@@ -124,16 +125,14 @@ Rules:
 17. "nextStepCommitment" must be a specific, dated commitment: name the action and a concrete near-term date or timeframe the rep proposes on this call, anchored to TODAY in the user message (for example "early next week" or "the week of <a date after TODAY>"). Never use a past date, and never a date on or before THIS MEETING: proposing to "book a call for Thursday August 13" on a call that is itself Thursday August 13 reads as though nothing knows when this conversation is happening. The commitment is for what comes after today's call. ${CLOSING_DISCIPLINE}
 18. The user message includes a reference block of how Magaya's best reps phrase questions for these gaps. Match that voice and style in your "ask" wording, and adapt each to this customer and the attendees. Do not copy the reference verbatim when it does not fit.
 
+WHAT THIS CALL IS FOR: ${shape.purpose}
+${shape.questionBudget === 0
+  ? `Do NOT return a questions array. Asking is not the move on this call.`
+  : `At most ${shape.questionBudget} question${shape.questionBudget === 1 ? "" : "s"}. Fewer is better than padding to the limit, and an empty array is correct when there is nothing genuinely unknown that blocks the next step.`}
+
 Return a single JSON object, no prose, no markdown fences:
-{
-  "callObjective": string,
-  "whereItStands": string,
-  "questions": [ { "ask": string, "why": string, "targetFields": [string], "targetLabel": string } ],
-  "nextStepCommitment": string,
-  "whatsAtRisk": string,
-  "signalFlag": string | null
-}
-"ask" and "why" are shown to the rep; "targetFields" and "targetLabel" link the question to the gap it closes for the system to track.`;
+${contractFor(shape)}
+"ask" and "why" are shown to the rep; "targetFields" and "targetLabel" link the question to the gap it closes for the system to track. Return ONLY the keys listed above. A key you were not asked for is noise on a page a rep reads while a call is connecting.`;
 }
 
 export function buildMagayaBriefingUserMessage(args: {
@@ -204,6 +203,8 @@ export function buildMagayaBriefingUserMessage(args: {
    * what the inbox says.
    */
   attendeeContext?: string | null;
+  /** What each side owes from the last call, and whether it happened. */
+  openItemsContext?: string | null;
   /**
    * The rep's own notes from Rolldog's narrative tabs. Ranks above the BDR
    * record: the rep has spoken to this customer and the BDR filled in a form.
@@ -381,6 +382,12 @@ export function buildMagayaBriefingUserMessage(args: {
       ``,
       `This is the rep's own record of the work, so treat every ticked item as done and never ask the customer to confirm it happened. If a demo, a proposal or a site visit is ticked, that call has already occurred: brief for what comes after it. These ticks are a claim rather than evidence, so they may be used to rule a question OUT but never to fill a qualification gap IN.`,
     );
+  }
+
+  // Open items go FIRST of the new blocks. Anything agreed and not done
+  // outranks everything else on the page.
+  if (args.openItemsContext) {
+    lines.push(``, args.openItemsContext);
   }
 
   if (args.attendeeContext) {

@@ -30,7 +30,8 @@ import type { ExtractionResult } from "./scotsman";
 import type { Contact } from "./seed-data";
 import { getDealForTenant } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
-import { emailLinesForBriefing, readEmailEngagement, type EmailEngagement } from "./email-log";
+import { attachMessageExcerpts, emailLinesForBriefing, readEmailEngagement, type EmailEngagement } from "./email-log";
+import { buildOpenItems, type OpenItems } from "./open-items";
 
 const NO_CONTENT = new Set(["no_conversation", "no_show", "rescheduled", "placeholder", "capture_failed"]);
 
@@ -106,6 +107,8 @@ export type DealContext = {
    * are opposite facts that produced the same empty briefing.
    */
   email: EmailEngagement | null;
+  /** What each side still owes from the last call. See lib/open-items.ts. */
+  openItems: OpenItems | null;
   emailStatus:
     /** We have messages on this deal and read them. */
     | "present"
@@ -200,6 +203,13 @@ export async function getDealContext(
      * a recap for an older call cannot cite a later one as history.
      */
     asOf?: string | null;
+    /**
+     * Fetch the last email each way from Graph so the briefing can say what was
+     * SAID, not just when. Off by default: the flag engine and /read call this
+     * hundreds of times and want none of it, and it costs two Graph round trips.
+     * The briefing path turns it on, and needs it about twice a day.
+     */
+    withEmailBodies?: boolean;
   },
 ): Promise<DealContext | null> {
   const deal = await getDealForTenant(tenantId, dealId);
@@ -326,6 +336,11 @@ export async function getDealContext(
   try {
     email = await readEmailEngagement({ tenantId, dealId });
     emailStatus = email ? "present" : "no_record";
+    if (email && opts?.withEmailBodies) {
+      // Fails soft: a Graph failure leaves the excerpts null and the briefing
+      // falls back to subject lines, which is worse but not wrong.
+      email = await attachMessageExcerpts(email, { tenantIdOrDomain: "magaya.com" });
+    }
   } catch (err) {
     // Never let a mailbox failure look like a quiet customer. A briefing that
     // says "they have not written in 3 weeks" when we simply could not read is
@@ -338,6 +353,7 @@ export async function getDealContext(
 
   let lastCallDate: string | null = null;
   const uncapturedCalls: Array<{ date: string; reason: string }> = [];
+  const openItems = await buildOpenItems({ tenantId, dealId }).catch(() => null);
   try {
     const nowIso = new Date().toISOString();
     const calls = await db
@@ -543,6 +559,7 @@ export async function getDealContext(
     lastCallDate,
     uncapturedCalls: uncapturedCalls.sort((a, b) => a.date.localeCompare(b.date)),
     email,
+    openItems,
     emailStatus,
     crmContext,
     crmContextStatus,
@@ -569,6 +586,7 @@ export function briefingStateFromContext(ctx: DealContext): {
   rolldogNarrative?: string | null;
   uncapturedCalls?: Array<{ date: string; reason: string }>;
   emailContext?: string | null;
+  openItemsContext?: string | null;
 } {
   return {
     account: ctx.account,
@@ -585,5 +603,6 @@ export function briefingStateFromContext(ctx: DealContext): {
     // Rendered here rather than in the prompt builder so the ranking decision
     // (calls, then email, then CRM) lives with the context that knows all three.
     emailContext: emailLinesForBriefing(ctx.email, ctx.emailStatus).join("\n"),
+    openItemsContext: ctx.openItems ? ctx.openItems.lines.join("\n") : null,
   };
 }

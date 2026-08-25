@@ -12,6 +12,7 @@
  */
 
 import { runModel } from "./model-run";
+import { shapeForCallType } from "./briefing-shapes";
 import {
   briefingErrors,
   describeFindings,
@@ -42,10 +43,20 @@ export type BriefingQuestion = {
 export type MagayaBriefing = {
   callObjective: string;
   whereItStands: string;
+  /** Optional as of 2026-08-25: a call where asking is not the move returns none. */
   questions: BriefingQuestion[];
   nextStepCommitment: string;
   whatsAtRisk: string;
   signalFlag: string | null;
+  // Blocks below are requested per call type by lib/briefing-shapes.ts. Absent
+  // unless that shape asked for them, so a caller renders what is present.
+  inTheRoom?: Array<{ person: string; note: string }> | null;
+  openItems?: { us: string[]; them: string[] } | null;
+  sinceLastContact?: string | null;
+  theNumbers?: string[] | null;
+  showThis?: Array<{ item: string; why: string }> | null;
+  fork?: { question: string; branches: Array<{ ifThey: string; then: string }> } | null;
+  doNotDo?: string | null;
 };
 
 export function attendeesFrom(deal: Deal): string {
@@ -113,6 +124,8 @@ export type BriefingState = {
    * lib/attendee-context.ts.
    */
   attendeeContext?: string | null;
+  /** What each side owes from the last call. See lib/open-items.ts. */
+  openItemsContext?: string | null;
 };
 
 /**
@@ -155,6 +168,7 @@ export async function generateBriefingFromState(
     uncapturedCalls: state.uncapturedCalls,
     emailContext: state.emailContext,
     attendeeContext: state.attendeeContext,
+    openItemsContext: state.openItemsContext,
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
     callType: state.callType,
@@ -190,7 +204,7 @@ export async function generateBriefingFromState(
       task: "briefing",
       maxTokens: 2000,
       temperature: 0.1,
-      system: buildMagayaBriefingSystemPrompt(framework),
+      system: buildMagayaBriefingSystemPrompt(framework, shapeForCallType(state.callType?.type ?? null)),
       messages,
     });
 
@@ -200,7 +214,11 @@ export async function generateBriefingFromState(
     if (!parsed) continue;
 
     last = parsed;
-    lastFindings = lintBriefing(parsed, { stageKey, meetingSubject: state.meetingSubject });
+    lastFindings = lintBriefing(parsed, {
+      stageKey,
+      meetingSubject: state.meetingSubject,
+      questionBudget: shapeForCallType(state.callType?.type ?? null).questionBudget,
+    });
     const errors = briefingErrors(lastFindings);
     if (errors.length === 0) return parsed;
 

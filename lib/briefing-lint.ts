@@ -106,7 +106,21 @@ function text(v: unknown): string {
 
 export function lintBriefing(
   briefing: LintableBriefing,
-  context: { stageKey?: string | null; meetingSubject?: string | null } = {},
+  context: {
+    stageKey?: string | null;
+    meetingSubject?: string | null;
+    /**
+     * How many asks this call type is allowed. Zero or one means a briefing with
+     * no questions is CORRECT, not broken.
+     *
+     * Until 2026-08-25 this rule assumed every briefing must carry questions,
+     * which was true only because the schema forced it. The first demo briefing
+     * generated under the new shape was suppressed twice and then dropped for
+     * "no questions generated" while being exactly what a demo briefing should
+     * be. A guardrail that encodes the old contract blocks the new one.
+     */
+    questionBudget?: number;
+  } = {},
 ): BriefingFinding[] {
   const findings: BriefingFinding[] = [];
 
@@ -185,7 +199,9 @@ export function lintBriefing(
   if (!text(briefing.nextStepCommitment).trim()) {
     findings.push({ level: "error", field: "nextStepCommitment", rule: "empty", detail: "" });
   }
-  if (questions.length === 0) {
+  // A briefing with no questions is an error only where asking was the job.
+  const budget = context.questionBudget ?? 3;
+  if (questions.length === 0 && budget >= 2) {
     findings.push({ level: "error", field: "questions", rule: "no questions generated", detail: "" });
   }
 
