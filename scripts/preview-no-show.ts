@@ -5,6 +5,7 @@
  * so any deal with a captured call and a customer contact previews cleanly.
  *
  *   npx tsx scripts/preview-no-show.ts --deal auto:extrum.com            # dry-run (no email)
+ *   npx tsx scripts/preview-no-show.ts --deal auto:extrum.com --print     # print the text, write nothing
  *   npx tsx scripts/preview-no-show.ts --deal auto:extrum.com --send     # actually email the rep
  */
 
@@ -23,6 +24,7 @@ function arg(name: string): string | undefined {
 async function main(): Promise<void> {
   const ext = arg("--deal");
   const send = process.argv.includes("--send");
+  const print = process.argv.includes("--print");
   if (!ext) {
     console.error("Usage: --deal <external_id> [--send]");
     process.exit(1);
@@ -55,7 +57,20 @@ async function main(): Promise<void> {
   }
 
   console.log(`${send ? "Sending" : "Previewing"} no-show follow-up for ${deal.data.account}...`);
-  const res = await sendNoShowFollowup({ tenantId, callId: call.data.id, dryRun: !send });
+  const res = await sendNoShowFollowup({
+    tenantId,
+    callId: call.data.id,
+    dryRun: !send && !print,
+    previewOnly: print,
+  });
+  if (print) {
+    console.log(`\n  ${res.reason}\n`);
+    if (res.draft) {
+      console.log(`Subject: ${res.draft.subject}\n`);
+      console.log(res.draft.body);
+    }
+    return;
+  }
   if (send) {
     console.log(res.sent ? `Draft emailed to ${res.to}.` : `Not sent: ${res.reason}`);
   } else {

@@ -80,6 +80,8 @@ export type NoShowResult = {
   reason?: string;
   /** How it reached them, so a log distinguishes the good path from the fallback. */
   delivery?: "outlook_draft" | "rep_email" | "none";
+  /** The generated text, so a preview can show it without writing anything. */
+  draft?: NoShowDraft;
 };
 
 function firstName(name: string): string {
@@ -206,6 +208,7 @@ Rules:
 - Do not invent facts, numbers, deal specifics or reasons they missed the call.
 - Use the contact's first name if given.
 - Do NOT write a signature or sign-off; one is appended.
+- The subject is at most six words and reads like a person wrote it: "Missed you today, Karla", "Sorry we missed each other". Never the account name, never a label like "Missed Connection", never a colon.
 
 THE REGISTER, as an example rather than a description. Match this tone and this length:
 ${REGISTER_EXAMPLE}
@@ -287,6 +290,14 @@ export async function draftNoShowFollowup(args: {
   callId: string;
   /** Archive to sent_messages, write nothing to Outlook and email nobody. */
   dryRun?: boolean;
+  /**
+   * Generate and return the text, writing NOTHING anywhere.
+   *
+   * Also bypasses the two "someone already handled this" guards, since the
+   * point of a preview is to read what today's code produces for a call that
+   * has usually already been drafted for. Never use it on the live path.
+   */
+  previewOnly?: boolean;
 }): Promise<NoShowResult> {
   const db = supabaseAdmin();
 
@@ -323,7 +334,7 @@ export async function draftNoShowFollowup(args: {
     .eq("call_id", args.callId)
     .eq("kind", "no_show_draft")
     .limit(1);
-  if ((prior.data ?? []).length > 0) {
+  if ((prior.data ?? []).length > 0 && !args.previewOnly) {
     return { sent: false, delivery: "none", reason: "no-show follow-up already drafted for this call" };
   }
 
@@ -379,7 +390,7 @@ export async function draftNoShowFollowup(args: {
   // run either way. Only the WRITE is gated.
   const canUseGraph = allowedMailboxes().includes(mailbox);
   const canWriteDraft = canUseGraph && outlookDraftEnabled();
-  if (canUseGraph && since && !Number.isNaN(since.getTime()) && domains.length > 0) {
+  if (canUseGraph && !args.previewOnly && since && !Number.isNaN(since.getTime()) && domains.length > 0) {
     try {
       const msgs = await listMailboxMessages({
         tenantIdOrDomain: GRAPH_TENANT,
@@ -461,6 +472,10 @@ export async function draftNoShowFollowup(args: {
     alreadyBooked ? `already rebooked ${alreadyBooked}` : `${slots.length} times proposed`,
     `voice ${voice.status}`,
   ].join(", ");
+
+  if (args.previewOnly) {
+    return { sent: false, to: mailbox, delivery: "none", reason: `preview only, nothing written (${detail})`, draft };
+  }
 
   const archive = renderNoShowDraftEmail({
     account: deal.data.account,
