@@ -218,6 +218,7 @@ export async function generateBriefingFromState(
       stageKey,
       meetingSubject: state.meetingSubject,
       questionBudget: shapeForCallType(state.callType?.type ?? null).questionBudget,
+      maxWords: shapeForCallType(state.callType?.type ?? null).maxWords,
     });
     const errors = briefingErrors(lastFindings);
     if (errors.length === 0) return parsed;
@@ -228,11 +229,25 @@ export async function generateBriefingFromState(
   }
 
   const remaining = briefingErrors(lastFindings);
-  if (remaining.length > 0) {
+  // LENGTH IS THE ONE ERROR THAT SHIPS.
+  //
+  // The tiering this codebase already uses: auto-fix, regenerate once then ship
+  // and flag, or hard fail and suppress. Length belongs in the middle. A brief
+  // that runs long is worse than a short one; it is far better than none, and
+  // suppressing one for being 40 words over would hand the rep nothing at all
+  // before a real call. Everything else in the error set asserts something we
+  // cannot stand behind, which is why those still suppress.
+  const blocking = remaining.filter((f) => f.field !== "length");
+  if (blocking.length > 0) {
     console.error(
-      `[briefing] ${state.account}: SUPPRESSED after two attempts, ${describeFindings(remaining)}`,
+      `[briefing] ${state.account}: SUPPRESSED after two attempts, ${describeFindings(blocking)}`,
     );
     return null;
+  }
+  if (remaining.length > 0) {
+    console.warn(
+      `[briefing] ${state.account}: SHIPPING OVER LENGTH after two attempts, ${describeFindings(remaining)}`,
+    );
   }
   return last;
 }

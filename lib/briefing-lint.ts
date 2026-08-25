@@ -120,6 +120,12 @@ export function lintBriefing(
      * be. A guardrail that encodes the old contract blocks the new one.
      */
     questionBudget?: number;
+    /**
+     * Total words the rep should have to read. Over budget is a REGENERATE, not
+     * a warning: an instruction to be brief is the first thing a model trades
+     * away when it has material, which is exactly when brevity matters most.
+     */
+    maxWords?: number;
   } = {},
 ): BriefingFinding[] {
   const findings: BriefingFinding[] = [];
@@ -205,6 +211,19 @@ export function lintBriefing(
     findings.push({ level: "error", field: "questions", rule: "no questions generated", detail: "" });
   }
 
+  // Length, counted across everything the rep reads.
+  if (context.maxWords) {
+    const words = countBriefingWords(briefing);
+    if (words > context.maxWords) {
+      findings.push({
+        level: "error",
+        field: "length",
+        rule: "too long to read before a call",
+        detail: `${words} words against a budget of ${context.maxWords}. Cut the least important item in the longest block; do not trim every block evenly.`,
+      });
+    }
+  }
+
   return findings;
 }
 
@@ -216,4 +235,31 @@ export function briefingErrors(findings: ReadonlyArray<BriefingFinding>): Briefi
 export function describeFindings(findings: ReadonlyArray<BriefingFinding>): string {
   if (findings.length === 0) return "clean";
   return findings.map((f) => `${f.level.toUpperCase()} ${f.field}: ${f.rule}`).join("; ");
+}
+
+
+/**
+ * Every word the rep actually reads, across all blocks.
+ *
+ * Counts strings anywhere in the object, including inside the block arrays,
+ * because the length problem lives in the blocks: six people at three sentences
+ * each is one section that outweighs the whole rest of the brief. targetFields
+ * and targetLabel are excluded, since they are plumbing the rep never sees.
+ */
+export function countBriefingWords(b: unknown): number {
+  const SKIP = new Set(["targetFields", "targetLabel"]);
+  let n = 0;
+  const walk = (v: unknown, key?: string): void => {
+    if (key && SKIP.has(key)) return;
+    if (typeof v === "string") {
+      n += v.trim().split(/\s+/).filter(Boolean).length;
+      return;
+    }
+    if (Array.isArray(v)) { for (const x of v) walk(x); return; }
+    if (v && typeof v === "object") {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) walk(x, k);
+    }
+  };
+  walk(b);
+  return n;
 }

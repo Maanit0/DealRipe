@@ -41,6 +41,22 @@ export type BlockName =
   | "doNotDo";
 
 export type BriefingShape = {
+  /**
+   * Total word budget for everything the rep reads.
+   *
+   * A pre-call brief is a TARGETING MECHANISM, not a research document. It tells
+   * the rep where to point their attention and how to open, and it has to be
+   * readable in about two minutes while a call is connecting. The first demo
+   * briefing generated under the block shape ran to roughly 900 words: six
+   * people at three sentences each, a ten-sentence "where it stands". Every
+   * sentence was true and the artifact was still wrong, because a rep will not
+   * read it.
+   *
+   * Enforced in lintBriefing rather than asked for in the prompt. A written
+   * instruction to be brief is the first thing a model trades away when it has
+   * material, which is precisely when brevity matters most.
+   */
+  maxWords: number;
   /** Which optional blocks this call type asks for, beyond the always-present core. */
   blocks: BlockName[];
   /** How many asks. Zero is a legitimate answer for a call where asking is not the move. */
@@ -56,6 +72,7 @@ const DEFAULT_SHAPE: BriefingShape = {
   // Byte-identical to the pre-2026-08-25 behaviour on purpose. See the header.
   blocks: ["questions"],
   questionBudget: 3,
+  maxWords: 320,
   purpose:
     "Learn what you do not know yet and leave with a dated commitment. Asking is the main move on this call.",
 };
@@ -76,8 +93,86 @@ const SHAPES: Record<string, BriefingShape> = {
   demo: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
     questionBudget: 1,
+    maxWords: 430,
     purpose:
       "Show the two or three things this customer actually said hurt, in their order, and leave with the next step booked. They have already told us their pain: do not re-ask it. Asking discovery questions on a demo is the single most common way this briefing gets ignored.",
+  },
+
+  /**
+   * Discovery. Asking IS the move, so this keeps the three-question budget, but
+   * it gains the blocks every call type needs.
+   *
+   * theNumbers is here because of Linus Warendh: "you might sound dumb. If
+   * you're like, hey, how much budget do you have? And they go, well, how much
+   * do I need?" On a first call the numbers are usually theirs (volumes, users,
+   * headcount) rather than ours, and having them is what makes the budget
+   * question answerable rather than embarrassing.
+   *
+   * No showThis and no fork: there is nothing to demonstrate yet, and a fork
+   * invented before you know what they want is a guess.
+   */
+  discovery: {
+    blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+    questionBudget: 3,
+    maxWords: 360,
+    purpose:
+      "Learn what actually hurts, what they run today, and who decides, then leave with a dated next step. Asking is the main move. Do not pitch.",
+  },
+
+  /**
+   * Proposal. The wall.
+   *
+   * 39 of 77 captured deals reach SQL3 as their furthest stage and 5 reach SQL4.
+   * The gates that separated the deals that advanced are all customer
+   * disclosures about their own buying process: competition named, champion
+   * internal action, decision process described. All three sit at 5% to 16%
+   * confirmed across the book, so they are both decisive and almost never
+   * asked.
+   *
+   * Groupe Morneau is the model: one proposal call closed twelve gates,
+   * including four named competitors, the champion having already presented
+   * internally, the full approval path, and legal confirmed in-house.
+   *
+   * fork carries the most weight here, because a proposal call is where the
+   * pushback lands and where a pre-positioned answer is worth most.
+   */
+  proposal: {
+    blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
+    questionBudget: 2,
+    maxWords: 420,
+    purpose:
+      "Get the decision machinery on the record: who else is being evaluated, what the champion has done internally, and the exact path from yes to signature. Never ask whether budget EXISTS: a number is already in front of them, so ask whether it works.",
+  },
+
+  /**
+   * Follow-up. A conversation already in progress.
+   *
+   * The one thing that matters is what was left open, so openItems carries the
+   * call and everything else is context. Never open as though meeting for the
+   * first time.
+   */
+  follow_up: {
+    blocks: ["openItems", "sinceLastContact", "questions", "doNotDo"],
+    questionBudget: 2,
+    maxWords: 300,
+    purpose:
+      "Pick up exactly what was left open and close it. Never re-open the relationship or re-ask what they have already told us.",
+  },
+
+  /**
+   * An existing customer. NOT a qualification call.
+   *
+   * Account.Type says customer, so they have already bought. Asking what is
+   * driving them to look at a new solution is the Cargoservicesgroup error:
+   * a customer mid-implementation asked a prospect's question. Follow-through
+   * on briefings for this call type measures 0%, and the reps were right.
+   */
+  customer: {
+    blocks: ["inTheRoom", "openItems", "sinceLastContact", "doNotDo"],
+    questionBudget: 1,
+    maxWords: 280,
+    purpose:
+      "They are already a customer. Brief on making what they bought succeed and on what is unresolved operationally. Do not qualify them, do not propose a demo, and never ask what is driving them to look at a new solution.",
   },
 };
 
@@ -95,13 +190,13 @@ export function shapeForCallType(callType: string | null | undefined): BriefingS
  * which parts to skip, is how the current schema became a template.
  */
 const BLOCK_CONTRACT: Record<BlockName, string> = {
-  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // ONE short line each, customer side first. note = their role and the one thing they care about, from the calls. Invite status only when it matters.`,
-  openItems: `"openItems": { "us": [string], "them": [string] }   // what each side owes from last time, and whether it happened. Split the agreed next step by who owes it. Empty array when a side owes nothing.`,
-  sinceLastContact: `"sinceLastContact": string   // one or two sentences: what we last said, what they last said, and how long ago. Summarise the CONTENT, never the subject line.`,
-  theNumbers: `"theNumbers": [string]   // every quantity this deal has: proposal amount, monthly price, user count, volumes, current spend. Empty array if none. A rep asked "how much budget do you have" who cannot answer "how much do I need" sounds unprepared.`,
+  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 3 people, the ones who decide what happens in this room. note is ONE line, at most 14 words: their role and the one thing to watch. Not a biography. Six people at three sentences each is a section a rep skips.`,
+  openItems: `"openItems": { "us": [string], "them": [string] }   // AT MOST 2 per side, the ones that block this call. One line each, at most 14 words, and say done or not done. Empty array when a side owes nothing.`,
+  sinceLastContact: `"sinceLastContact": string   // ONE or TWO sentences, no more. What we last said, what they last said, how long ago. Summarise the CONTENT, never the subject line.`,
+  theNumbers: `"theNumbers": [string]   // AT MOST 4, each a FRAGMENT not a sentence ("$34,400/month", "20 users"). Omit anything you do not actually have; never write "not recorded".   // every quantity this deal has: proposal amount, monthly price, user count, volumes, current spend. Empty array if none. A rep asked "how much budget do you have" who cannot answer "how much do I need" sounds unprepared.`,
   questions: `"questions": [ { "ask": string, "why": string, "targetFields": [string], "targetLabel": string } ]`,
-  showThis: `"showThis": [ { "item": string, "why": string } ]   // what to demonstrate, in the order THEY would care about, each tied to something they said. Two or three, not a feature tour.`,
-  fork: `"fork": { "question": string, "branches": [ { "ifThey": string, "then": string } ] } | null   // ONE likely fork in the conversation, pre-positioned. Two or three branches. Null when there is no real fork; do not invent one.`,
+  showThis: `"showThis": [ { "item": string, "why": string } ]   // 2 or 3, in the order THEY would care about. "why" is ONE line, at most 16 words, tied to something they said. Not a feature tour.`,
+  fork: `"fork": { "question": string, "branches": [ { "ifThey": string, "then": string } ] } | null   // ONE fork, 2 or 3 branches. "ifThey" and "then" are each ONE short line. Null when there is no real fork; do not invent one.`,
   doNotDo: `"doNotDo": string   // one line. The thing that would waste this call or damage it.`,
 };
 
