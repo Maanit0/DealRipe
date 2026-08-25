@@ -123,6 +123,7 @@ Rules:
 15a. "Unknown" on a field means DEALRIPE HAS NOT HEARD IT, not that the customer has not decided it. Never say or imply otherwise. "whereItStands" describes the DEAL, never our own record: no "zero prior qualification data", no "all qualification fields are blank", no "nothing is on record", no "qualification record is empty". A rep does not care what our database holds, and telling them it is empty reads as an apology. If we truly know nothing about the deal, say what the call itself is and what you need out of it, for example "First working session on their inbond filings, so the job is to learn how they run today and leave with a dated next step."
 16. Be brief and scannable, the rep reads this live on a call. callObjective, nextStepCommitment, whatsAtRisk and signalFlag are ONE tight sentence each, at most about 22 words, no run-ons and no lists. "whereItStands" is the exception, and the test is whether there is real material to carry, not which block it came from. Where you hold specifics, from SINCE LAST CALL, the rep checklist or the BDR record, it may run to five or six labelled lines, because naming what the customer said, what we owe them and what is at stake is worth more than brevity. Where you hold nothing specific, one line, because padding out an empty record is how a briefing becomes filler. Each line is one sentence and stands on its own: a rep reads three of the six and has to lose nothing from the three they skipped. Each question "ask" is at most about 18 words. Each "why" is one short line, at most about 14 words. Favor fewer words over completeness.
 17. "nextStepCommitment" must be a specific, dated commitment: name the action and a concrete near-term date or timeframe the rep proposes on this call, anchored to TODAY in the user message (for example "early next week" or "the week of <a date after TODAY>"). Never use a past date, and never a date on or before THIS MEETING: proposing to "book a call for Thursday August 13" on a call that is itself Thursday August 13 reads as though nothing knows when this conversation is happening. The commitment is for what comes after today's call. ${CLOSING_DISCIPLINE}
+17a. COACHING. Where a COACHING FROM PRIOR CALLS block is present, "coachThis" comes from it and from nothing else. State what was asked for and what the transcript shows, as a fact about the deal: "the last briefing asked for the signing path and nobody raised it on the call" is usable, "you failed to ask about the signing path" is a manager talking and a rep stops reading. Never scold, never praise, never generalise beyond the lines you were given, and never say or imply a rep did not do something unless that block says so: a call with no transcript produces no line, and silence there means we did not check. If the block is absent, or nothing in it bears on this call, "coachThis" is null.
 18. The user message includes a reference block of how Magaya's best reps phrase questions for these gaps. Match that voice and style in your "ask" wording, and adapt each to this customer and the attendees. Do not copy the reference verbatim when it does not fit.
 
 WHAT THIS BRIEFING IS. A targeting mechanism, not a research document. It tells the rep where to point their attention and how to open the first three minutes. The rep reads it in about two minutes while the call is connecting, so it must be under ${shape.maxWords} words IN TOTAL across every field. If you are choosing between saying one more true thing and staying inside that, stay inside it: a brief the rep skims is worth less than a shorter one they read. Cut the third-most-important item, never the first.
@@ -211,6 +212,8 @@ export function buildMagayaBriefingUserMessage(args: {
   attendeeContext?: string | null;
   /** What each side owes from the last call, and whether it happened. */
   openItemsContext?: string | null;
+  /** What was prescribed to this rep before, and what happened. lib/coaching.ts. */
+  coachingContext?: string | null;
   /**
    * The rep's own notes from Rolldog's narrative tabs. Ranks above the BDR
    * record: the rep has spoken to this customer and the BDR filled in a form.
@@ -398,6 +401,14 @@ export function buildMagayaBriefingUserMessage(args: {
 
   if (args.attendeeContext) {
     lines.push(``, args.attendeeContext);
+  }
+
+  // Below the room and above the inbox. It is about the REP rather than the
+  // customer, so it must never outrank what the customer said, and it is the
+  // only block in the message that can produce a line the rep reads as being
+  // about them.
+  if (args.coachingContext) {
+    lines.push(``, args.coachingContext);
   }
 
   // Email goes ABOVE both CRM blocks. Ranking, stated once so it is not

@@ -21,6 +21,7 @@ import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
 import { attendeeLineFromMeeting, briefingRoster } from "./attendees";
+import { buildCoachingContext, coachingLinesForBriefing } from "./coaching";
 import { buildAttendeeContext } from "./attendee-context";
 import {
   describeContext,
@@ -493,9 +494,27 @@ async function processEvent(
     console.warn(`[briefing-sync] attendee context failed for ${dealExternalId}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // WHAT WE ASKED THIS REP FOR LAST TIME, AND WHETHER IT HAPPENED.
+  //
+  // Best effort and non-fatal, like the flags: a briefing without coaching is a
+  // smaller loss than no briefing. buildCoachingContext returns a status rather
+  // than null, and only "present" renders, so a failed read produces silence in
+  // the prompt instead of a block implying the rep did nothing.
+  let coachingContext: string | null = null;
+  try {
+    coachingContext = coachingLinesForBriefing(
+      await buildCoachingContext({ tenantId, dealId: ctx.dealId, repEmail: to ?? null }),
+    );
+  } catch (err) {
+    console.warn(
+      `[briefing-sync] coaching context failed for ${ctx.account}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
     attendeeContext,
+    coachingContext,
     attendees: attendees ?? `the ${ctx.account} team`,
     callType,
     dealFlags,

@@ -32,6 +32,7 @@
 
 export type BlockName =
   | "bookThis"
+  | "coachThis"
   | "inTheRoom"
   | "openItems"
   | "sinceLastContact"
@@ -109,7 +110,7 @@ export const CORE_FIELDS = ["callObjective", "whereItStands", "nextStepCommitmen
  * not know the meeting".
  */
 const DEFAULT_SHAPE: BriefingShape = {
-  blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+  blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
   maxWords: 700,
   purpose:
@@ -130,7 +131,7 @@ const SHAPES: Record<string, BriefingShape> = {
    * next step.
    */
   demo: {
-    blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
+    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
     questionBudget: 1,
     // Raised three times, each time to match measured output rather than a
     // guess. 430 -> 480 because a shape carrying showThis AND fork needs more
@@ -162,7 +163,7 @@ const SHAPES: Record<string, BriefingShape> = {
    * invented before you know what they want is a guess.
    */
   discovery: {
-    blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
     questionBudget: 3,
     maxWords: 700,
     purpose:
@@ -187,7 +188,7 @@ const SHAPES: Record<string, BriefingShape> = {
    * pushback lands and where a pre-positioned answer is worth most.
    */
   proposal: {
-    blocks: ["bookThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
+    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
     questionBudget: 2,
     // Also carries fork, and pays the same plain-language cost. See demo.
     maxWords: 740,
@@ -203,7 +204,7 @@ const SHAPES: Record<string, BriefingShape> = {
    * first time.
    */
   follow_up: {
-    blocks: ["bookThis", "openItems", "sinceLastContact", "questions", "doNotDo"],
+    blocks: ["bookThis", "coachThis", "openItems", "sinceLastContact", "questions", "doNotDo"],
     questionBudget: 2,
     maxWords: 580,
     purpose:
@@ -219,7 +220,7 @@ const SHAPES: Record<string, BriefingShape> = {
    * on briefings for this call type measures 0%, and the reps were right.
    */
   customer: {
-    blocks: ["inTheRoom", "openItems", "sinceLastContact", "doNotDo"],
+    blocks: ["coachThis", "inTheRoom", "openItems", "sinceLastContact", "doNotDo"],
     questionBudget: 1,
     maxWords: 520,
     purpose:
@@ -248,6 +249,7 @@ const BLOCK_CONTRACT: Record<BlockName, string> = {
   questions: `"questions": [ { "ask": string, "why": string, "targetFields": [string], "targetLabel": string } ]`,
   showThis: `"showThis": [ { "item": string, "why": string } ]   // 2 or 3, in the order THEY would care about. "why" is ONE line, at most 16 words, tied to something they said. Not a feature tour.`,
   fork: `"fork": { "question": string, "branches": [ { "ifThey": string, "then": string } ] } | null   // ONE fork, 2 or 3 branches. "ifThey" and "then" are each ONE short line. Null when there is no real fork; do not invent one.`,
+  coachThis: `"coachThis": { "lastTime": string, "thisTime": string } | null   // ONLY from the COACHING FROM PRIOR CALLS block, never invented and never inferred from anywhere else. "lastTime" is ONE sentence saying what was asked for and what happened, stated as a fact about the deal and NEVER as a judgement about the rep: "the last briefing asked for the signing path and the transcript has no one raising it" is a fact, "you failed to ask" is a scolding. "thisTime" is ONE sentence naming the specific move that closes it today. Null whenever that block is absent or carries nothing that bears on this call.`,
   bookThis: `"bookThis": { "what": string, "when": string, "say": string } | null   // The next meeting to get ON THE CALENDAR before this call ends. "what" is the meeting (a proposal walk-through, a technical session with their IT lead). "when" is a concrete near-term window after today. "say" is the ACTUAL SENTENCE the rep says to book it, written to be read aloud, naming the meeting and proposing a specific time. Null only when a booked meeting is genuinely not the right outcome, which is rare.`,
   doNotDo: `"doNotDo": string   // one line. The thing that would waste this call or damage it.`,
 };

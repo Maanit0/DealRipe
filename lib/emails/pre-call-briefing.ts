@@ -336,6 +336,17 @@ export function renderPreCallBriefingEmail(
 
   const doNotBlock = briefing.doNotDo ? `${sub("Do not", RED)}${bodyText(briefing.doNotDo)}` : "";
 
+  // COACHING. In the ACT card, last, because it is about what the rep does and
+  // not about what they say. Two lines: what was asked for last time and what
+  // happened, then the move that closes it today. Deliberately quiet styling:
+  // this is the one block a rep can read as being about them, and a red box
+  // around it would turn a reminder into a performance review.
+  const coachBlock = briefing.coachThis?.thisTime
+    ? `${sub("Last time")}${bodyText(briefing.coachThis.lastTime)}<div style="font-family:${SANS};font-size:15px;line-height:24px;color:${NAVY};font-weight:600;margin-top:7px;">${esc(
+        briefing.coachThis.thisTime,
+      )}</div>`
+    : "";
+
   // Zero questions is correct on a demo, so the block disappears rather than
   // rendering "Ask these (0)".
   const questionsBlock = briefing.questions?.length
@@ -358,6 +369,7 @@ export function renderPreCallBriefingEmail(
       `${sub("Commit to")}${bodyText(briefing.callObjective)}`,
       bookBlock,
       `${sub("If you don't", RED)}${bodyText(briefing.whatsAtRisk)}`,
+      coachBlock,
     ]),
     say: stack([showThisBlock, questionsBlock, forkBlock, doNotBlock]),
     know: stack([openItemsBlock, sinceBlock, standBlock, numbersBlock]),
@@ -460,6 +472,12 @@ function renderText(
     if (briefing.bookThis.say) lines.push(`Say: "${briefing.bookThis.say}"`);
   }
   sec("WHAT'S AT RISK", briefing.whatsAtRisk);
+  if (briefing.coachThis?.thisTime) {
+    lines.push("");
+    lines.push("LAST TIME");
+    lines.push(briefing.coachThis.lastTime);
+    lines.push(briefing.coachThis.thisTime);
+  }
   secList(
     "WHAT THEY CARE ABOUT",
     briefing.inTheRoom?.map((r) => `${r.person}: ${r.note}`),

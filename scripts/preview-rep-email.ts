@@ -17,6 +17,7 @@ import { getDealContext, briefingStateFromContext } from "../lib/deal-context";
 import { generateBriefingFromState } from "../lib/generate-briefing";
 import { buildAttendeeContext } from "../lib/attendee-context";
 import { briefingRoster } from "../lib/attendees";
+import { buildCoachingContext, coachingLinesForBriefing } from "../lib/coaching";
 import { resolvePreCallType } from "../lib/call-type-precall";
 import { renderPreCallBriefingEmail } from "../lib/emails/pre-call-briefing";
 
@@ -26,8 +27,8 @@ const names = argv.reduce<string[]>((a, v, i) => (v === "--deal" ? [...a, argv[i
 (async () => {
   const tenantId = await resolveTenantId("magaya");
   const db = supabaseAdmin();
-  const deals = await db.from("deals").select("id, account").eq("tenant_id", tenantId);
-  const all = (deals.data ?? []) as Array<{ id: string; account: string }>;
+  const deals = await db.from("deals").select("id, account, rep_email").eq("tenant_id", tenantId);
+  const all = (deals.data ?? []) as Array<{ id: string; account: string; rep_email: string | null }>;
   const picks = (names.length ? names : ["dunavant", "cargocleared"])
     .map((n) => all.find((d) => d.account.toLowerCase().includes(n.toLowerCase())))
     .filter((d): d is (typeof all)[number] => !!d);
@@ -50,9 +51,12 @@ const names = argv.reduce<string[]>((a, v, i) => (v === "--deal" ? [...a, argv[i
       internalDomain: "magaya.com",
     });
     process.stdout.write(`  ${d.account.padEnd(20)} ${callType.type.padEnd(14)} `);
+    const coaching = await buildCoachingContext({ tenantId, dealId: d.id, repEmail: d.rep_email });
+    process.stdout.write(`coaching:${coaching.status} `);
     const b = await generateBriefingFromState({
       ...briefingStateFromContext(ctx),
       attendeeContext: ac.lines.join("\n"),
+      coachingContext: coachingLinesForBriefing(coaching),
       meetingSubject: meeting.title,
       meetingDate: meeting.scheduled_start?.slice(0, 10) ?? null,
       callType,

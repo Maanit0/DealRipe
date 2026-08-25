@@ -61,6 +61,15 @@ export type MagayaBriefing = {
    * calendar. Reps leave with a verbal next step and it turns into email.
    */
   bookThis?: { what: string; when: string; say: string } | null;
+  /**
+   * What this rep was asked to do before, and what to do about it today.
+   *
+   * Sourced ONLY from lib/coaching.ts, which reads the prescription ledger and
+   * renders only rows the scorer decided. 139 of 494 rows are 'unknown' because
+   * the call had no transcript, and telling a rep they skipped a question they
+   * may have asked is how a rep stops reading the whole product.
+   */
+  coachThis?: { lastTime: string; thisTime: string } | null;
   inTheRoom?: Array<{ person: string; note: string }> | null;
   openItems?: { us: string[]; them: string[] } | null;
   sinceLastContact?: string | null;
@@ -137,6 +146,12 @@ export type BriefingState = {
   attendeeContext?: string | null;
   /** What each side owes from the last call. See lib/open-items.ts. */
   openItemsContext?: string | null;
+  /**
+   * What DealRipe asked this rep to do on prior calls and whether the
+   * transcript shows they did it. See lib/coaching.ts. Only decided rows reach
+   * here, so absence is never evidence the rep skipped something.
+   */
+  coachingContext?: string | null;
 };
 
 /**
@@ -180,6 +195,7 @@ export async function generateBriefingFromState(
     emailContext: state.emailContext,
     attendeeContext: state.attendeeContext,
     openItemsContext: state.openItemsContext,
+    coachingContext: state.coachingContext,
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
     callType: state.callType,
