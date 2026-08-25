@@ -34,6 +34,7 @@ import {
   generateReengageDraft,
   recentlyDrafted,
 } from "../lib/reengage-draft";
+import { DEFAULT_PER_REP, runReengageSweep } from "../lib/reengage-sweep";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
@@ -52,7 +53,6 @@ const INTERNAL_DOMAIN = "magaya.com";
  * two, send", and that only works if the number is small enough to finish.
  * Raise it once reps ask for more, never before.
  */
-const DEFAULT_PER_REP = 3;
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -91,144 +91,48 @@ async function customerEmailsFor(tenantId: string, dealId: string): Promise<stri
 
 async function main(): Promise<void> {
   const apply = process.argv.includes("--apply");
-  const onlyRep = arg("--rep")?.toLowerCase();
-  const onlyDeal = arg("--deal")?.toLowerCase();
-  const limit = Number(arg("--limit") ?? Number.MAX_SAFE_INTEGER);
-  const perRep = Number(arg("--per-rep") ?? DEFAULT_PER_REP);
-
   const tenantId = await resolveTenantId(SLUG);
 
   console.log(`\n${"=".repeat(80)}`);
   console.log(`${apply ? "DRAFTING" : "DRY RUN"}: re-engagement, triggered by flags rather than by calls`);
   console.log(`${"=".repeat(80)}\n`);
 
-  const rows = await loadPortfolioRead({ tenantId });
-  const draftableIds = new Set(DRAFTABLE.map((d) => d.id));
+  // The work lives in lib/reengage-sweep.ts so the cron runs the same guards.
+  const r = await runReengageSweep({
+    tenantId,
+    apply,
+    perRep: Number(arg("--per-rep") ?? DEFAULT_PER_REP),
+    limit: arg("--limit") ? Number(arg("--limit")) : undefined,
+    onlyRep: arg("--rep") ?? undefined,
+    onlyDeal: arg("--deal") ?? undefined,
+  });
 
-  let candidates = rows.filter((r) => r.flags.some((f) => draftableIds.has(f.id)));
-  if (onlyRep) candidates = candidates.filter((r) => (r.repEmail ?? "").toLowerCase().includes(onlyRep));
-  if (onlyDeal) candidates = candidates.filter((r) => r.account.toLowerCase().includes(onlyDeal));
-
-  // Best deal first, so a capped rep gets their three biggest rather than
-  // whichever three sorted first. loadPortfolioRead orders by what needs a
-  // person; within a rep that is the right order to spend the cap on.
-  const perRepCount = new Map<string, number>();
-  const capped: typeof candidates = [];
-  let cappedOut = 0;
-  for (const r of candidates) {
-    const key = (r.repEmail ?? "?").toLowerCase();
-    const n = perRepCount.get(key) ?? 0;
-    if (n >= perRep) {
-      cappedOut += 1;
-      continue;
-    }
-    perRepCount.set(key, n + 1);
-    capped.push(r);
+  console.log(`  ${r.openDeals} open deals, ${r.flagged} carrying a flag worth writing about\n`);
+  if (r.cappedOut > 0) {
+    console.log(`  ${r.cappedOut} more are flagged and were NOT drafted this run, held back by the per-rep cap.\n`);
   }
 
-  console.log(
-    `  ${rows.length} open deals, ${candidates.length} carrying a flag worth writing about, ` +
-      `${capped.length} inside the ${perRep}-per-rep cap\n`,
-  );
-  if (cappedOut > 0) {
-    // Said out loud rather than silently truncated. A sweep that quietly drops
-    // 66 deals reads as "everything is handled", which it is not.
-    console.log(`  ${cappedOut} more are flagged and were NOT drafted this run, held back by the cap.\n`);
-  }
-  candidates = capped;
-
-  const skips: Array<{ account: string; why: string }> = [];
-  let drafted = 0;
-  let would = 0;
-  let failed = 0;
-  let seen = 0;
-
-  for (const r of candidates) {
-    if (seen >= limit) break;
-    const flag = r.flags.find((f) => draftableIds.has(f.id))!;
-
-    if (!r.repEmail) {
-      skips.push({ account: r.account, why: "no rep email on the deal, so there is no mailbox to draft into" });
+  for (const p of r.previews) {
+    if (apply) {
+      console.log(`  DRAFTED ${p.account}  ->  ${p.mailbox}`);
       continue;
     }
-    // NEVER WRITE TO A CUSTOMER WHOSE DEAL IS OVER.
-    //
-    // loadPortfolioRead drops deals carrying an outcome_label, but a label only
-    // exists once outcome-sync --apply has run, and it runs once a day at 06:00.
-    // A deal that closed since then is still "open" to this sweep. Caught for
-    // real on 2026-08-20: this script generated a re-engagement draft for
-    // Aeronet offering to send workflow videos, and Salesforce had marked that
-    // opportunity Closed Lost that same day, reason Executive Alignment.
-    //
-    // no_open_opportunity is the live read and means every opportunity on the
-    // account is closed. It is exactly the state that used to render as "the
-    // rep set no forecast band", and here it is the difference between a useful
-    // draft and one that would embarrass a rep in front of a customer.
-    if (r.crmRead?.status === "no_open_opportunity") {
-      skips.push({
-        account: r.account,
-        why: "every opportunity on the Salesforce account is closed, so this deal is over",
-      });
-      continue;
-    }
-    if (r.crmRead?.status === "unavailable") {
-      // Fail closed. Not knowing whether the deal is still live is a reason not
-      // to mail the customer, not a reason to assume it is.
-      skips.push({ account: r.account, why: `could not read Salesforce to confirm the deal is live (${r.crmRead.error})` });
-      continue;
-    }
-    if (await recentlyDrafted(r.dealId, flag.id)) {
-      skips.push({ account: r.account, why: `already drafted for '${flag.id}' inside the cooldown` });
-      continue;
-    }
-    const customerEmails = await customerEmailsFor(tenantId, r.dealId);
-    if (customerEmails.length === 0) {
-      skips.push({ account: r.account, why: "no customer attendee on any captured call, so nobody to write to" });
-      continue;
-    }
-
-    seen += 1;
-    const draft = await generateReengageDraft({
-      tenantId,
-      dealId: r.dealId,
-      account: r.account,
-      mailbox: r.repEmail,
-      customerEmails,
-      signals: r.signals,
-      flags: r.flags,
-    });
-    if (!draft) {
-      failed += 1;
-      console.log(`  FAILED  ${r.account}: generation returned nothing usable`);
-      continue;
-    }
-
-    const res = await createReengageDraft(draft, { apply });
-    if (res.status === "drafted") {
-      drafted += 1;
-      console.log(`\n  DRAFTED ${r.account}  ->  ${draft.mailbox}`);
-    } else if (res.status === "would_draft") {
-      would += 1;
-      console.log(`\n  ${"-".repeat(76)}`);
-      console.log(`  ${r.account}  (${draft.mailbox})`);
-      console.log(`  why: ${flag.title}`);
-      console.log(`  to:  ${draft.to.join(", ")}`);
-      console.log(`  ${draft.replyToMessageId ? "replies onto the live thread" : "fresh email, no live thread found"}`);
-      console.log(`  subject: ${draft.subject}`);
-      console.log(``);
-      for (const line of draft.body.split("\n")) console.log(`    ${line}`);
-    } else {
-      failed += 1;
-      console.log(`  FAILED  ${r.account}: ${res.why}`);
-    }
+    console.log(`\n  ${"-".repeat(76)}`);
+    console.log(`  ${p.account}  (${p.mailbox})`);
+    console.log(`  why: ${p.why}`);
+    console.log(`  to:  ${p.to.join(", ")}`);
+    console.log(`  ${p.onThread ? "replies onto the live thread" : "fresh email, no live thread found"}`);
+    console.log(`  subject: ${p.subject}`);
+    console.log(``);
+    for (const line of p.body.split("\n")) console.log(`    ${line}`);
   }
 
-  if (skips.length > 0) {
+  if (r.skips.length > 0) {
     console.log(`\n${"-".repeat(80)}`);
-    console.log(`NOT DRAFTED (${skips.length}) - each says why`);
+    console.log(`NOT DRAFTED (${r.skips.length}) - each says why`);
     console.log(`${"-".repeat(80)}`);
     const byWhy = new Map<string, string[]>();
-    for (const s of skips) (byWhy.get(s.why) ?? byWhy.set(s.why, []).get(s.why)!).push(s.account);
+    for (const s of r.skips) (byWhy.get(s.why) ?? byWhy.set(s.why, []).get(s.why)!).push(s.account);
     for (const [why, list] of [...byWhy.entries()].sort((a, b) => b[1].length - a[1].length)) {
       console.log(`\n  ${list.length}x  ${why}`);
       console.log(`      ${list.slice(0, 8).join(", ")}${list.length > 8 ? `, and ${list.length - 8} more` : ""}`);
@@ -236,8 +140,8 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n${"=".repeat(80)}`);
-  if (apply) console.log(`drafted ${drafted}, failed ${failed}. Nothing was sent.`);
-  else console.log(`DRY RUN. ${would} draft(s) generated and shown, nothing written. Re-run with --apply.`);
+  if (apply) console.log(`drafted ${r.drafted}, failed ${r.failed}. Nothing was sent.`);
+  else console.log(`DRY RUN. ${r.would} draft(s) generated and shown, nothing written. Re-run with --apply.`);
   console.log(`${"=".repeat(80)}\n`);
 }
 

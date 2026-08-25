@@ -51,6 +51,10 @@
     {
       "path": "/api/cron/link-escalation",
       "schedule": "0 14 * * 1"
+    },
+    {
+      "path": "/api/cron/reengage-sweep",
+      "schedule": "0 15 * * 1"
     }
   ]
 }
