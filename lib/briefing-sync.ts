@@ -21,6 +21,7 @@ import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
 import { attendeeLineFromMeeting } from "./attendees";
+import { buildAttendeeContext } from "./attendee-context";
 import {
   describeContext,
   resolveMeetingContext,
@@ -465,8 +466,36 @@ async function processEvent(
     );
   }
 
+  // Who is in the room, from this specific invite. Not from DealContext: that
+  // describes the DEAL, and this is about one meeting.
+  let attendeeContext: string | null = null;
+  try {
+    const prior = await db
+      .from("calls")
+      .select("participants")
+      .eq("tenant_id", tenantId)
+      .eq("deal_id", dealId)
+      .eq("outcome", "captured")
+      .order("scheduled_start", { ascending: false })
+      .limit(6);
+    const priorAttendees = ((prior.data ?? []) as Array<{ participants: unknown }>).map((r) =>
+      Array.isArray(r.participants) ? (r.participants as Array<{ name?: string | null; email?: string | null; responseStatus?: string | null }>) : [],
+    );
+    const ac = buildAttendeeContext({
+      thisMeeting: ev.attendees ?? [],
+      priorCallAttendees: priorAttendees,
+      internalDomain: "magaya.com",
+    });
+    attendeeContext = ac.lines.join("\n");
+  } catch (err) {
+    // Never fabricate a room. A failed read means the briefing says nothing
+    // about who is attending, which is correct: we do not know.
+    console.warn(`[briefing-sync] attendee context failed for ${dealExternalId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
+    attendeeContext,
     attendees: attendees ?? `the ${ctx.account} team`,
     callType,
     dealFlags,

@@ -107,6 +107,12 @@ export type BriefingState = {
    * See emailLinesForBriefing for why it carries facts and not a verdict.
    */
   emailContext?: string | null;
+  /**
+   * Who is actually going to be in the room, from the calendar invite: who has
+   * accepted, who has not, who is new to this deal, who has dropped off. See
+   * lib/attendee-context.ts.
+   */
+  attendeeContext?: string | null;
 };
 
 /**
@@ -148,6 +154,7 @@ export async function generateBriefingFromState(
     stageGates: state.stageGates,
     uncapturedCalls: state.uncapturedCalls,
     emailContext: state.emailContext,
+    attendeeContext: state.attendeeContext,
     history: state.history,
     rolldogNarrative: state.rolldogNarrative,
     callType: state.callType,

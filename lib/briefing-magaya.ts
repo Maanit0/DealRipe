@@ -199,6 +199,12 @@ export function buildMagayaBriefingUserMessage(args: {
    */
   emailContext?: string | null;
   /**
+   * The calendar invite, read for more than names. Placed ABOVE email in the
+   * prompt: for a call that is about to happen, who is in the room outranks
+   * what the inbox says.
+   */
+  attendeeContext?: string | null;
+  /**
    * The rep's own notes from Rolldog's narrative tabs. Ranks above the BDR
    * record: the rep has spoken to this customer and the BDR filled in a form.
    */
@@ -375,6 +381,10 @@ export function buildMagayaBriefingUserMessage(args: {
       ``,
       `This is the rep's own record of the work, so treat every ticked item as done and never ask the customer to confirm it happened. If a demo, a proposal or a site visit is ticked, that call has already occurred: brief for what comes after it. These ticks are a claim rather than evidence, so they may be used to rule a question OUT but never to fill a qualification gap IN.`,
     );
+  }
+
+  if (args.attendeeContext) {
+    lines.push(``, args.attendeeContext);
   }
 
   // Email goes ABOVE both CRM blocks. Ranking, stated once so it is not
