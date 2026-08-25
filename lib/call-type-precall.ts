@@ -52,7 +52,7 @@ export type PreCallTypeRead = {
    *   subject  the calendar title
    *   none     nothing to go on
    */
-  source: "standing" | "outcome" | "history" | "subject" | "none";
+  source: "standing" | "outcome" | "history" | "subject" | "gates" | "none";
   reason: string;
 };
 
@@ -349,8 +349,24 @@ export async function resolvePreCallType(args: {
   subject: string | null | undefined;
   beforeIso?: string | null;
 }): Promise<PreCallTypeRead> {
-  const base = await resolveFromHistoryAndSubject(args);
+  let base = await resolveFromHistoryAndSubject(args);
   if (!allowsDiscoveryFraming(base.type)) return base;
+
+  // A THIRD DETERMINISTIC TIER, when history and the title both said nothing.
+  //
+  // roughly 60% of meetings resolve to "unknown": a deal DealRipe joined late,
+  // or a title like "Magaya / Acme". The deal's own qualification record still
+  // knows things the invite does not, and the reasoning is the same one this
+  // file already applies to call history, one level deeper: a deal whose
+  // proposal has been DELIVERED is not about to have a first discovery call,
+  // exactly as a deal whose last call was a demo is not.
+  //
+  // Only runs on "unknown". A confident read from history or the title is
+  // evidence about THIS meeting and outranks a fact about the deal.
+  if (base.type === "unknown") {
+    const gated = await typeFromQualificationRecord(args.tenantId, args.dealId);
+    if (gated) base = gated;
+  }
 
   const db = supabaseAdmin();
   const deal = await db
@@ -388,4 +404,56 @@ export async function resolvePreCallType(args: {
     source: "standing",
     reason: `Salesforce says this account already buys from Magaya (${standing.detail}), so a first-discovery framing would be wrong`,
   };
+}
+
+
+/**
+ * What the deal's own qualification record implies about the next call.
+ *
+ * Deliberately narrow. These gates can rule discovery OUT with confidence and
+ * cannot pin the exact kind of call, so this returns only the two verdicts the
+ * evidence actually supports and nothing else.
+ *
+ *   proposal delivered, or stage at SQL3 or beyond -> "proposal". SQL3 is
+ *     literally named "Proposal Validation (Prove)", so a deal that has reached
+ *     it is being briefed for a proposal conversation, not a first meeting.
+ *
+ *   demo completed and nothing later -> "follow_up". The demo has happened, so
+ *     the next conversation picks up from it. Returning "demo" here would brief
+ *     a rep to run the demo they already ran.
+ *
+ * Returns null when neither holds, leaving "unknown", which is a result.
+ */
+async function typeFromQualificationRecord(
+  tenantId: string,
+  dealId: string,
+): Promise<PreCallTypeRead | null> {
+  const db = supabaseAdmin();
+  const [fx, dealRow] = await Promise.all([
+    db
+      .from("field_extractions")
+      .select("framework_field_key, status")
+      .eq("tenant_id", tenantId)
+      .eq("deal_id", dealId)
+      .eq("status", "Yes"),
+    db.from("deals").select("stage_key").eq("tenant_id", tenantId).eq("id", dealId).maybeSingle(),
+  ]);
+  // A failed read is not evidence of anything. Leave it unknown.
+  if (fx.error) return null;
+  const yes = new Set(
+    ((fx.data ?? []) as Array<{ framework_field_key: string }>).map((r) => r.framework_field_key),
+  );
+  const stage = ((dealRow.data as { stage_key?: string | null } | null)?.stage_key ?? "").toUpperCase();
+  const stageNum = /SQL(\d)/.exec(stage)?.[1];
+
+  if (yes.has("sql2_proposal_delivered")) {
+    return { type: "proposal", source: "gates", reason: "a proposal has already been delivered on this deal" };
+  }
+  if (stageNum && Number(stageNum) >= 3) {
+    return { type: "proposal", source: "gates", reason: `the deal is at ${stage}, past the point of a first conversation` };
+  }
+  if (yes.has("sql2_demo_completed")) {
+    return { type: "follow_up", source: "gates", reason: "the demo has already been given, so this picks up from it" };
+  }
+  return null;
 }

@@ -68,13 +68,31 @@ export type BriefingShape = {
 /** Everything the briefing always emits, whatever the call type. */
 export const CORE_FIELDS = ["callObjective", "whereItStands", "nextStepCommitment", "whatsAtRisk", "signalFlag"] as const;
 
+/**
+ * The shape when we could not tell what kind of call this is.
+ *
+ * resolvePreCallType returns "unknown" for roughly 60% of meetings: no captured
+ * history on the deal and nothing in the invite title. It refuses to guess on
+ * purpose, because defaulting to discovery is what put a first-discovery
+ * briefing in front of Cargoservicesgroup mid-implementation.
+ *
+ * BUT MOST BLOCKS DO NOT NEED THE CALL TYPE. Who is in the room, what each side
+ * owes, what the last email said and the numbers on the deal are useful on every
+ * call, whatever kind it is. Only three things actually depend on knowing: the
+ * ask budget, showThis and fork. Sending the thinnest possible briefing to the
+ * majority of meetings, because one field is unresolved, throws away context we
+ * already hold for no reason.
+ *
+ * So unknown gets every SHARED block and none of the type-specific ones, with a
+ * conservative ask budget. It is the honest shape for "we have the deal, we do
+ * not know the meeting".
+ */
 const DEFAULT_SHAPE: BriefingShape = {
-  // Byte-identical to the pre-2026-08-25 behaviour on purpose. See the header.
-  blocks: ["questions"],
+  blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
-  maxWords: 320,
+  maxWords: 360,
   purpose:
-    "Learn what you do not know yet and leave with a dated commitment. Asking is the main move on this call.",
+    "We could not tell what kind of call this is, so do not assume a stage. Lead with what is open and what the customer last said, ask only what is genuinely unknown, and leave with a dated commitment. Never open as though meeting for the first time unless the deal has no history at all.",
 };
 
 const SHAPES: Record<string, BriefingShape> = {
@@ -93,7 +111,12 @@ const SHAPES: Record<string, BriefingShape> = {
   demo: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "showThis", "fork", "doNotDo"],
     questionBudget: 1,
-    maxWords: 430,
+    // 480 rather than 430. Measured across live demo briefings: Dunavant 442,
+    // IFF 465, Protrans 483, all of them tight and none padded. A shape
+    // carrying showThis AND fork simply needs more words than one that does
+    // not, and a budget every good output misses is not a budget, it is a
+    // regeneration tax. 480 words is still about two minutes of dense reading.
+    maxWords: 480,
     purpose:
       "Show the two or three things this customer actually said hurt, in their order, and leave with the next step booked. They have already told us their pain: do not re-ask it. Asking discovery questions on a demo is the single most common way this briefing gets ignored.",
   },
@@ -139,7 +162,8 @@ const SHAPES: Record<string, BriefingShape> = {
   proposal: {
     blocks: ["inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "fork", "doNotDo"],
     questionBudget: 2,
-    maxWords: 420,
+    // Also carries fork. Same reasoning as demo.
+    maxWords: 460,
     purpose:
       "Get the decision machinery on the record: who else is being evaluated, what the champion has done internally, and the exact path from yes to signature. Never ask whether budget EXISTS: a number is already in front of them, so ask whether it works.",
   },
