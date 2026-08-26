@@ -28,6 +28,7 @@
 
 import crypto from "node:crypto";
 
+import { subjectTopic } from "./email-log";
 import { runModel } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 
@@ -159,30 +160,54 @@ export async function buildDealEvidence(args: {
   // and the week-over-week line can never disagree about what happened.
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
   const changedThisWeek: string[] = [];
+  // NAME THE THING, DO NOT NAME THE CATEGORY.
+  //
+  // "learned existing systems" tells a leader a field was filled. It does not
+  // tell him they run CargoWise, which is the only part he can use. The answer
+  // is already stored next to the key, and a category with the answer withheld
+  // is a row that looks informative and is not.
   for (const f of fields) {
-    if (d10(f.updated_at) >= weekAgo) {
-      const key = f.framework_field_key.replace(/^sql\d_/, "").replace(/_/g, " ");
-      changedThisWeek.push(`learned ${key}`);
-    }
+    if (d10(f.updated_at) < weekAgo) continue;
+    const key = f.framework_field_key.replace(/^sql\d_/, "").replace(/_/g, " ");
+    const answer = String(f.answer ?? "").trim();
+    changedThisWeek.push(answer ? `${key}: ${answer.slice(0, 92)}${answer.length > 92 ? "..." : ""}` : key);
   }
   for (const c of callRows) {
     const day = d10(c.scheduled_start);
     if (day < weekAgo || Date.parse(c.scheduled_start) > Date.now()) continue;
+    const subject = String(c.title ?? "").slice(0, 46);
     changedThisWeek.push(
       c.outcome === "captured"
-        ? "a call was held"
+        ? `call held${subject ? `: ${subject}` : ""}`
         : c.outcome === "no_conversation" || c.outcome === "no_show"
-          ? "a meeting was missed"
+          ? `no-show${subject ? `: ${subject}` : ""}`
           : c.outcome === "capture_failed"
-            ? "a meeting ran that DealRipe could not get into"
-            : "a meeting happened",
+            ? `meeting DealRipe could not get into${subject ? `: ${subject}` : ""}`
+            : `meeting${subject ? `: ${subject}` : ""}`,
     );
   }
+  // A COUNT IS NOT SOMETHING A LEADER CAN ACT ON. "2 emails from us" is a tally;
+  // what they were about is a fact. subjectTopic strips the Re: chain so a
+  // thread eight replies deep does not print as "RE: RE: FW:".
   const inWeek = messages.filter((m) => d10(m.sent_at) >= weekAgo);
-  const inbound = inWeek.filter((m) => m.customer_side).length;
-  const outbound = inWeek.length - inbound;
-  if (inbound > 0) changedThisWeek.push(`${inbound} email${inbound === 1 ? "" : "s"} from them`);
-  if (outbound > 0) changedThisWeek.push(`${outbound} email${outbound === 1 ? "" : "s"} from us`);
+  const topicsOf = (rows: typeof inWeek): string => {
+    const seen: string[] = [];
+    for (const m of rows) {
+      const t = subjectTopic(m.subject);
+      if (t && !seen.includes(t)) seen.push(t);
+    }
+    return seen.slice(0, 2).join("; ");
+  };
+  const inbound = inWeek.filter((m) => m.customer_side);
+  const outbound = inWeek.filter((m) => !m.customer_side);
+  if (inbound.length > 0) {
+    const t = topicsOf(inbound);
+    changedThisWeek.push(`${inbound.length} from them${t ? ` about "${t}"` : ""}`);
+  }
+  if (outbound.length > 0) {
+    const t = topicsOf(outbound);
+    changedThisWeek.push(`${outbound.length} from us${t ? ` about "${t}"` : ""}`);
+  }
 
   return {
     account: args.account,

@@ -153,7 +153,7 @@ function rowHtml(r: Row, now: number): string {
   // first three are the ones the stage ordering puts first, which is the order a
   // rep has to close them in anyway.
   const blocking = (d.missing ?? []).slice(0, 3);
-  const changed = (r.changed ?? []).slice(0, 4);
+  const changed = (r.changed ?? []).slice(0, 5);
   const crm = d.movement?.summary && d.movement.moved ? d.movement.summary : "";
   return `<tr class="main">
     <td class="acct"><b>${esc(d.account)}</b><i>${esc(d.repName || d.repEmail || "")}</i></td>
@@ -178,7 +178,7 @@ function rowHtml(r: Row, now: number): string {
     }<span class="sig">${esc(r.activity.reason)}</span></td>
   </tr>${
     r.read
-      ? `<tr class="readrow"><td colspan="5"><span class="rl">DealRipe reads it</span>${esc(r.read)}</td></tr>`
+      ? `<tr class="readrow"><td colspan="5"><span class="rl">DealRipe&rsquo;s read</span>${esc(r.read)}</td></tr>`
       : ""
   }`;
 }
@@ -341,34 +341,34 @@ export async function buildActivityReport(args: {
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
 <title>DealRipe pipeline review, week of ${when}</title>
 <style>
-  :root{--ink:#0F172A;--muted:#5B6470;--line:#E7EBF0;--red:#B91C1C;--green:#047857;--bg:#F4F6F9}
+  :root{--ink:#0F172A;--muted:#334155;--line:#E7EBF0;--red:#B91C1C;--green:#047857;--bg:#F4F6F9}
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);padding:34px 26px}
   .wrap{max-width:1080px;margin:0 auto}
   .top{margin-bottom:22px}
   .brand{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#10B981}
   h1{font-size:26px;font-weight:750;margin-top:7px;letter-spacing:-.02em}
-  .sub{font-size:14.5px;color:var(--muted);margin-top:6px;line-height:1.5;max-width:820px}
+  .sub{font-size:14.5px;color:#334155;margin-top:6px;line-height:1.5;max-width:820px}
   .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0;background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden;margin:18px 0 6px}
   .cell{padding:15px 20px;border-right:1px solid var(--line)}.cell:last-child{border-right:0}
-  .ck{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .ck{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#0F172A}
   .cv{font-size:27px;font-weight:800;letter-spacing:-.02em;margin-top:6px}
   .cv.red{color:var(--red)}.cv.green{color:var(--green)}
-  .cs{font-size:12px;color:var(--muted);margin-top:4px}
+  .cs{font-size:12px;color:#334155;margin-top:4px}
   .sec{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-top:18px}
   .sec.red{border-top:3px solid var(--red)}.sec.green{border-top:3px solid var(--green)}.sec.grey{border-top:3px solid #94A3B8}
   .sechd{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
   h2{font-size:18px;font-weight:750}
-  .count{font-size:13.5px;color:var(--muted);font-weight:600}
+  .count{font-size:13.5px;color:#334155;font-weight:600}
   .floor{font-weight:400}
-  .secsub{font-size:13.5px;color:var(--muted);margin-top:7px;line-height:1.5;max-width:860px}
-  .empty{font-size:14px;color:var(--muted);margin-top:14px;font-style:italic}
+  .secsub{font-size:13.5px;color:#334155;margin-top:7px;line-height:1.5;max-width:860px}
+  .empty{font-size:14px;color:#334155;margin-top:14px;font-style:italic}
   table{width:100%;border-collapse:collapse;margin-top:14px}
-  th{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+  th{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#0F172A;text-align:left;padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
   td{padding:10px 10px 10px 0;border-bottom:1px solid #F5F7F9;font-size:13px;vertical-align:top;line-height:1.4}
   tr:last-child td{border-bottom:0}
   .acct b{font-weight:700;font-size:13.5px}
-  .acct i,.meta i{display:block;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:2px}
+  .acct i,.meta i{display:block;font-style:normal;font-size:11.5px;color:#334155;margin-top:2px}
   .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:650}
   th.num{text-align:right}
   .meta{color:var(--muted);white-space:nowrap}
@@ -377,15 +377,15 @@ export async function buildActivityReport(args: {
   .watch{display:block;margin-top:5px;color:#B45309;font-size:12px}
   .moved{color:#334155;font-size:12.5px;max-width:200px}
   .moved span,.block span{display:block;line-height:1.5}
-  .dim{color:#94A3B8}
-  .sig{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+  .dim{color:#334155}
+  .sig{display:block;margin-top:5px;color:#334155;font-size:12px}
   tr.main td{border-bottom:0;padding-bottom:6px}
   tr.readrow td{padding:0 10px 14px 0;border-bottom:1px solid #F5F7F9;font-size:13px;line-height:1.55;color:#1e293b}
   tr.readrow .rl{display:block;font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--green);margin-bottom:3px}
   .when{display:block;margin-top:5px;color:var(--green);font-size:12px}
-  .block span{display:block;font-size:11.5px;color:var(--muted);line-height:1.5}
+  .block span{display:block;font-size:11.5px;color:#334155;line-height:1.5}
   .block{max-width:180px}
-  .foot{font-size:12.5px;color:var(--muted);margin-top:20px;line-height:1.55;max-width:860px}
+  .foot{font-size:12.5px;color:#334155;margin-top:20px;line-height:1.55;max-width:860px}
   @media print{body{background:#fff;padding:0}.sec{break-inside:auto}tr{break-inside:avoid}}
 </style></head><body><div class="wrap">
   <div class="top">

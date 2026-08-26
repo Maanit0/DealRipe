@@ -86,6 +86,13 @@ export type ActivityInput = {
  * outbound would put the deals Mark most wants to see straight into the wrong
  * column.
  */
+/** "today", "yesterday", "5 days ago". Nobody says "zero days ago". */
+function ago(days: number): string {
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
+
 export function readActivity(input: ActivityInput, windowDays = ACTIVITY_WINDOW_DAYS): ActivityRead {
   const { nextMeetingBooked, daysSinceConversation, daysSinceCustomerEmail, mailboxRead } = input;
 
@@ -103,8 +110,8 @@ export function readActivity(input: ActivityInput, windowDays = ACTIVITY_WINDOW_
 
   if (recentCall || recentReply) {
     const bits: string[] = [];
-    if (recentReply) bits.push(`they emailed ${daysSinceCustomerEmail} day${daysSinceCustomerEmail === 1 ? "" : "s"} ago`);
-    if (recentCall) bits.push(`spoke ${daysSinceConversation} day${daysSinceConversation === 1 ? "" : "s"} ago`);
+    if (recentReply) bits.push(`they emailed ${ago(daysSinceCustomerEmail as number)}`);
+    if (recentCall) bits.push(`spoke ${ago(daysSinceConversation as number)}`);
     return { verdict: "active", reason: bits.join(", "), quietDays: null };
   }
 
