@@ -518,7 +518,10 @@ function computeMovement(
       parts.push(`slipped ${frKey} → ${toKey}`);
       direction = "backward";
     } else {
-      parts.push(`moved to ${toKey ?? stageEv.to} this week`);
+      // No readable prior stage, so this cannot claim a direction of travel.
+      // "moved to SQL3" with no from is the same shape of half-fact as a close
+      // date with no origin.
+      parts.push(`now at ${toKey ?? stageEv.to}, no prior stage on record`);
       direction = "forward";
     }
   }
@@ -544,10 +547,15 @@ function computeMovement(
     const b = Date.parse(cd.to);
     if (Number.isFinite(a) && Number.isFinite(b)) {
       if (b > a + 7 * 86_400_000) {
-        parts.push(`close pushed to ${dateShort(cd.to)}`);
+        // FROM AND TO, NOT JUST TO.
+        //
+        // "Close pushed to Sep 13" tells a leader where it landed and hides how
+        // far it travelled. A week's slip and a two-month slip print identically,
+        // and the second one is the one worth a question.
+        parts.push(`close pushed ${dateShort(cd.from)} → ${dateShort(cd.to)}`);
         if (direction === "none") direction = "backward";
       } else if (b < a - 7 * 86_400_000) {
-        parts.push(`close pulled in to ${dateShort(cd.to)}`);
+        parts.push(`close pulled in ${dateShort(cd.from)} → ${dateShort(cd.to)}`);
         if (direction !== "backward") direction = "forward";
       }
     }
@@ -557,7 +565,9 @@ function computeMovement(
   if (am && am.from && am.to) {
     const a = Number(am.from);
     const b = Number(am.to);
-    if (Number.isFinite(a) && Number.isFinite(b) && a !== b) parts.push(`${b > a ? "size up" : "size down"} to ${money0(b)}/yr`);
+    if (Number.isFinite(a) && Number.isFinite(b) && a !== b) {
+      parts.push(`${b > a ? "size up" : "size down"} ${money0(a)} → ${money0(b)}/yr`);
+    }
   }
 
   // Rolldog fields didn't move. The calls still may have: DealRipe's edge is

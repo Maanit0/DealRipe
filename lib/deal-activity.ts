@@ -32,7 +32,7 @@
  */
 export const ACTIVITY_WINDOW_DAYS = 14;
 
-export type ActivityVerdict = "active" | "silent" | "unknown";
+export type ActivityVerdict = "active" | "silent" | "not_started" | "unknown";
 
 export type ActivityRead = {
   verdict: ActivityVerdict;
@@ -54,6 +54,16 @@ export type ActivityRead = {
 export type ActivityInput = {
   /** A meeting on the calendar with this customer. Null when unread. */
   nextMeetingBooked: boolean | null;
+  /**
+   * Has DealRipe ever captured a conversation on this deal.
+   *
+   * 16 of 122 deals have a meeting booked and have never had a call. Those are
+   * first meetings that have not happened yet, and calling them "the customer is
+   * moving" next to a column reading "no movement this week" is what made this
+   * report confusing on first read. They are new business waiting to start, not
+   * momentum.
+   */
+  hasEverSpoken: boolean;
   /** Days since we last spoke to them on a call. Null when there has been none. */
   daysSinceConversation: number | null;
   /** Days since THEY last emailed us. Null when none on record. */
@@ -83,7 +93,9 @@ export function readActivity(input: ActivityInput, windowDays = ACTIVITY_WINDOW_
   // is a future fact rather than a recency one, so it is checked first and is
   // not subject to the window.
   if (nextMeetingBooked === true) {
-    return { verdict: "active", reason: "a next meeting is on the calendar", quietDays: null };
+    return input.hasEverSpoken
+      ? { verdict: "active", reason: "next meeting on the calendar", quietDays: null }
+      : { verdict: "not_started", reason: "first meeting booked, not held yet", quietDays: null };
   }
 
   const recentCall = daysSinceConversation !== null && daysSinceConversation <= windowDays;

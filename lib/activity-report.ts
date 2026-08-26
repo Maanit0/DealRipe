@@ -63,12 +63,82 @@ async function lastCustomerEmailByDeal(
   return { byDeal, dealsWithAnyMail };
 }
 
-type Row = { deal: DealChangeRecord; activity: ActivityRead };
+type NextMeeting = { at: string; title: string | null; who: string[] };
+
+/**
+ * When the agreed next step was actually agreed.
+ *
+ * "Stephanie agreed to a demo scheduled for Friday at 2pm Eastern" is unusable
+ * without it: Friday of which week? The commitment is the next_step field
+ * extraction's answer, so that row's capture date is the date it was said, and
+ * it is read rather than inferred from the last conversation, which would be
+ * wrong on every deal that has had a call since.
+ */
+async function nextStepAgreedAt(tenantId: string, dealIds: string[]): Promise<Map<string, string>> {
+  const db = supabaseAdmin();
+  const out = new Map<string, string>();
+  const CHUNK = 60;
+  for (let i = 0; i < dealIds.length; i += CHUNK) {
+    const res = await db
+      .from("field_extractions")
+      .select("deal_id, framework_field_key, updated_at")
+      .eq("tenant_id", tenantId)
+      .in("deal_id", dealIds.slice(i, i + CHUNK))
+      .like("framework_field_key", "%next_step%");
+    if (res.error) throw new Error(`field_extractions read failed: ${res.error.message}`);
+    for (const r of (res.data ?? []) as Array<{ deal_id: string; updated_at: string | null }>) {
+      if (!r.updated_at) continue;
+      const prev = out.get(r.deal_id);
+      if (!prev || Date.parse(r.updated_at) > Date.parse(prev)) out.set(r.deal_id, r.updated_at);
+    }
+  }
+  return out;
+}
+type Row = { deal: DealChangeRecord; activity: ActivityRead; next?: NextMeeting; agreedAt?: string };
+
+/**
+ * The next scheduled meeting per deal, with who is on it.
+ *
+ * "A meeting is on the calendar" is a fact a leader cannot act on. When, and
+ * with whom, is the difference between a row he reads and a row he asks about.
+ */
+async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<Map<string, NextMeeting>> {
+  const db = supabaseAdmin();
+  const out = new Map<string, NextMeeting>();
+  const CHUNK = 60;
+  for (let i = 0; i < dealIds.length; i += CHUNK) {
+    const res = await db
+      .from("calls")
+      .select("deal_id, scheduled_start, title, participants")
+      .eq("tenant_id", tenantId)
+      .in("deal_id", dealIds.slice(i, i + CHUNK))
+      .gte("scheduled_start", new Date().toISOString())
+      .order("scheduled_start", { ascending: true });
+    if (res.error) throw new Error(`calls read failed: ${res.error.message}`);
+    for (const c of (res.data ?? []) as Array<{ deal_id: string; scheduled_start: string; title: string | null; participants: unknown }>) {
+      if (out.has(c.deal_id)) continue; // ordered ascending, so the first is the next
+      const ps = Array.isArray(c.participants) ? (c.participants as Array<{ name?: string | null; email?: string | null }>) : [];
+      const who = ps
+        .filter((p) => !(p?.email ?? "").toLowerCase().endsWith("@magaya.com"))
+        .map((p) => (p?.name ?? p?.email ?? "").split("@")[0])
+        .filter(Boolean)
+        .slice(0, 3);
+      out.set(c.deal_id, { at: c.scheduled_start, title: c.title, who });
+    }
+  }
+  return out;
+}
 
 function rowHtml(r: Row, now: number): string {
   const d = r.deal;
   const amount = money(d.dealSizeAnnual);
-  const stage = d.stageName ?? d.stageKey ?? "";
+  // A BLANK STAGE IS A FACT, NOT A MISSING VALUE.
+  //
+  // 84 of 122 deals carry no Rolldog opportunity, because Magaya does not create
+  // one until after the discovery call. Printing an empty cell reads as "we do
+  // not know"; printing it reads as what it is, which is a deal being worked
+  // with no CRM record behind it.
+  const stage = d.stageName ?? d.stageKey ?? (d.inRolldog ? "" : "Not in Rolldog");
   const band = d.forecastCategory ?? "";
   const owed = d.repOwedMeeting && d.agreedNextStep ? d.agreedNextStep : null;
   // THE THREE OPEN GAPS THAT MATTER MOST, NOT ALL OF THEM.
@@ -83,7 +153,17 @@ function rowHtml(r: Row, now: number): string {
     <td class="meta">${esc(stage)}${band ? `<i>${esc(band)}</i>` : ""}</td>
     <td class="moved">${esc(d.movement?.summary ?? "")}</td>
     <td class="why">${esc(r.activity.reason)}${
-      owed ? `<span class="owed">Agreed and not booked: ${esc(owed)}</span>` : ""
+      r.next
+        ? `<span class="when">${esc(meetingLine(r.next))}</span>`
+        : ""
+    }${
+      owed
+        ? `<span class="owed">Agreed${
+            r.agreedAt
+              ? ` ${new Date(r.agreedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+              : ""
+          }, not booked: ${esc(owed)}</span>`
+        : ""
     }${
       r.activity.verdict === "active" && !d.nextMeetingBooked && !owed
         ? `<span class="watch">Nothing on the calendar after it</span>`
@@ -91,6 +171,18 @@ function rowHtml(r: Row, now: number): string {
     }</td>
     <td class="block">${blocking.length ? blocking.map((m) => `<span>${esc(m)}</span>`).join("") : ""}</td>
   </tr>`;
+}
+
+/** "Thu Aug 27, 1:30pm with Liam", rather than "a meeting is on the calendar". */
+function meetingLine(n: NextMeeting): string {
+  const when = new Date(n.at).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${when}${n.who.length ? ` with ${n.who.join(", ")}` : ""}`;
 }
 
 function section(title: string, sub: string, rows: Row[], now: number, tone: "red" | "green" | "grey"): string {
@@ -107,7 +199,7 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
     ${
       rows.length === 0
         ? `<p class="empty">Nothing in this list this week.</p>`
-        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>Moved this week</th><th>Customer signal</th><th>Still open</th></tr></thead>
+        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>CRM change this week</th><th>Customer signal</th><th>Still open</th></tr></thead>
            <tbody>${rows.map((r) => rowHtml(r, now)).join("")}</tbody></table>`
     }
   </section>`;
@@ -116,7 +208,7 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
 export type ActivityReport = {
   subject: string;
   html: string;
-  counts: { total: number; silent: number; active: number; unknown: number };
+  counts: { total: number; silent: number; active: number; notStarted: number; unknown: number };
 };
 
 export async function buildActivityReport(args: {
@@ -147,11 +239,18 @@ export async function buildActivityReport(args: {
     if (dealsWithAnyMail.has(d.dealId) && d.repEmail) repHasMail.add(d.repEmail.toLowerCase());
   }
 
+  const dealIds = deals.map((d) => d.dealId);
+  const nextByDeal = await nextMeetingByDeal(tenantId, dealIds);
+  const agreedAtByDeal = await nextStepAgreedAt(tenantId, dealIds);
+
   const rows: Row[] = deals.map((deal) => ({
     deal,
+    next: nextByDeal.get(deal.dealId),
+    agreedAt: agreedAtByDeal.get(deal.dealId),
     activity: readActivity(
       {
         nextMeetingBooked: deal.nextMeetingBooked,
+        hasEverSpoken: Boolean(deal.lastConversationAt),
         daysSinceConversation: days(deal.lastConversationAt, now),
         daysSinceCustomerEmail: days(byDeal.get(deal.dealId) ?? null, now),
         mailboxRead: repHasMail.has((deal.repEmail ?? "").toLowerCase()),
@@ -187,6 +286,7 @@ export async function buildActivityReport(args: {
   const active = rows
     .filter((r) => r.activity.verdict === "active")
     .sort((a, b) => Number(a.deal.nextMeetingBooked) - Number(b.deal.nextMeetingBooked) || byValue(a, b));
+  const notStarted = rows.filter((r) => r.activity.verdict === "not_started").sort(byValue);
   const unknown = rows.filter((r) => r.activity.verdict === "unknown").sort(byValue);
 
   const when = new Date(now).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -201,7 +301,7 @@ export async function buildActivityReport(args: {
   .brand{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#10B981}
   h1{font-size:26px;font-weight:750;margin-top:7px;letter-spacing:-.02em}
   .sub{font-size:14.5px;color:var(--muted);margin-top:6px;line-height:1.5;max-width:820px}
-  .strip{display:grid;grid-template-columns:repeat(3,1fr);gap:0;background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden;margin:18px 0 6px}
+  .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0;background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden;margin:18px 0 6px}
   .cell{padding:15px 20px;border-right:1px solid var(--line)}.cell:last-child{border-right:0}
   .ck{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
   .cv{font-size:27px;font-weight:800;letter-spacing:-.02em;margin-top:6px}
@@ -228,6 +328,7 @@ export async function buildActivityReport(args: {
   .owed{display:block;margin-top:5px;color:var(--red);font-size:12px}
   .watch{display:block;margin-top:5px;color:#B45309;font-size:12px}
   .moved{color:#334155;font-size:12.5px;max-width:190px}
+  .when{display:block;margin-top:5px;color:var(--green);font-size:12px}
   .block span{display:block;font-size:11.5px;color:var(--muted);line-height:1.5}
   .block{max-width:180px}
   .foot{font-size:12.5px;color:var(--muted);margin-top:20px;line-height:1.55;max-width:860px}
@@ -240,8 +341,19 @@ export async function buildActivityReport(args: {
   </div>
   <div class="strip">
     <div class="cell"><div class="ck">Gone quiet</div><div class="cv red">${silent.length}</div><div class="cs">nothing from them in ${ACTIVITY_WINDOW_DAYS}+ days and nothing booked</div></div>
-    <div class="cell"><div class="ck">Customer moving</div><div class="cv green">${active.length}</div><div class="cs">a meeting booked, a call, or they emailed</div></div>
-    <div class="cell"><div class="ck">Cannot tell</div><div class="cv">${unknown.length}</div><div class="cs">reported apart, never counted as quiet</div></div>
+    <div class="cell"><div class="ck">In contact</div><div class="cv green">${active.length}</div><div class="cs">a meeting booked, a call, or they emailed</div></div>
+    <div class="cell"><div class="ck">Not started</div><div class="cv">${notStarted.length}</div><div class="cs">first meeting booked, not held yet</div></div>
+    ${
+      // ZERO IS THE HEALTHY CASE, SO IT PRINTS NOTHING.
+      //
+      // The bucket still exists in the logic and must: one failed mailbox ingest
+      // would otherwise drop a whole rep's book into "gone quiet", and Mark would
+      // tell a rep their deals are dead while the customer emailed yesterday. The
+      // classifier keeps the guard, the page just stops showing an empty box.
+      unknown.length > 0
+        ? `<div class="cell"><div class="ck">Cannot tell</div><div class="cv">${unknown.length}</div><div class="cs">reported apart, never counted as quiet</div></div>`
+        : ""
+    }
   </div>
   ${section(
     "Gone quiet",
@@ -251,25 +363,36 @@ export async function buildActivityReport(args: {
     "red",
   )}
   ${section(
-    "The customer is moving",
+    "In contact with the customer",
     "A meeting is on the calendar, or they have spoken to us or emailed us inside the last two weeks. Our own outbound does not count: a rep emailing into silence is the problem, not evidence against it. Deals with nothing booked after the last contact are listed first, because those are the ones still needing a next step.",
     active,
     now,
     "green",
   )}
   ${section(
-    "Cannot tell",
-    "The calendar or the mailbox could not be read for these, so silence cannot be claimed. Listed rather than folded into either column, because a deal we did not check is not a deal that went quiet.",
-    unknown,
+    "First meeting not yet held",
+    "A meeting is booked and DealRipe has never captured a conversation on these. New business waiting to start rather than momentum, which is why they are counted apart: a deal that has not begun is not a deal that is moving.",
+    notStarted,
     now,
     "grey",
   )}
+  ${
+    unknown.length > 0
+      ? section(
+          "Cannot tell",
+          "The calendar or the mailbox could not be read for these, so silence cannot be claimed. Listed rather than folded into either column, because a deal we did not check is not a deal that went quiet.",
+          unknown,
+          now,
+          "grey",
+        )
+      : ""
+  }
   <p class="foot">${rows.length} deals in total. Amounts are annualized from Rolldog and are blank where Rolldog carries no size, so every dollar total here is a floor rather than a total. "Agreed and not booked" is checked against the rep's own calendar, so it is the absence of a meeting rather than the absence of a note about one.</p>
 </div></body></html>`;
 
   return {
     subject: `DealRipe pipeline review, week of ${when}. ${silent.length} deals have gone quiet`,
     html,
-    counts: { total: rows.length, silent: silent.length, active: active.length, unknown: unknown.length },
+    counts: { total: rows.length, silent: silent.length, active: active.length, notStarted: notStarted.length, unknown: unknown.length },
   };
 }
