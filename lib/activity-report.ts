@@ -207,89 +207,6 @@ async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<M
   return out;
 }
 
-function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
-  const d = r.deal;
-  const amount = money(d.dealSizeAnnual);
-  // A BLANK STAGE IS A FACT, NOT A MISSING VALUE.
-  //
-  // 100 of 133 open deals carry no Rolldog opportunity, because Magaya does not
-  // create one until after the discovery call. An empty cell reads as "we do not
-  // know", which is wrong.
-  //
-  // NOT "Salesforce". 82 of those 100 do carry a Salesforce ACCOUNT link, and an
-  // account is not an opportunity: most hold no open opportunity and none holds a
-  // stage. Naming the other CRM here would send a leader looking for a staged
-  // opportunity that does not exist, which is the same error as reading a linked
-  // account as a live deal.
-  const stage = d.stageName ?? d.stageKey ?? (d.inRolldog ? "" : "No opportunity yet");
-  const band = d.forecastCategory ?? "";
-  const owed = d.repOwedMeeting && d.agreedNextStep ? d.agreedNextStep : null;
-  // THE THREE OPEN GAPS THAT MATTER MOST, NOT ALL OF THEM.
-  //
-  // A deal with eleven gaps prints eleven and the column becomes wallpaper. The
-  // first three are the ones the stage ordering puts first, which is the order a
-  // rep has to close them in anyway.
-  const blocking = (d.missing ?? []).slice(0, 3);
-  const changed = (r.changed ?? []).slice(0, 6);
-  const crm = d.movement?.summary && d.movement.moved ? d.movement.summary : "";
-  return `<tr class="main">
-    <td class="acct"><b>${esc(d.account)}</b><i>${esc(d.repName || d.repEmail || "")}</i><i>${esc(stage)}</i></td>
-    <td class="num">${esc(amount)}</td>
-    <td class="meta">${band ? `<b>${esc(band)}</b>` : `<span class="dim">no band</span>`}${
-      d.closeDate
-        ? `<i>closes ${dayLabel(d.closeDate)}</i>`
-        : `<i>no close date</i>`
-    }</td>
-    ${
-      variant === "quiet"
-        ? `<td class="moved">${
-            r.lastContact
-              ? `<b>${new Date(r.lastContact.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</b>` +
-                `<span>${esc(r.lastContact.kind === "call" ? "on a call" : "they emailed")}</span>` +
-                `<span>${esc(String(r.lastContact.what).slice(0, 90))}</span>`
-              : `<span class="dim">no contact on record</span>`
-          }</td>
-          <td class="moved">${
-            r.chases
-              ? `<b>${r.chases}</b><span>follow-up${r.chases === 1 ? "" : "s"} from us since</span>${
-                  r.lastChaseAbout ? `<span>last one about "${esc(r.lastChaseAbout)}"</span>` : ""
-                }`
-              : `<span>no follow-up sent since</span>`
-          }</td>
-          <td class="meta"><b>${r.activity.quietDays ?? "?"}</b><i>days dark</i></td>`
-        : `<td class="moved">${crm ? `<span>${esc(crm)}</span>` : `<span class="dim">no change</span>`}</td>
-           <td class="moved">${
-             r.headline
-               ? `<span><b>${esc(r.headline)}</b></span>`
-               : changed.length
-               ? `<span>${esc(changed.join(", "))}</span>`
-               : r.lastLearned
-                 ? `<span>nothing new. Last learned <b>${esc(r.lastLearned.key)}</b> on ${new Date(
-                     r.lastLearned.at,
-                   ).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>`
-                 : `<span>nothing captured on this deal yet</span>`
-           }</td>`
-    }
-    <td class="why">${
-      r.next
-        ? `<b>${esc(meetingLine(r.next))}</b>`
-        : `<span class="dim">nothing booked</span>`
-    }${
-      owed
-        ? `<span class="owed">Agreed${
-            r.agreedAt
-              ? ` ${new Date(r.agreedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-              : ""
-          }, not booked: ${esc(owed)}</span>`
-        : ""
-    }<span class="sig">${esc(r.activity.reason)}</span></td>
-  </tr>${
-    r.read
-      ? `<tr class="readrow"><td colspan="7"><span class="rl">DealRipe&rsquo;s read</span>${esc(r.read)}</td></tr>`
-      : ""
-  }`;
-}
-
 /** "Thu Aug 27, 1:30pm with Liam", rather than "a meeting is on the calendar". */
 function meetingLine(n: NextMeeting): string {
   const when = new Date(n.at).toLocaleString("en-US", {
@@ -302,26 +219,174 @@ function meetingLine(n: NextMeeting): string {
   return `${when}${n.who.length ? ` with ${n.who.join(", ")}` : ""}`;
 }
 
-function section(title: string, sub: string, rows: Row[], now: number, tone: "red" | "green" | "grey", variant: "live" | "quiet" = "live"): string {
+const STATUS = {
+  moving:  { label: "Moving",            tone: "ok"   },
+  active:  { label: "Active, not moving", tone: "warn" },
+  stalled: { label: "Stalled",           tone: "amber" },
+  silent:  { label: "Gone silent",       tone: "bad"  },
+} as const;
+type StatusKey = keyof typeof STATUS;
+
+/**
+ * FOUR STATUSES, MUTUALLY EXCLUSIVE, EVIDENCE FIRST.
+ *
+ * Order matters. Silence beats everything because it is the strongest fact.
+ * Then a broken commitment, because a no-show or an overdue agreed step is a
+ * deal that WAS engaged and stopped, which is a different management problem
+ * from one that is merely quiet. Only then does activity get to count, and only
+ * progression earns Moving.
+ *
+ * A calendar event on its own never makes a deal Moving. Febestparts sat in
+ * Moving with two missed demos behind it because a future invite existed.
+ */
+function statusOf(r: Row): StatusKey {
+  if (r.activity.verdict === "silent") return "silent";
+  const noShow = r.deal.flags.some((f) => f.kind === "no_show");
+  const overdue = commitmentState(r) === "overdue";
+  if (noShow || overdue) return "stalled";
+  const progressed = (r.changed?.length ?? 0) > 0 || r.deal.nextMeetingBooked;
+  return progressed ? "moving" : "active";
+}
+
+export type NextStepState = "booked" | "agreed" | "overdue" | "waiting_customer" | "waiting_rep" | "none";
+
+function commitmentState(r: Row): NextStepState {
+  if (r.deal.nextMeetingBooked) return "booked";
+  const owed = r.deal.repOwedMeeting && r.deal.agreedNextStep ? r.deal.agreedNextStep : null;
+  if (owed) {
+    const aged = r.agreedAt ? Math.floor((Date.now() - Date.parse(r.agreedAt)) / 86_400_000) : null;
+    return aged !== null && aged > 7 ? "overdue" : "agreed";
+  }
+  if (r.deal.nextStepIsCustomerWait) return "waiting_customer";
+  return "none";
+}
+
+/** "Demo booked, Aug 31" / "Agreed, not booked" / "Overdue 13d" / "None". */
+function nextStep(r: Row): { label: string; tone: "ok" | "warn" | "amber" | "bad"; detail: string | null } {
+  const st = commitmentState(r);
+  const owed = r.deal.agreedNextStep ? String(r.deal.agreedNextStep) : null;
+  switch (st) {
+    case "booked":
+      return { label: r.next ? `Booked, ${meetingLine(r.next)}` : "Booked", tone: "ok", detail: null };
+    case "agreed":
+      return { label: "Agreed, not booked", tone: "warn", detail: owed ? owed.slice(0, 110) : null };
+    case "overdue": {
+      const aged = r.agreedAt ? Math.floor((Date.now() - Date.parse(r.agreedAt)) / 86_400_000) : null;
+      return { label: `Overdue${aged ? `, ${aged}d` : ""}`, tone: "bad", detail: owed ? owed.slice(0, 110) : null };
+    }
+    case "waiting_customer":
+      return { label: "Waiting on customer", tone: "amber", detail: owed ? owed.slice(0, 110) : null };
+    default:
+      return { label: "None", tone: "bad", detail: null };
+  }
+}
+
+const sev = (x: string): number => (x === "high" ? 3 : x === "med" ? 2 : 1);
+
+/**
+ * What a sales manager would actually say, not what a system would.
+ * "Ask who signs", never "validate the presence of an economic buyer".
+ */
+const ACTION_BY_FLAG: Record<string, string> = {
+  commit_divergence: "Challenge the forecast",
+  stage_divergence: "Move the stage back",
+  dark_buyer: "Ask who signs",
+  no_show: "Ask why they no-showed",
+  single_threaded: "Get a second person in",
+  stalled: "Push out the close date",
+  competitor_unknown: "Ask who else they are looking at",
+  signature_pending: "Chase the signature",
+  no_next_meeting: "Get the next meeting booked",
+  budget_mismatch: "Re-confirm budget",
+  not_in_rolldog: "Get it into Rolldog",
+};
+
+function actionOf(r: Row, status: StatusKey): { text: string; hard: boolean } | null {
+  const top = [...r.deal.flags].sort((a, b) => sev(b.severity) - sev(a.severity))[0];
+  if (status === "silent") return { text: "Confirm it is still live", hard: true };
+  if (commitmentState(r) === "overdue") return { text: "Ask why it was never booked", hard: true };
+  // On a deal that is moving, the gap is the next meeting, not the forecast.
+  // "Challenge the forecast" on a customer who just agreed to sign reads as
+  // the report not having read its own evidence.
+  if (status === "moving") {
+    return commitmentState(r) === "none" ? { text: "Get the next meeting booked", hard: false } : null;
+  }
+  if (top && ACTION_BY_FLAG[top.kind] && top.severity !== "low") {
+    return { text: ACTION_BY_FLAG[top.kind], hard: top.severity === "high" };
+  }
+  if (commitmentState(r) === "none") return { text: "Get the next meeting booked", hard: false };
+  return null;
+}
+
+const pill = (label: string, tone: "ok" | "warn" | "amber" | "bad" | "neu") =>
+  `<span class="pill ${tone}"><i></i>${esc(label)}</span>`;
+
+function money1(n: number | null | undefined): string {
+  if (typeof n !== "number" || n <= 0) return "";
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `$${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K`;
+  return `$${Math.round(n)}`;
+}
+
+/** Rep, amount, forecast, stage, close. Under the name, never as columns. */
+function dealMeta(r: Row): string {
+  const d = r.deal;
+  const bits = [
+    d.repName || null,
+    money1(d.dealSizeAnnual) || null,
+    d.forecastCategory || null,
+    d.stageKey ?? (d.inRolldog ? null : "No opp"),
+    d.closeDate ? dayLabel(d.closeDate) : null,
+  ].filter(Boolean) as string[];
+  return bits.map(esc).join(" &middot; ");
+}
+
+function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
+  const status = statusOf(r);
+  const ns = nextStep(r);
+  const action = actionOf(r, status);
+  const silentDays = r.activity.quietDays;
+  const changed = r.headline ?? "No meaningful change";
+
+  return `<tr class="main">
+    <td class="acct"><b>${esc(r.deal.account)}</b><i>${dealMeta(r)}</i></td>
+    <td class="st">${pill(STATUS[status].label, STATUS[status].tone)}${
+      variant === "quiet"
+        ? `<i class="sub">${silentDays !== null ? `${silentDays}d silent` : "no contact on record"} &middot; ${
+            r.chases ?? 0
+          } follow-up${(r.chases ?? 0) === 1 ? "" : "s"} &middot; 0 replies</i>`
+        : ""
+    }</td>
+    <td class="chg">${esc(changed)}</td>
+    <td class="ns">${pill(ns.label, ns.tone)}${ns.detail ? `<i class="sub">${esc(ns.detail)}</i>` : ""}</td>
+    <td class="read">${
+      r.read ? esc(r.read) : `<i class="sub">Nothing captured on this deal yet.</i>`
+    }</td>
+    <td class="act">${action ? `<b class="${action.hard ? "hard" : ""}">${esc(action.text)}</b>` : `<i class="sub">No action</i>`}</td>
+  </tr>`;
+}
+
+function section(
+  title: string,
+  sub: string,
+  rows: Row[],
+  now: number,
+  tone: "red" | "green" | "grey" | "amber",
+  variant: "live" | "quiet" = "live",
+): string {
   const total = rows.reduce((n, r) => n + (r.deal.dealSizeAnnual ?? 0), 0);
-  const noAmount = rows.filter((r) => !(r.deal.dealSizeAnnual ?? 0)).length;
   return `<section class="sec ${tone}">
-    <div class="sechd">
-      <h2>${esc(title)}</h2>
-      <div class="count">${rows.length} deal${rows.length === 1 ? "" : "s"}${
-        total > 0 ? ` &middot; ${money(total)}` : ""
-      }${noAmount > 0 ? ` <span class="floor">(${noAmount} carry no amount in Rolldog, so that is a floor)</span>` : ""}</div>
-    </div>
+    <div class="sechd"><h2>${esc(title)}</h2><div class="count">${rows.length} deal${
+      rows.length === 1 ? "" : "s"
+    }${total > 0 ? ` &middot; ${money1(total)}` : ""}</div></div>
     <p class="secsub">${esc(sub)}</p>
     ${
       rows.length === 0
-        ? `<p class="empty">Nothing in this list this week.</p>`
-        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Rep forecast</th>${
-            variant === "quiet"
-              ? `<th>Last contact<i>when it went dark</i></th><th>Chased<i>since they last spoke</i></th><th>Age</th>`
-              : `<th>CRM this week<i>what the rep entered</i></th><th>DealRipe learned<i>gates that moved</i></th>`
-          }<th>Next interaction</th></tr></thead>
-           <tbody>${rows.map((r) => rowHtml(r, now, variant)).join("")}</tbody></table>`
+        ? `<p class="empty">None this week.</p>`
+        : `<table><thead><tr>
+            <th class="c1">Deal</th><th class="c2">Status</th><th class="c3">What changed</th>
+            <th class="c4">Next step</th><th class="c5">DealRipe read</th><th class="c6">Action</th>
+          </tr></thead><tbody>${rows.map((r) => rowHtml(r, now, variant)).join("")}</tbody></table>`
     }
   </section>`;
 }
@@ -329,7 +394,7 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
 export type ActivityReport = {
   subject: string;
   html: string;
-  counts: { total: number; silent: number; active: number; notStarted: number; unknown: number };
+  counts: { total: number; silent: number; moving: number; stalled: number; notMoving: number; unknown: number };
 };
 
 export async function buildActivityReport(args: {
@@ -435,148 +500,207 @@ export async function buildActivityReport(args: {
   }
 
   const byValue = (a: Row, b: Row) => (b.deal.dealSizeAnnual ?? 0) - (a.deal.dealSizeAnnual ?? 0);
-  // "They went dark on us" and "we have never had a conversation" are both
-  // silent and they are not the same problem. Mark asked about the first one
-  // ("I still haven't heard from them"), so deals with a measurable silence lead,
-  // longest first, and the ones with no captured call at all follow by value.
-  // Sorting a null as 9999 put four deals we have never spoken to above a
-  // $56,100 deal at Expect that went quiet six weeks ago.
-  const silent = rows
-    .filter((r) => r.activity.verdict === "silent")
-    .sort((a, b) => {
-      const aq = a.activity.quietDays;
-      const bq = b.activity.quietDays;
-      if (aq === null && bq !== null) return 1;
-      if (bq === null && aq !== null) return -1;
-      if (aq !== null && bq !== null && aq !== bq) return bq - aq;
-      return byValue(a, b);
+  const bySilence = (a: Row, b: Row) => {
+    const aq = a.activity.quietDays;
+    const bq = b.activity.quietDays;
+    if (aq === null && bq !== null) return 1;
+    if (bq === null && aq !== null) return -1;
+    if (aq !== null && bq !== null && aq !== bq) return bq - aq;
+    return byValue(a, b);
+  };
+
+  const of = (k: StatusKey) => rows.filter((r) => statusOf(r) === k);
+  const silent = of("silent").sort(bySilence);
+  const stalled = of("stalled").sort(byValue);
+  const notMoving = of("active").sort(byValue);
+  const moving = of("moving").sort(byValue);
+  const unknown = rows.filter((r) => r.activity.verdict === "unknown");
+  const sum = (rs: Row[]) => rs.reduce((n, r) => n + (r.deal.dealSizeAnnual ?? 0), 0);
+
+  const forecasted = rows.filter((r) => ["Commit", "Expect"].includes(r.deal.forecastCategory ?? ""));
+  // AT RISK is a judgement about the FORECAST, so it needs a forecast-relevant
+  // reason: the deal has gone quiet, the agreed step is overdue, or a
+  // high-severity flag fired. A missing qualification field on a deal the
+  // customer is actively buying is not a forecast risk, which is why buying
+  // behaviour decides and field completeness does not.
+  const atRisk = forecasted.filter((r) => {
+    const st = statusOf(r);
+    if (st === "silent" || st === "stalled") return true;
+    // A deal that is MOVING is not at risk because a field is blank. Integrity
+    // Customs had the proposal accepted, the signature agreed and a named
+    // external blocker with a date, and was being called unsupported over a
+    // budget checkbox. Buying behaviour outranks field completeness.
+    if (st === "moving") return false;
+    return r.deal.flags.some((f) => f.severity === "high");
+  });
+  const clean = forecasted.filter((r) => !atRisk.includes(r));
+
+  /**
+   * Three to five things, each one a different finding.
+   *
+   * Ranked by money inside an at-risk forecast. The headline states what
+   * happened; the line under it carries the specifics. Five copies of "forecast
+   * unsupported" is one finding printed five times.
+   */
+  const before = [...atRisk]
+    .sort(byValue)
+    .slice(0, 5)
+    .map((r) => {
+      const st = statusOf(r);
+      const ns = nextStep(r);
+      const money = money1(r.deal.dealSizeAnnual);
+      const band = r.deal.forecastCategory ?? "";
+      const claim =
+        st === "silent"
+          ? r.activity.quietDays !== null
+            ? `gone silent for ${r.activity.quietDays} days`
+            : `has never come back to us`
+          : commitmentState(r) === "overdue"
+            ? `next step is overdue`
+            : r.deal.flags.some((f) => f.kind === "no_show")
+              ? `no-showed and has not rebooked`
+              : r.deal.closeDate && Date.parse(r.deal.closeDate) - now < 14 * 86_400_000
+                ? `closes soon and is not ready`
+                : `needs a look`;
+      const facts: string[] = [];
+      if (st === "silent") facts.push(`${r.chases ?? 0} follow-up${(r.chases ?? 0) === 1 ? "" : "s"} and no reply`);
+      if (ns.label === "None") facts.push("no next step");
+      else if (ns.tone !== "ok") facts.push(ns.label.toLowerCase());
+      if (!r.deal.economicBuyer?.engaged) facts.push("signer unknown");
+      return {
+        tone: st === "silent" ? "bad" : st === "stalled" ? "amber" : "warn",
+        head: `${esc(r.deal.account)}${money ? ` &middot; ${money}` : ""}${band ? ` ${esc(band)}` : ""} ${esc(claim)}`,
+        why: r.headline ?? "",
+        facts: facts.slice(0, 3).join(", "),
+      };
     });
-  // INSIDE THE ACTIVE LIST, THE WEAKEST SIGNAL COMES FIRST.
-  //
-  // 37 of these are active only because we had a call. The customer has not
-  // written since and nothing is on the calendar, which is drift rather than
-  // momentum. Sorting a booked meeting to the bottom puts the deals that still
-  // need a next step at the top of the list Mark actually reads, without adding
-  // a third bucket he did not ask for.
-  const active = rows
-    .filter((r) => r.activity.verdict === "active")
-    .sort((a, b) => Number(a.deal.nextMeetingBooked) - Number(b.deal.nextMeetingBooked) || byValue(a, b));
-  const notStarted = rows.filter((r) => r.activity.verdict === "not_started").sort(byValue);
-  const unknown = rows.filter((r) => r.activity.verdict === "unknown").sort(byValue);
 
   const when = new Date(now).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const dot = (t: string) => `<span class="dot ${t}"></span>`;
+
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
 <title>DealRipe pipeline review, week of ${when}</title>
 <style>
-  :root{--ink:#0F172A;--muted:#334155;--line:#E7EBF0;--red:#B91C1C;--green:#047857;--bg:#F4F6F9}
+  :root{--ink:#0F172A;--body:#1E293B;--sub:#3F4A5A;--line:#E2E8F0;--soft:#F1F5F9;
+        --bad:#B42318;--amber:#B54708;--warn:#A16207;--ok:#027A48}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);padding:34px 26px}
-  .wrap{max-width:1080px;margin:0 auto}
-  .top{margin-bottom:22px}
-  .brand{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#10B981}
-  h1{font-size:26px;font-weight:750;margin-top:7px;letter-spacing:-.02em}
-  .sub{font-size:14.5px;color:#334155;margin-top:6px;line-height:1.5;max-width:820px}
-  .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0;background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden;margin:18px 0 6px}
-  .cell{padding:15px 20px;border-right:1px solid var(--line)}.cell:last-child{border-right:0}
-  .ck{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#0F172A}
-  .cv{font-size:27px;font-weight:800;letter-spacing:-.02em;margin-top:6px}
-  .cv.red{color:var(--red)}.cv.green{color:var(--green)}
-  .cs{font-size:12px;color:#334155;margin-top:4px}
-  .sec{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-top:18px}
-  .sec.red{border-top:3px solid var(--red)}.sec.green{border-top:3px solid var(--green)}.sec.grey{border-top:3px solid #94A3B8}
-  .sechd{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-  h2{font-size:18px;font-weight:750}
-  .count{font-size:13.5px;color:#334155;font-weight:600}
-  .floor{font-weight:400}
-  .secsub{font-size:13.5px;color:#334155;margin-top:7px;line-height:1.5;max-width:860px}
-  .empty{font-size:14px;color:#334155;margin-top:14px;font-style:italic}
-  table{width:100%;border-collapse:collapse;margin-top:14px}
-  th{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#0F172A;text-align:left;padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
-  th i{display:block;font-style:normal;font-weight:600;letter-spacing:0;text-transform:none;font-size:10.5px;color:#334155;margin-top:3px}
-  td{padding:10px 10px 10px 0;border-bottom:1px solid #F5F7F9;font-size:13px;vertical-align:top;line-height:1.4}
-  tr:last-child td{border-bottom:0}
-  .acct b{font-weight:700;font-size:13.5px}
-  .acct i,.meta i{display:block;font-style:normal;font-size:11.5px;color:#334155;margin-top:2px}
-  .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:650}
-  th.num{text-align:right}
-  .meta{color:var(--muted);white-space:nowrap}
-  .why{color:#334155}
-  .owed{display:block;margin-top:5px;color:var(--red);font-size:12px}
-  .watch{display:block;margin-top:5px;color:#B45309;font-size:12px}
-  .moved{color:#334155;font-size:12.5px;max-width:200px}
-  .moved span,.block span{display:block;line-height:1.5}
-  .dim{color:#334155}
-  .sig{display:block;margin-top:5px;color:#334155;font-size:12px}
-  tr.main td{border-bottom:0;padding-bottom:6px}
-  tr.readrow td{padding:0 10px 14px 0;border-bottom:1px solid #F5F7F9;font-size:13px;line-height:1.55;color:#1e293b}
-  tr.readrow .rl{display:block;font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--green);margin-bottom:3px}
-  .when{display:block;margin-top:5px;color:var(--green);font-size:12px}
-  .block span{display:block;font-size:11.5px;color:#334155;line-height:1.5}
-  .block{max-width:180px}
-  .foot{font-size:12.5px;color:#334155;margin-top:20px;line-height:1.55;max-width:860px}
-  @media print{body{background:#fff;padding:0}.sec{break-inside:auto}tr{break-inside:avoid}}
+  body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;background:#fff;color:var(--ink);
+       padding:34px 30px;font-size:11pt;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1240px;margin:0 auto}
+
+  .brand{font-size:10.5pt;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--ok)}
+  h1{font-size:27pt;font-weight:700;letter-spacing:-.02em;margin-top:8px;line-height:1.1}
+  .when{font-size:12.5pt;color:var(--sub);margin-top:6px}
+  .method{font-size:10pt;color:var(--sub);margin-top:10px;max-width:640px}
+
+  .strip{display:grid;grid-template-columns:repeat(5,1fr);border-top:2px solid var(--ink);
+         border-bottom:1px solid var(--line);margin:26px 0 32px}
+  .cell{padding:18px 20px 16px;border-right:1px solid var(--line)}
+  .cell:last-child{border-right:0}
+  .ck{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
+  .cv{font-size:24pt;font-weight:750;letter-spacing:-.025em;margin-top:7px;line-height:1}
+  .cv.bad{color:var(--bad)} .cv.ok{color:var(--ok)} .cv.warn{color:var(--warn)} .cv.amber{color:var(--amber)}
+  .cs{font-size:9.5pt;color:var(--sub);margin-top:6px}
+
+  h2{font-size:15pt;font-weight:700;letter-spacing:-.01em}
+  .kn{margin-bottom:34px}
+  .kn h2{margin-bottom:14px}
+  .krow{display:grid;grid-template-columns:14px 1fr;gap:14px;padding:14px 0;border-top:1px solid var(--soft);align-items:start}
+  .krow:last-child{border-bottom:1px solid var(--soft)}
+  .khead{font-size:12.5pt;font-weight:650;line-height:1.4}
+  .kwhy{font-size:10.5pt;color:var(--sub);margin-top:4px;line-height:1.5}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-top:7px}
+  .dot.bad{background:var(--bad)} .dot.amber{background:var(--amber)} .dot.warn{background:var(--warn)} .dot.ok{background:var(--ok)}
+
+  .integ{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:38px}
+  .ibox{border:1px solid var(--line);border-radius:8px;padding:18px 22px}
+  .ibox.q{border-color:#FDA29B}
+  .il{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
+  .iv{font-size:21pt;font-weight:750;letter-spacing:-.02em;margin-top:7px}
+  .iv.bad{color:var(--bad)}
+  .is{font-size:10pt;color:var(--sub);margin-top:7px;line-height:1.5}
+
+  .sec{margin-bottom:34px}
+  .sechd{display:flex;align-items:baseline;gap:14px;border-bottom:2px solid var(--ink);padding-bottom:9px;break-after:avoid}
+  .sec.red .sechd{border-color:var(--bad)} .sec.amber .sechd{border-color:var(--amber)}
+  .sec.green .sechd{border-color:var(--ok)} .sec.grey .sechd{border-color:#98A2B3}
+  .count{font-size:10.5pt;color:var(--sub);font-weight:600}
+  .secsub{font-size:10pt;color:var(--sub);margin:9px 0 2px;max-width:820px}
+  .empty{font-size:10.5pt;color:var(--sub);font-style:italic;padding:12px 0}
+
+  table{width:100%;border-collapse:collapse;margin-top:6px;table-layout:fixed}
+  th{font-size:9.5pt;font-weight:700;letter-spacing:.03em;color:var(--ink);text-align:left;
+     padding:12px 14px 10px 0;border-bottom:1px solid var(--line)}
+  th.c1{width:19%} th.c2{width:13%} th.c3{width:23%} th.c4{width:15%} th.c5{width:18%} th.c6{width:12%}
+  td{padding:14px 14px 14px 0;font-size:10pt;vertical-align:top;color:var(--body);
+     border-bottom:1px solid var(--soft);border-right:1px solid var(--soft)}
+  td:last-child{border-right:0}
+  tr{break-inside:avoid}
+  .acct b{font-size:11.5pt;font-weight:700;color:var(--ink);display:block;line-height:1.35}
+  .acct i,i.sub{display:block;font-style:normal;font-size:9pt;color:var(--sub);margin-top:5px;font-weight:400;line-height:1.5}
+  .chg{color:var(--ink)}
+  .read{color:var(--body)}
+  .act b{font-weight:700;color:var(--ink);font-size:10pt} .act b.hard{color:var(--bad)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:9pt;font-weight:700;white-space:nowrap;
+        padding:4px 11px 4px 8px;border-radius:14px;border:1px solid var(--line);background:#fff}
+  .pill i{width:7px;height:7px;border-radius:50%;background:#98A2B3;display:inline-block}
+  .pill.ok{color:var(--ok);border-color:#A6F4C5} .pill.ok i{background:var(--ok)}
+  .pill.warn{color:var(--warn);border-color:#FEDF89} .pill.warn i{background:var(--warn)}
+  .pill.amber{color:var(--amber);border-color:#FEC84B} .pill.amber i{background:var(--amber)}
+  .pill.bad{color:var(--bad);border-color:#FDA29B} .pill.bad i{background:var(--bad)}
+  .foot{font-size:9pt;color:var(--sub);margin-top:30px;line-height:1.7;border-top:1px solid var(--line);padding-top:14px}
+  @media print{body{padding:0 12px}thead{display:table-header-group}tr{break-inside:avoid}.sechd{break-after:avoid}}
 </style></head><body><div class="wrap">
-  <div class="top">
-    <div class="brand">DealRipe</div>
-    <h1>Pipeline review</h1>
-    <p class="sub">Every open deal, week of ${esc(when)}. Companion to the Monday digest and built from the same engine, so the two agree. The digest ranks the few that need you most. This is all of them, split by whether the customer is moving.</p>
-  </div>
+  <div class="brand">DealRipe</div>
+  <h1>Pipeline review</h1>
+  <div class="when">Week of ${esc(when)}${capped ? ` &middot; preview, ${rows.length} of ${capped} deals` : ""}</div>
+  <p class="method">Every open deal, from the CRM plus what the customer has actually done across calls, calendar and email.</p>
+
   <div class="strip">
-    <div class="cell"><div class="ck">Gone quiet</div><div class="cv red">${silent.length}</div><div class="cs">nothing from them in ${ACTIVITY_WINDOW_DAYS}+ days and nothing booked</div></div>
-    <div class="cell"><div class="ck">In contact</div><div class="cv green">${active.length}</div><div class="cs">a meeting booked, a call, or they emailed</div></div>
-    <div class="cell"><div class="ck">First meeting booked</div><div class="cv">${notStarted.length}</div><div class="cs">on the calendar, no conversation yet</div></div>
-    ${
-      // ZERO IS THE HEALTHY CASE, SO IT PRINTS NOTHING.
-      //
-      // The bucket still exists in the logic and must: one failed mailbox ingest
-      // would otherwise drop a whole rep's book into "gone quiet", and Mark would
-      // tell a rep their deals are dead while the customer emailed yesterday. The
-      // classifier keeps the guard, the page just stops showing an empty box.
-      unknown.length > 0
-        ? `<div class="cell"><div class="ck">Cannot tell</div><div class="cv">${unknown.length}</div><div class="cs">reported apart, never counted as quiet</div></div>`
-        : ""
-    }
+    <div class="cell"><div class="ck">Open pipeline</div><div class="cv">${money1(sum(rows))}</div><div class="cs">${rows.length} deals</div></div>
+    <div class="cell"><div class="ck">Commit + Expect</div><div class="cv">${money1(sum(forecasted))}</div><div class="cs">${forecasted.length} deals</div></div>
+    <div class="cell"><div class="ck">Moving</div><div class="cv ok">${moving.length}</div><div class="cs">${money1(sum(moving)) || "no size in Rolldog"}</div></div>
+    <div class="cell"><div class="ck">Stalled</div><div class="cv amber">${stalled.length}</div><div class="cs">${money1(sum(stalled)) || "no size in Rolldog"}</div></div>
+    <div class="cell"><div class="ck">Gone silent</div><div class="cv bad">${silent.length}</div><div class="cs">${money1(sum(silent)) || "no size in Rolldog"}</div></div>
   </div>
-  ${section(
-    "Gone quiet",
-    `${SILENCE_CAVEAT} Sorted by how long they have been quiet, longest first.`,
-    silent,
-    now,
-    "red",
-    "quiet",
-  )}
-  ${section(
-    "In contact with the customer",
-    "A meeting is on the calendar, or they have spoken to us or emailed us inside the last two weeks. Our own outbound does not count: a rep emailing into silence is the problem, not evidence against it. Deals with nothing booked after the last contact are listed first, because those are the ones still needing a next step.",
-    active,
-    now,
-    "green",
-  )}
-  ${section(
-    "First meeting booked",
-    "A meeting is booked and DealRipe has never captured a conversation on these. New business waiting to start rather than momentum, which is why they are counted apart: a deal that has not begun is not a deal that is moving.",
-    notStarted,
-    now,
-    "grey",
-  )}
+
   ${
-    unknown.length > 0
-      ? section(
-          "Cannot tell",
-          "The calendar or the mailbox could not be read for these, so silence cannot be claimed. Listed rather than folded into either column, because a deal we did not check is not a deal that went quiet.",
-          unknown,
-          now,
-          "grey",
-        )
+    before.length > 0
+      ? `<div class="kn"><h2>Before the review</h2>${before
+          .map(
+            (h) => `<div class="krow">${dot(h.tone)}<div><div class="khead">${h.head}</div><div class="kwhy">${esc(h.why)}${
+              h.facts && h.why !== h.facts ? ` &middot; ${esc(h.facts)}` : ""
+            }</div></div></div>`,
+          )
+          .join("")}</div>`
       : ""
   }
-  ${capped ? `<p class="foot" style="color:#B91C1C"><b>PREVIEW ONLY: showing ${rows.length} of ${capped} deals.</b></p>` : ""}
-  <p class="foot">${rows.length} deals in total. Amounts are annualized from Rolldog and are blank where Rolldog carries no size, so every dollar total here is a floor rather than a total. "Agreed and not booked" is checked against the rep's own calendar, so it is the absence of a meeting rather than the absence of a note about one.</p>
+
+  <div class="integ">
+    <div class="ibox q">
+      <div class="il">Forecast at risk</div>
+      <div class="iv bad">${money1(sum(atRisk)) || "no size in Rolldog"}</div>
+      <div class="is">${atRisk.length} of ${forecasted.length} Commit and Expect deals have gone quiet, stalled, or carry a serious issue.</div>
+    </div>
+    <div class="ibox">
+      <div class="il">Forecast looks clean</div>
+      <div class="iv">${money1(sum(clean)) || "no size in Rolldog"}</div>
+      <div class="is">${clean.length} deals where nothing in the evidence argues with the rep. Not a prediction that they close.</div>
+    </div>
+  </div>
+
+  ${section("Gone silent", "Nothing from the customer in 14 days or more, and nothing booked. Longest silence first.", silent, now, "red", "quiet")}
+  ${section("Stalled", "The customer was engaged and then something broke: a no-show, or an agreed next step that never happened.", stalled, now, "amber")}
+  ${section("Active, not moving", "They are talking to us. Nothing closed and nothing got booked this week.", notMoving, now, "amber")}
+  ${section("Moving", "A gate closed or the next meeting is booked. These do not need forecast-call time.", moving, now, "green")}
+  ${unknown.length > 0 ? section("Unable to verify", "The calendar or mailbox could not be read, so nothing is claimed about these.", unknown, now, "grey") : ""}
+
+  <p class="foot"><b>Method.</b> Customer activity is based on what DealRipe can see across connected calls, email and calendar. Other interactions, a call to a rep's mobile for example, may not be captured, so treat "gone silent" as the list to ask about. Where a meeting could not be verified it is labelled as such rather than counted as missed. Amounts are annualized from Rolldog and blank where Rolldog has no size, so dollar totals are a floor. "Agreed, not booked" is checked against the rep's own calendar.</p>
 </div></body></html>`;
 
   return {
-    subject: `DealRipe pipeline review, week of ${when}. ${silent.length} deals have gone quiet`,
+    subject: `DealRipe pipeline review, week of ${when}. ${silent.length} gone silent, ${stalled.length} stalled`,
     html,
-    counts: { total: rows.length, silent: silent.length, active: active.length, notStarted: notStarted.length, unknown: unknown.length },
+    counts: { total: rows.length, silent: silent.length, moving: moving.length, stalled: stalled.length, notMoving: notMoving.length, unknown: unknown.length },
   };
 }

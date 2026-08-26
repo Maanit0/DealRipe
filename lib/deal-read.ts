@@ -32,6 +32,19 @@ import { subjectTopic } from "./email-log";
 import { runModel } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 
+/**
+ * Bump when the prompt or the output shape changes.
+ *
+ * The hash is over the evidence, which is right: a deal where nothing happened
+ * should keep its paragraph rather than getting a differently worded one every
+ * week. But it means a prompt change can never reach a deal whose evidence has
+ * not moved. Three revisions tightening the READ line landed on nothing,
+ * because every deal returned a cached read written under the old prompt.
+ * The version goes into the hash so a prompt change invalidates exactly what it
+ * should: everything, once.
+ */
+const PROMPT_VERSION = "v3-two-line";
+
 /** How far back the evidence goes. Long enough to hold a Magaya cycle. */
 const LOOKBACK_DAYS = 120;
 /** Cap per section, so one chatty deal cannot crowd out the prompt. */
@@ -235,25 +248,44 @@ export async function buildDealEvidence(args: {
   };
 }
 
-const SYSTEM = `You write one short read on a B2B sales deal for a CRO, to be read just before a pipeline review.
+const SYSTEM = `You write two short margin notes on a sales deal for a VP of Sales, read in a table on the morning of a forecast meeting.
 
-WHAT A READ IS. Three sentences, at most about 60 words. Where the deal actually stands, what the last real interaction produced, and what is now holding it. A manager's read, not a summary of the data you were given.
+Return exactly two lines and nothing else:
 
-Rules:
-1. No em-dashes or en-dashes. Hard rule.
-2. RESOLVE COMMITMENTS AGAINST LATER EVIDENCE. Every line you are given carries a date. If they agreed on the 14th to sign an NDA and a field captured on the 21st says the NDA is signed, the NDA is DONE and the open item is whatever came after it. Never report a commitment as outstanding when a later line shows it was met.
-3. Say what is OWED and BY WHOM, in the present tense, naming the person where you have a name.
-4. Never say the customer failed to attend when the evidence says DealRipe could not get into the room. Those are different facts and only one of them is about the customer.
-5. Do not restate the stage, the amount or the band. The reader can already see those next to your text.
-6. Do not hedge and do not pad. No "it appears", no "it seems", no "moving forward".
-7. If the evidence is genuinely thin, say so in one sentence rather than inflating it.
-8. Never invent a fact, a date or a name that is not in the evidence.
+CHANGED: <one line>
+READ: <one line>
 
-FIRST, ONE HEADLINE. Before the three sentences, write a single line beginning "HEADLINE: " naming the most consequential thing learned about this deal IN THE LAST SEVEN DAYS, in at most twelve words. It is read in a table cell, so it has to stand alone.
+HARD LIMITS. CHANGED is at most 18 words. READ is at most 14 words. Count them before you answer. A longer line is a wrong answer, not a better one.
 
-A headline is what the customer said or did and what it means: "Confirmed $34,400 a month is in range", "Legal is reviewing the NDA", "Named CargoWise as the incumbent", "Pushed the decision to their October board". It is never a list of field names, never "existing systems, next step, business type", and never a category. If nothing was learned in the last seven days, write exactly "HEADLINE: none".
+READ is a JUDGEMENT, not a summary. Never retell the deal.
+  Good: "Strong champion, but the Aug 30 close still looks early."
+  Good: "Deal is real. The blocker is external."
+  Good: "Commit looks aggressive with no reply in 13 days."
+  Good: "They are talking, but the deal is not moving."
+  Good: "Two meetings attempted, nobody joined."
+  Good: "One call booked Aug 13, nobody showed."
+  When nothing has been captured, say what was ATTEMPTED and when. Do not write the same generic sentence on every such deal.
+  Bad:  "The August 11 session confirmed GHY's core use case, migrating their post-entry audit workflow..."
+  Bad:  "Integrity Customs is a one-person startup customs broker that..."
+  Bad:  "Forecast is not supported by observable customer evidence."
+Never use: "not supported by", "customer evidence", "observable", "momentum", "engagement".
 
-Then a blank line, then the three sentences.`;
+CHANGED is the single most important NEW thing in the last seven days.
+  One thing, never a list. Never "budget confirmed, business type learned" - those are database fields.
+  Specific: names, competitors, dates, numbers, commitments, blockers.
+  Good: "Jonathan pulled CargoWise disposition codes himself to help build the mockup."
+  Good: "Isiahphena accepted the proposal and agreed to sign once CBP clears."
+  Good: "Customer missed the second demo attempt; no demo has happened yet."
+  Positive developments matter as much as problems. This is not a risk field.
+  If nothing genuinely new happened, write exactly: No meaningful change. Never invent one.
+
+RULES
+- No em-dashes or en-dashes.
+- Resolve commitments against later evidence. Agreed on the 14th, a field dated the 21st says signed, so it is DONE.
+- If DealRipe could not get into a meeting, say the meeting could not be verified. Never say the customer failed to attend.
+- Never invent a fact, date or name.
+- Judge the forecast on BUYING BEHAVIOUR, not on blank fields. A customer who accepted a proposal and agreed to sign is a real deal with a blank budget field.
+- Say "Signer unknown", "Budget unknown", "Decision process unknown". Never prose for those.`;
 
 export type DealReadResult =
   | { status: "written"; text: string; headline: string | null }
@@ -273,16 +305,16 @@ export async function writeDealRead(ev: DealEvidence): Promise<DealReadResult> {
     ...ev.lines,
     "",
     ev.changedThisWeek.length > 0
-      ? `IN THE LAST SEVEN DAYS these gates moved: ${ev.changedThisWeek.join(", ")}. The headline must come from what those actually say above.`
-      : "NOTHING moved in the last seven days, so the headline is exactly: none.",
+      ? `In the last seven days these gates moved: ${ev.changedThisWeek.join(", ")}. CHANGED must come from what those lines actually say above.`
+      : "No gate moved in the last seven days. Unless a meeting, no-show or customer email above is genuinely new, CHANGED is exactly: No meaningful change.",
     "",
-    "Write the headline and the read.",
+    "Write the two lines.",
   ].join("\n");
 
   try {
     const resp = await runModel({
       task: "deal_read",
-      maxTokens: 300,
+      maxTokens: 160,
       temperature: 0.2,
       system: SYSTEM,
       messages: [{ role: "user", content: user }],
@@ -293,10 +325,21 @@ export async function writeDealRead(ev: DealEvidence): Promise<DealReadResult> {
     // The headline is split off rather than left in the paragraph: the table
     // cell and the read below it are two different reading jobs, and a cell
     // holding a whole paragraph is what sent this round in circles.
-    const m = /^HEADLINE:\s*(.+?)\s*(?:\n|$)/i.exec(raw);
-    const headline = m && !/^none$/i.test(m[1].trim()) ? m[1].trim() : null;
-    const text = raw.replace(/^HEADLINE:.*(?:\n|$)/i, "").trim();
-    if (!text) return { status: "unavailable", error: "model returned only a headline" };
+    const clip = (v: string, words: number): string => {
+      const first = v.split(/(?<=[.!?])\s+/)[0] ?? v;
+      const w = first.trim().split(/\s+/);
+      return w.length <= words ? first.trim() : `${w.slice(0, words).join(" ")}...`;
+    };
+    const hm = /^CHANGED:\s*(.+?)\s*$/im.exec(raw);
+    const rm = /^READ:\s*(.+?)\s*$/im.exec(raw);
+    const rawHead = hm?.[1]?.trim() ?? "";
+    const headline = rawHead && !/^no meaningful change\.?$/i.test(rawHead) ? clip(rawHead, 20) : null;
+    // Length is ENFORCED, not asked for. The prompt said "at most 14 words"
+    // through three revisions and the model kept returning 58-word retellings,
+    // because length is the first instruction a model trades away when it has
+    // material. The rule that must hold is held in code.
+    const text = clip((rm?.[1] ?? "").trim(), 16);
+    if (!text) return { status: "unavailable", error: "model returned no READ line" };
     return { status: "written", text, headline };
   } catch (err) {
     return { status: "unavailable", error: err instanceof Error ? err.message : String(err) };
@@ -318,7 +361,11 @@ export async function writeDealRead(ev: DealEvidence): Promise<DealReadResult> {
  * exists to document.
  */
 export function evidenceHash(ev: DealEvidence): string {
-  return crypto.createHash("sha256").update(ev.lines.join("\n")).digest("hex").slice(0, 32);
+  return crypto
+    .createHash("sha256")
+    .update(`${PROMPT_VERSION}\n${ev.lines.join("\n")}`)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 export type StoredRead = { text: string; headline: string | null; generatedAt: string; fresh: boolean };

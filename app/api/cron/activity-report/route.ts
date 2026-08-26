@@ -63,7 +63,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     if (!apply || to.length === 0) {
       console.log(
         `[activity-report] apply=${apply} recipients=${to.length} ` +
-          `total=${report.counts.total} silent=${report.counts.silent} active=${report.counts.active} unknown=${report.counts.unknown} (not sent)`,
+          `total=${report.counts.total} moving=${report.counts.moving} notMoving=${report.counts.notMoving} stalled=${report.counts.stalled} silent=${report.counts.silent} (not sent)`,
       );
       return NextResponse.json({
         ok: true,
@@ -80,7 +80,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       // Plain text is deliberately a pointer rather than a flattened table. 119
       // deals rendered as text is unreadable, and a text part nobody can use is
       // worse than one that says where to look.
-      text: `${report.subject}. ${report.counts.silent} deals have gone quiet, ${report.counts.active} are moving. Open the HTML version for the full list.`,
+      text: `${report.subject}. ${report.counts.silent} deals have gone quiet, ${report.counts.moving} are moving. Open the HTML version for the full list.`,
     });
     await recordActivityReportSend({
       tenantId,
