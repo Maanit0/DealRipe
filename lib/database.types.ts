@@ -1066,6 +1066,7 @@ export type Database = {
           tenant_id: string;
           deal_id: string;
           text: string;
+          headline: string | null;
           evidence_hash: string;
           generated_at: string;
           updated_at: string;
@@ -1075,6 +1076,7 @@ export type Database = {
           tenant_id: string;
           deal_id: string;
           text: string;
+          headline: string | null;
           evidence_hash: string;
           generated_at?: string;
           updated_at?: string;
@@ -1084,6 +1086,7 @@ export type Database = {
           tenant_id?: string;
           deal_id?: string;
           text?: string;
+          headline?: string | null;
           evidence_hash?: string;
           generated_at?: string;
           updated_at?: string;

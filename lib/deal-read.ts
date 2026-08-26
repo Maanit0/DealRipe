@@ -249,10 +249,14 @@ Rules:
 7. If the evidence is genuinely thin, say so in one sentence rather than inflating it.
 8. Never invent a fact, a date or a name that is not in the evidence.
 
-Return the three sentences as plain text. No heading, no bullets, no preamble.`;
+FIRST, ONE HEADLINE. Before the three sentences, write a single line beginning "HEADLINE: " naming the most consequential thing learned about this deal IN THE LAST SEVEN DAYS, in at most twelve words. It is read in a table cell, so it has to stand alone.
+
+A headline is what the customer said or did and what it means: "Confirmed $34,400 a month is in range", "Legal is reviewing the NDA", "Named CargoWise as the incumbent", "Pushed the decision to their October board". It is never a list of field names, never "existing systems, next step, business type", and never a category. If nothing was learned in the last seven days, write exactly "HEADLINE: none".
+
+Then a blank line, then the three sentences.`;
 
 export type DealReadResult =
-  | { status: "written"; text: string }
+  | { status: "written"; text: string; headline: string | null }
   /** Nothing captured on this deal, so nothing to read. No model call was made. */
   | { status: "no_evidence" }
   | { status: "unavailable"; error: string };
@@ -268,7 +272,11 @@ export async function writeDealRead(ev: DealEvidence): Promise<DealReadResult> {
     "",
     ...ev.lines,
     "",
-    "Write the read.",
+    ev.changedThisWeek.length > 0
+      ? `IN THE LAST SEVEN DAYS these gates moved: ${ev.changedThisWeek.join(", ")}. The headline must come from what those actually say above.`
+      : "NOTHING moved in the last seven days, so the headline is exactly: none.",
+    "",
+    "Write the headline and the read.",
   ].join("\n");
 
   try {
@@ -280,9 +288,16 @@ export async function writeDealRead(ev: DealEvidence): Promise<DealReadResult> {
       messages: [{ role: "user", content: user }],
     });
     const block = resp.message.content.find((b) => b.type === "text");
-    const text = (block && "text" in block ? block.text : "").trim().replace(/\s*[—–]\s*/g, ", ");
-    if (!text) return { status: "unavailable", error: "model returned nothing" };
-    return { status: "written", text };
+    const raw = (block && "text" in block ? block.text : "").trim().replace(/\s*[—–]\s*/g, ", ");
+    if (!raw) return { status: "unavailable", error: "model returned nothing" };
+    // The headline is split off rather than left in the paragraph: the table
+    // cell and the read below it are two different reading jobs, and a cell
+    // holding a whole paragraph is what sent this round in circles.
+    const m = /^HEADLINE:\s*(.+?)\s*(?:\n|$)/i.exec(raw);
+    const headline = m && !/^none$/i.test(m[1].trim()) ? m[1].trim() : null;
+    const text = raw.replace(/^HEADLINE:.*(?:\n|$)/i, "").trim();
+    if (!text) return { status: "unavailable", error: "model returned only a headline" };
+    return { status: "written", text, headline };
   } catch (err) {
     return { status: "unavailable", error: err instanceof Error ? err.message : String(err) };
   }
@@ -306,7 +321,7 @@ export function evidenceHash(ev: DealEvidence): string {
   return crypto.createHash("sha256").update(ev.lines.join("\n")).digest("hex").slice(0, 32);
 }
 
-export type StoredRead = { text: string; generatedAt: string; fresh: boolean };
+export type StoredRead = { text: string; headline: string | null; generatedAt: string; fresh: boolean };
 
 /**
  * The current read on a deal, generating one only when the evidence has moved.
@@ -328,18 +343,18 @@ export async function refreshDealRead(args: {
 
   const existing = await db
     .from("deal_reads")
-    .select("text, evidence_hash, generated_at")
+    .select("text, headline, evidence_hash, generated_at")
     .eq("tenant_id", args.tenantId)
     .eq("deal_id", args.dealId)
     .maybeSingle();
-  const row = existing.data as { text: string; evidence_hash: string; generated_at: string } | null;
+  const row = existing.data as { text: string; headline: string | null; evidence_hash: string; generated_at: string } | null;
 
   if (row && row.evidence_hash === hash) {
-    return { text: row.text, generatedAt: row.generated_at, fresh: false };
+    return { text: row.text, headline: row.headline, generatedAt: row.generated_at, fresh: false };
   }
   if (args.readOnly) {
     // Stale but real beats nothing, and the caller is told which it got.
-    return row ? { text: row.text, generatedAt: row.generated_at, fresh: false } : null;
+    return row ? { text: row.text, headline: row.headline, generatedAt: row.generated_at, fresh: false } : null;
   }
 
   const written = await writeDealRead(args.evidence);
@@ -349,7 +364,7 @@ export async function refreshDealRead(args: {
     }
     // Keep whatever is stored rather than blanking a deal because one model
     // call failed. A missing read reads as "nothing to say about this deal".
-    return row ? { text: row.text, generatedAt: row.generated_at, fresh: false } : null;
+    return row ? { text: row.text, headline: row.headline, generatedAt: row.generated_at, fresh: false } : null;
   }
 
   const now = new Date().toISOString();
@@ -358,6 +373,7 @@ export async function refreshDealRead(args: {
       tenant_id: args.tenantId,
       deal_id: args.dealId,
       text: written.text,
+      headline: written.headline,
       evidence_hash: hash,
       generated_at: now,
       updated_at: now,
@@ -365,5 +381,5 @@ export async function refreshDealRead(args: {
     { onConflict: "tenant_id,deal_id" },
   );
   if (up.error) console.error(`[deal-read] upsert failed for ${args.evidence.account}: ${up.error.message}`);
-  return { text: written.text, generatedAt: now, fresh: true };
+  return { text: written.text, headline: written.headline, generatedAt: now, fresh: true };
 }

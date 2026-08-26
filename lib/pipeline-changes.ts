@@ -489,7 +489,23 @@ function money0(n: number): string {
  */
 function computeMovement(
   changes: ChangeEvent[],
-  ctx: { daysInStage: number | null; stageName: string | null; progress: WeekChange[]; isNoShow: boolean; gainedCount: number },
+  ctx: {
+    daysInStage: number | null;
+    stageName: string | null;
+    progress: WeekChange[];
+    isNoShow: boolean;
+    gainedCount: number;
+    /**
+     * The close date as the CRM holds it right now.
+     *
+     * Snapshot diffs only see as far as the last snapshot inside the window, so
+     * a date pushed twice reported the first leg and stopped. IFF printed
+     * "close pushed Aug 23 to Sep 13" beside a forecast column reading Sep 21,
+     * which is two different close dates on one row and the kind of thing a CRO
+     * spots immediately. The live value is the truth about where it landed.
+     */
+    liveCloseDate: string | null;
+  },
 ): Movement {
   if (changes.some((c) => c.kind === "new")) {
     return { summary: `New opportunity, entered ${stageKeyFromName(ctx.stageName) ?? ctx.stageName ?? "pipeline"}`, direction: "forward", events: ["new"], moved: true };
@@ -544,7 +560,12 @@ function computeMovement(
   const cd = changes.find((c) => c.kind === "close_date");
   if (cd && cd.from && cd.to) {
     const a = Date.parse(cd.from);
-    const b = Date.parse(cd.to);
+    // WHERE IT LANDED, NOT WHERE IT WAS LAST SEEN. When the live date disagrees
+    // with the last snapshot, the date moved again after that snapshot and the
+    // live value is the end of the journey.
+    const landed =
+      ctx.liveCloseDate && Number.isFinite(Date.parse(ctx.liveCloseDate)) ? ctx.liveCloseDate : cd.to;
+    const b = Date.parse(landed);
     if (Number.isFinite(a) && Number.isFinite(b)) {
       if (b > a + 7 * 86_400_000) {
         // FROM AND TO, NOT JUST TO.
@@ -552,10 +573,10 @@ function computeMovement(
         // "Close pushed to Sep 13" tells a leader where it landed and hides how
         // far it travelled. A week's slip and a two-month slip print identically,
         // and the second one is the one worth a question.
-        parts.push(`close pushed ${dateShort(cd.from)} → ${dateShort(cd.to)}`);
+        parts.push(`close pushed ${dateShort(cd.from)} → ${dateShort(landed)}`);
         if (direction === "none") direction = "backward";
       } else if (b < a - 7 * 86_400_000) {
-        parts.push(`close pulled in ${dateShort(cd.from)} → ${dateShort(cd.to)}`);
+        parts.push(`close pulled in ${dateShort(cd.from)} → ${dateShort(landed)}`);
         if (direction !== "backward") direction = "forward";
       }
     }
@@ -851,8 +872,19 @@ export async function getPipelineChanges(
       engaged.length > 0 ||
       (callsBy[d.id] ?? []).some((c) => NO_SHOW_OUTCOMES.has(String(c.outcome ?? "")));
 
-    // The last actual conversation date.
+    // THE LAST ACTUAL CONVERSATION, WHICH A NO-SHOW IS NOT.
+    //
+    // This counted every past call whatever its outcome, so a deal where the
+    // customer failed to turn up two days ago reported "spoke 2 days ago" and
+    // landed in the Monday review under "in contact with the customer". The
+    // exact opposite of what happened, in the column a CRO acts on.
+    //
+    // capture_failed still counts. That one is undecidable: a meeting was
+    // scheduled, our bot could not get into the room, and the meeting most
+    // likely ran without us. Treating "we did not see it" as "it did not
+    // happen" is the same error mirrored, and the read says which it was.
     const callMs = (callsBy[d.id] ?? [])
+      .filter((c) => !NO_SHOW_OUTCOMES.has(String(c.outcome ?? "")))
       .map((c) => Date.parse(String(c.scheduled_start ?? c.call_date ?? "")))
       .filter((t) => Number.isFinite(t) && t <= Date.now());
     const lastConversationAt = callMs.length ? new Date(Math.max(...callMs)).toISOString() : null;
@@ -1005,7 +1037,14 @@ export async function getPipelineChanges(
     changes.push(...snapshotChanges(snaps));
     // The one-line movement verdict, and whether the deal moved backward (a slip,
     // forecast cut, or pushed close), which is what earns a look on its own.
-    const movement = computeMovement(changes, { daysInStage, stageName, progress: whatChangedTop, isNoShow, gainedCount: answeredThisWeek.length });
+    const movement = computeMovement(changes, {
+      daysInStage,
+      stageName,
+      progress: whatChangedTop,
+      isNoShow,
+      gainedCount: answeredThisWeek.length,
+      liveCloseDate: s?.closeDate ?? null,
+    });
     const hasBackwardChange = movement.direction === "backward";
 
     // --- flags ---

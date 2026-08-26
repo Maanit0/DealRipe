@@ -8,6 +8,7 @@
  */
 
 import { buildDealEvidence, refreshDealRead } from "./deal-read";
+import { subjectTopic } from "./email-log";
 import {
   ACTIVITY_WINDOW_DAYS,
   SILENCE_CAVEAT,
@@ -22,6 +23,16 @@ const esc = (s: unknown) =>
 
 const money = (n: number | null | undefined) =>
   typeof n === "number" && n > 0 ? `$${Math.round(n).toLocaleString("en-US")}` : "";
+
+/**
+ * A bare "2026-09-21" parses as UTC midnight and then renders as Sep 20 in
+ * Pacific, so a close date printed one way in one column and another way in the
+ * next. Date-only strings are calendar days, not instants.
+ */
+const dayLabel = (iso: string): string => {
+  const [y, m, dd] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, dd ?? 1).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
 
 const days = (iso: string | null, now: number): number | null => {
   const t = iso ? Date.parse(iso) : NaN;
@@ -104,9 +115,11 @@ type Row = {
   read?: string;
   changed?: string[];
   lastLearned?: { key: string; at: string } | null;
+  headline?: string | null;
   lastContact?: LastContact;
   /** Outbound emails since they last said anything. The chase count. */
   chases?: number;
+  lastChaseAbout?: string | null;
 };
 
 /**
@@ -121,9 +134,9 @@ type Row = {
 async function contactHistory(
   tenantId: string,
   dealIds: string[],
-): Promise<Map<string, { lastInbound: { at: string; subject: string | null } | null; chases: number }>> {
+): Promise<Map<string, { lastInbound: { at: string; subject: string | null } | null; chases: number; lastChaseAbout: string | null }>> {
   const db = supabaseAdmin();
-  const out = new Map<string, { lastInbound: { at: string; subject: string | null } | null; chases: number }>();
+  const out = new Map<string, { lastInbound: { at: string; subject: string | null } | null; chases: number; lastChaseAbout: string | null }>();
   const CHUNK = 60;
   for (let i = 0; i < dealIds.length; i += CHUNK) {
     const res = await db
@@ -146,9 +159,15 @@ async function contactHistory(
       const chases = lastIn
         ? msgs.filter((m) => !m.customer_side && m.sent_at && Date.parse(m.sent_at) > Date.parse(lastIn.sent_at!)).length
         : msgs.filter((m) => !m.customer_side).length;
+      // The MOST RECENT chase only. A merged list of subjects is the noise that
+      // got email pulled out of the learned column; one subject is a fact.
+      const lastOut = msgs.find(
+        (m) => !m.customer_side && m.sent_at && (!lastIn?.sent_at || Date.parse(m.sent_at) > Date.parse(lastIn.sent_at)),
+      );
       out.set(dealId, {
         lastInbound: lastIn && lastIn.sent_at ? { at: lastIn.sent_at, subject: lastIn.subject } : null,
         chases,
+        lastChaseAbout: lastOut ? subjectTopic(lastOut.subject) : null,
       });
     }
   }
@@ -218,7 +237,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
     <td class="num">${esc(amount)}</td>
     <td class="meta">${band ? `<b>${esc(band)}</b>` : `<span class="dim">no band</span>`}${
       d.closeDate
-        ? `<i>closes ${new Date(d.closeDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</i>`
+        ? `<i>closes ${dayLabel(d.closeDate)}</i>`
         : `<i>no close date</i>`
     }</td>
     ${
@@ -232,12 +251,17 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
           }</td>
           <td class="moved">${
             r.chases
-              ? `<b>${r.chases}</b><span>follow-up${r.chases === 1 ? "" : "s"} from us since</span>`
-              : `<span class="dim">no follow-up sent</span>`
-          }</td>`
+              ? `<b>${r.chases}</b><span>follow-up${r.chases === 1 ? "" : "s"} from us since</span>${
+                  r.lastChaseAbout ? `<span>last one about "${esc(r.lastChaseAbout)}"</span>` : ""
+                }`
+              : `<span>no follow-up sent since</span>`
+          }</td>
+          <td class="meta"><b>${r.activity.quietDays ?? "?"}</b><i>days dark</i></td>`
         : `<td class="moved">${crm ? `<span>${esc(crm)}</span>` : `<span class="dim">no change</span>`}</td>
            <td class="moved">${
-             changed.length
+             r.headline
+               ? `<span><b>${esc(r.headline)}</b></span>`
+               : changed.length
                ? `<span>${esc(changed.join(", "))}</span>`
                : r.lastLearned
                  ? `<span>nothing new. Last learned <b>${esc(r.lastLearned.key)}</b> on ${new Date(
@@ -261,7 +285,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
     }<span class="sig">${esc(r.activity.reason)}</span></td>
   </tr>${
     r.read
-      ? `<tr class="readrow"><td colspan="6"><span class="rl">DealRipe&rsquo;s read</span>${esc(r.read)}</td></tr>`
+      ? `<tr class="readrow"><td colspan="7"><span class="rl">DealRipe&rsquo;s read</span>${esc(r.read)}</td></tr>`
       : ""
   }`;
 }
@@ -294,7 +318,7 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
         ? `<p class="empty">Nothing in this list this week.</p>`
         : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Rep forecast</th>${
             variant === "quiet"
-              ? `<th>Last contact<i>when it went dark</i></th><th>Chased<i>since they last spoke</i></th>`
+              ? `<th>Last contact<i>when it went dark</i></th><th>Chased<i>since they last spoke</i></th><th>Age</th>`
               : `<th>CRM this week<i>what the rep entered</i></th><th>DealRipe learned<i>gates that moved</i></th>`
           }<th>Next interaction</th></tr></thead>
            <tbody>${rows.map((r) => rowHtml(r, now, variant)).join("")}</tbody></table>`
@@ -356,6 +380,7 @@ export async function buildActivityReport(args: {
     next: nextByDeal.get(deal.dealId),
     agreedAt: agreedAtByDeal.get(deal.dealId),
     chases: contactByDeal.get(deal.dealId)?.chases,
+    lastChaseAbout: contactByDeal.get(deal.dealId)?.lastChaseAbout ?? null,
     lastContact: (() => {
       const inb = contactByDeal.get(deal.dealId)?.lastInbound ?? null;
       const call = deal.lastConversationAt;
@@ -403,6 +428,7 @@ export async function buildActivityReport(args: {
       r.lastLearned = ev.lastLearned;
       const stored = await refreshDealRead({ tenantId, dealId: r.deal.dealId, evidence: ev, readOnly: args.readOnly });
       r.read = stored?.text;
+      r.headline = stored?.headline ?? null;
     } catch (err) {
       console.warn(`[activity-report] read failed for ${r.deal.account}: ${err instanceof Error ? err.message : String(err)}`);
     }

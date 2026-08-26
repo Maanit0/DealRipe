@@ -31,6 +31,13 @@ create table if not exists public.deal_reads (
   -- The read itself. Three sentences, written for a leader.
   text text not null,
 
+  -- One line, at most twelve words, naming the most consequential thing learned
+  -- in the last seven days. Split from the read on purpose: a table cell and a
+  -- paragraph are two different reading jobs, and a cell holding a paragraph is
+  -- what made the first four versions of this report unreadable. Null when
+  -- nothing moved that week.
+  headline text,
+
   -- Hash of the evidence the read was written from. A caller compares
   -- before spending a model call.
   evidence_hash text not null,
