@@ -70,13 +70,18 @@ function rowHtml(r: Row, now: number): string {
   const amount = money(d.dealSizeAnnual);
   const stage = d.stageName ?? d.stageKey ?? "";
   const band = d.forecastCategory ?? "";
-  const lastTalk = days(d.lastConversationAt, now);
   const owed = d.repOwedMeeting && d.agreedNextStep ? d.agreedNextStep : null;
+  // THE THREE OPEN GAPS THAT MATTER MOST, NOT ALL OF THEM.
+  //
+  // A deal with eleven gaps prints eleven and the column becomes wallpaper. The
+  // first three are the ones the stage ordering puts first, which is the order a
+  // rep has to close them in anyway.
+  const blocking = (d.missing ?? []).slice(0, 3);
   return `<tr>
     <td class="acct"><b>${esc(d.account)}</b><i>${esc(d.repName || d.repEmail || "")}</i></td>
     <td class="num">${esc(amount)}</td>
     <td class="meta">${esc(stage)}${band ? `<i>${esc(band)}</i>` : ""}</td>
-    <td class="meta">${lastTalk === null ? "no call captured" : `${lastTalk}d ago`}</td>
+    <td class="moved">${esc(d.movement?.summary ?? "")}</td>
     <td class="why">${esc(r.activity.reason)}${
       owed ? `<span class="owed">Agreed and not booked: ${esc(owed)}</span>` : ""
     }${
@@ -84,6 +89,7 @@ function rowHtml(r: Row, now: number): string {
         ? `<span class="watch">Nothing on the calendar after it</span>`
         : ""
     }</td>
+    <td class="block">${blocking.length ? blocking.map((m) => `<span>${esc(m)}</span>`).join("") : ""}</td>
   </tr>`;
 }
 
@@ -101,7 +107,7 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
     ${
       rows.length === 0
         ? `<p class="empty">Nothing in this list this week.</p>`
-        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>Last spoke</th><th>What we can see</th></tr></thead>
+        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>Moved this week</th><th>Customer signal</th><th>Still open</th></tr></thead>
            <tbody>${rows.map((r) => rowHtml(r, now)).join("")}</tbody></table>`
     }
   </section>`;
@@ -185,7 +191,7 @@ export async function buildActivityReport(args: {
 
   const when = new Date(now).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
-<title>DealRipe deal activity, week of ${when}</title>
+<title>DealRipe pipeline review, week of ${when}</title>
 <style>
   :root{--ink:#0F172A;--muted:#5B6470;--line:#E7EBF0;--red:#B91C1C;--green:#047857;--bg:#F4F6F9}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -221,13 +227,16 @@ export async function buildActivityReport(args: {
   .why{color:#334155}
   .owed{display:block;margin-top:5px;color:var(--red);font-size:12px}
   .watch{display:block;margin-top:5px;color:#B45309;font-size:12px}
+  .moved{color:#334155;font-size:12.5px;max-width:190px}
+  .block span{display:block;font-size:11.5px;color:var(--muted);line-height:1.5}
+  .block{max-width:180px}
   .foot{font-size:12.5px;color:var(--muted);margin-top:20px;line-height:1.55;max-width:860px}
   @media print{body{background:#fff;padding:0}.sec{break-inside:auto}tr{break-inside:avoid}}
 </style></head><body><div class="wrap">
   <div class="top">
     <div class="brand">DealRipe</div>
-    <h1>Every deal, and whether the customer is moving</h1>
-    <p class="sub">Week of ${esc(when)}, for Mark Buman. Companion to the Monday digest and built from the same engine, so the two agree. The digest ranks the few that need you most; this is all of them.</p>
+    <h1>Pipeline review</h1>
+    <p class="sub">Every open deal, week of ${esc(when)}. Companion to the Monday digest and built from the same engine, so the two agree. The digest ranks the few that need you most. This is all of them, split by whether the customer is moving.</p>
   </div>
   <div class="strip">
     <div class="cell"><div class="ck">Gone quiet</div><div class="cv red">${silent.length}</div><div class="cs">nothing from them in ${ACTIVITY_WINDOW_DAYS}+ days and nothing booked</div></div>
@@ -259,7 +268,7 @@ export async function buildActivityReport(args: {
 </div></body></html>`;
 
   return {
-    subject: `DealRipe deal activity, week of ${when}. ${silent.length} gone quiet`,
+    subject: `DealRipe pipeline review, week of ${when}. ${silent.length} deals have gone quiet`,
     html,
     counts: { total: rows.length, silent: silent.length, active: active.length, unknown: unknown.length },
   };
