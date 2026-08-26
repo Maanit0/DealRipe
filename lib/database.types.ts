@@ -1060,6 +1060,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      deal_reads: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          text: string;
+          evidence_hash: string;
+          generated_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          text: string;
+          evidence_hash: string;
+          generated_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          deal_id?: string;
+          text?: string;
+          evidence_hash?: string;
+          generated_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       tasks: {
         Row: {
           id: string;

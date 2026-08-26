@@ -26,6 +26,8 @@ function arg(name: string): string | undefined {
   const report = await buildActivityReport({
     tenantId,
     windowDays: Number(arg("--days") ?? 14),
+    limit: arg("--limit") ? Number(arg("--limit")) : undefined,
+    readOnly: process.argv.includes("--no-generate"),
   });
   mkdirSync(".previews", { recursive: true });
   const out = ".previews/monday-activity.html";

@@ -7,6 +7,7 @@
  * reviewed. One renderer, two callers, byte identical.
  */
 
+import { buildDealEvidence, refreshDealRead } from "./deal-read";
 import {
   ACTIVITY_WINDOW_DAYS,
   SILENCE_CAVEAT,
@@ -94,7 +95,7 @@ async function nextStepAgreedAt(tenantId: string, dealIds: string[]): Promise<Ma
   }
   return out;
 }
-type Row = { deal: DealChangeRecord; activity: ActivityRead; next?: NextMeeting; agreedAt?: string };
+type Row = { deal: DealChangeRecord; activity: ActivityRead; next?: NextMeeting; agreedAt?: string; read?: string; changed?: string[] };
 
 /**
  * The next scheduled meeting per deal, with who is on it.
@@ -152,15 +153,20 @@ function rowHtml(r: Row, now: number): string {
   // first three are the ones the stage ordering puts first, which is the order a
   // rep has to close them in anyway.
   const blocking = (d.missing ?? []).slice(0, 3);
-  return `<tr>
+  const changed = (r.changed ?? []).slice(0, 4);
+  const crm = d.movement?.summary && d.movement.moved ? d.movement.summary : "";
+  return `<tr class="main">
     <td class="acct"><b>${esc(d.account)}</b><i>${esc(d.repName || d.repEmail || "")}</i></td>
     <td class="num">${esc(amount)}</td>
     <td class="meta">${esc(stage)}${band ? `<i>${esc(band)}</i>` : ""}</td>
-    <td class="moved">${esc(d.movement?.summary ?? "")}</td>
-    <td class="why">${esc(r.activity.reason)}${
+    <td class="moved">${
+      [crm, ...changed].filter(Boolean).map((c) => `<span>${esc(c)}</span>`).join("") ||
+      `<span class="dim">nothing this week</span>`
+    }</td>
+    <td class="why">${
       r.next
-        ? `<span class="when">${esc(meetingLine(r.next))}</span>`
-        : ""
+        ? `<b>${esc(meetingLine(r.next))}</b>`
+        : `<span class="dim">nothing booked</span>`
     }${
       owed
         ? `<span class="owed">Agreed${
@@ -169,13 +175,12 @@ function rowHtml(r: Row, now: number): string {
               : ""
           }, not booked: ${esc(owed)}</span>`
         : ""
-    }${
-      r.activity.verdict === "active" && !d.nextMeetingBooked && !owed
-        ? `<span class="watch">Nothing on the calendar after it</span>`
-        : ""
-    }</td>
-    <td class="block">${blocking.length ? blocking.map((m) => `<span>${esc(m)}</span>`).join("") : ""}</td>
-  </tr>`;
+    }<span class="sig">${esc(r.activity.reason)}</span></td>
+  </tr>${
+    r.read
+      ? `<tr class="readrow"><td colspan="5"><span class="rl">DealRipe reads it</span>${esc(r.read)}</td></tr>`
+      : ""
+  }`;
 }
 
 /** "Thu Aug 27, 1:30pm with Liam", rather than "a meeting is on the calendar". */
@@ -204,7 +209,7 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
     ${
       rows.length === 0
         ? `<p class="empty">Nothing in this list this week.</p>`
-        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>CRM change this week</th><th>Customer signal</th><th>Still open</th></tr></thead>
+        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>Changed this week</th><th>Next interaction</th></tr></thead>
            <tbody>${rows.map((r) => rowHtml(r, now)).join("")}</tbody></table>`
     }
   </section>`;
@@ -221,6 +226,14 @@ export async function buildActivityReport(args: {
   /** Movement window for the underlying pipeline read. Not the silence window. */
   windowDays?: number;
   now?: number;
+  /** Read stored reads without generating. For previewing without spend. */
+  readOnly?: boolean;
+  /**
+   * Cap the deals rendered. PREVIEW ONLY, and it prints a line saying it was
+   * capped: a report that silently shows 8 of 122 reads as though it were the
+   * whole book is the kind of thing that gets quoted.
+   */
+  limit?: number;
 }): Promise<ActivityReport> {
   const windowDays = args.windowDays ?? 14;
   const now = args.now ?? Date.now();
@@ -229,7 +242,9 @@ export async function buildActivityReport(args: {
   const sinceIso = new Date(now - windowDays * 86_400_000).toISOString();
   const untilIso = new Date(now).toISOString();
   const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
-  const deals = pc.deals as DealChangeRecord[];
+  const allDeals = pc.deals as DealChangeRecord[];
+  const deals = args.limit ? allDeals.slice(0, args.limit) : allDeals;
+  const capped = deals.length < allDeals.length ? allDeals.length : 0;
 
   const { byDeal, dealsWithAnyMail } = await lastCustomerEmailByDeal(
     tenantId,
@@ -263,6 +278,34 @@ export async function buildActivityReport(args: {
       ACTIVITY_WINDOW_DAYS,
     ),
   }));
+
+  // THE READ, FOR EVERY DEAL.
+  //
+  // refreshDealRead only spends a model call when the evidence hash has moved,
+  // so a week where a deal did nothing costs nothing and keeps the paragraph it
+  // had. Sequential rather than parallel: this is a weekly cron with a 300s
+  // budget and a burst of 120 concurrent model calls is how you get rate
+  // limited into a half-written report.
+  for (const r of rows) {
+    try {
+      const ev = await buildDealEvidence({
+        tenantId,
+        dealId: r.deal.dealId,
+        account: r.deal.account,
+        repName: r.deal.repName,
+        stage: r.deal.stageName ?? "no opportunity yet",
+        band: r.deal.forecastCategory,
+        amount: r.deal.dealSizeAnnual,
+        closeDate: r.deal.closeDate,
+        missing: r.deal.missing ?? [],
+      });
+      r.changed = ev.changedThisWeek;
+      const stored = await refreshDealRead({ tenantId, dealId: r.deal.dealId, evidence: ev, readOnly: args.readOnly });
+      r.read = stored?.text;
+    } catch (err) {
+      console.warn(`[activity-report] read failed for ${r.deal.account}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   const byValue = (a: Row, b: Row) => (b.deal.dealSizeAnnual ?? 0) - (a.deal.dealSizeAnnual ?? 0);
   // "They went dark on us" and "we have never had a conversation" are both
@@ -332,7 +375,13 @@ export async function buildActivityReport(args: {
   .why{color:#334155}
   .owed{display:block;margin-top:5px;color:var(--red);font-size:12px}
   .watch{display:block;margin-top:5px;color:#B45309;font-size:12px}
-  .moved{color:#334155;font-size:12.5px;max-width:190px}
+  .moved{color:#334155;font-size:12.5px;max-width:200px}
+  .moved span,.block span{display:block;line-height:1.5}
+  .dim{color:#94A3B8}
+  .sig{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+  tr.main td{border-bottom:0;padding-bottom:6px}
+  tr.readrow td{padding:0 10px 14px 0;border-bottom:1px solid #F5F7F9;font-size:13px;line-height:1.55;color:#1e293b}
+  tr.readrow .rl{display:block;font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--green);margin-bottom:3px}
   .when{display:block;margin-top:5px;color:var(--green);font-size:12px}
   .block span{display:block;font-size:11.5px;color:var(--muted);line-height:1.5}
   .block{max-width:180px}
@@ -347,7 +396,7 @@ export async function buildActivityReport(args: {
   <div class="strip">
     <div class="cell"><div class="ck">Gone quiet</div><div class="cv red">${silent.length}</div><div class="cs">nothing from them in ${ACTIVITY_WINDOW_DAYS}+ days and nothing booked</div></div>
     <div class="cell"><div class="ck">In contact</div><div class="cv green">${active.length}</div><div class="cs">a meeting booked, a call, or they emailed</div></div>
-    <div class="cell"><div class="ck">Not started</div><div class="cv">${notStarted.length}</div><div class="cs">first meeting booked, not held yet</div></div>
+    <div class="cell"><div class="ck">First meeting booked</div><div class="cv">${notStarted.length}</div><div class="cs">on the calendar, no conversation yet</div></div>
     ${
       // ZERO IS THE HEALTHY CASE, SO IT PRINTS NOTHING.
       //
@@ -375,7 +424,7 @@ export async function buildActivityReport(args: {
     "green",
   )}
   ${section(
-    "First meeting not yet held",
+    "First meeting booked",
     "A meeting is booked and DealRipe has never captured a conversation on these. New business waiting to start rather than momentum, which is why they are counted apart: a deal that has not begun is not a deal that is moving.",
     notStarted,
     now,
@@ -392,6 +441,7 @@ export async function buildActivityReport(args: {
         )
       : ""
   }
+  ${capped ? `<p class="foot" style="color:#B91C1C"><b>PREVIEW ONLY: showing ${rows.length} of ${capped} deals.</b></p>` : ""}
   <p class="foot">${rows.length} deals in total. Amounts are annualized from Rolldog and are blank where Rolldog carries no size, so every dollar total here is a floor rather than a total. "Agreed and not booked" is checked against the rep's own calendar, so it is the absence of a meeting rather than the absence of a note about one.</p>
 </div></body></html>`;
 
