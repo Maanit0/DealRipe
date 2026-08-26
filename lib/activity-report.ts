@@ -134,11 +134,16 @@ function rowHtml(r: Row, now: number): string {
   const amount = money(d.dealSizeAnnual);
   // A BLANK STAGE IS A FACT, NOT A MISSING VALUE.
   //
-  // 84 of 122 deals carry no Rolldog opportunity, because Magaya does not create
-  // one until after the discovery call. Printing an empty cell reads as "we do
-  // not know"; printing it reads as what it is, which is a deal being worked
-  // with no CRM record behind it.
-  const stage = d.stageName ?? d.stageKey ?? (d.inRolldog ? "" : "Not in Rolldog");
+  // 100 of 133 open deals carry no Rolldog opportunity, because Magaya does not
+  // create one until after the discovery call. An empty cell reads as "we do not
+  // know", which is wrong.
+  //
+  // NOT "Salesforce". 82 of those 100 do carry a Salesforce ACCOUNT link, and an
+  // account is not an opportunity: most hold no open opportunity and none holds a
+  // stage. Naming the other CRM here would send a leader looking for a staged
+  // opportunity that does not exist, which is the same error as reading a linked
+  // account as a live deal.
+  const stage = d.stageName ?? d.stageKey ?? (d.inRolldog ? "" : "No opportunity yet");
   const band = d.forecastCategory ?? "";
   const owed = d.repOwedMeeting && d.agreedNextStep ? d.agreedNextStep : null;
   // THE THREE OPEN GAPS THAT MATTER MOST, NOT ALL OF THEM.
