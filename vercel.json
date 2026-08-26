@@ -41,6 +41,10 @@
       "schedule": "0 11 * * 1"
     },
     {
+      "path": "/api/cron/activity-report",
+      "schedule": "5 11 * * 1"
+    },
+    {
       "path": "/api/cron/audit",
       "schedule": "0 12 * * *"
     },

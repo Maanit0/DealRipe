@@ -118,6 +118,41 @@ export async function recordDigestSend(args: {
   }
 }
 
+/**
+ * Archive one Monday activity report. Same shape as the digest: no deal_id,
+ * because it is about the whole book rather than one deal, so it must never
+ * appear in a deal's own sent-communications list.
+ */
+export async function recordActivityReportSend(args: {
+  tenantId: string;
+  toEmail: string;
+  subject: string;
+  html: string;
+  text: string;
+  providerId?: string | null;
+}): Promise<void> {
+  try {
+    const res = await supabaseAdmin().from("sent_messages").insert({
+      tenant_id: args.tenantId,
+      deal_id: null,
+      call_id: null,
+      kind: "activity_report",
+      to_email: args.toEmail,
+      subject: args.subject,
+      body_html: args.html,
+      body_text: args.text,
+      provider_id: args.providerId ?? null,
+    });
+    if (res.error) {
+      console.error(`[sent-messages] activity report insert failed: ${res.error.message}`);
+    }
+  } catch (err) {
+    console.error(
+      `[sent-messages] activity report insert threw: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 /** Every archived weekly digest for a tenant, newest first. */
 export async function getDigestSends(tenantId: string): Promise<DigestSend[]> {
   const res = await supabaseAdmin()
