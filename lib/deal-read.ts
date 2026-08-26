@@ -43,7 +43,7 @@ import { supabaseAdmin } from "./supabase";
  * The version goes into the hash so a prompt change invalidates exactly what it
  * should: everything, once.
  */
-const PROMPT_VERSION = "v3-two-line";
+const PROMPT_VERSION = "v4-implication";
 
 /** How far back the evidence goes. Long enough to hold a Magaya cycle. */
 const LOOKBACK_DAYS = 120;
@@ -257,7 +257,10 @@ READ: <one line>
 
 HARD LIMITS. CHANGED is at most 18 words. READ is at most 14 words. Count them before you answer. A longer line is a wrong answer, not a better one.
 
-READ is a JUDGEMENT, not a summary. Never retell the deal.
+READ is the IMPLICATION of the evidence. Never a summary, never a retelling, and never a restatement of your own CHANGED line.
+  If CHANGED says "Jonathan pulled CargoWise codes himself", READ is "Strong champion, but the Aug 31 close still looks early." Not "Jonathan pulled CargoWise codes."
+  If CHANGED says "Two presentations attempted, neither verified", READ is "Still unclear whether the buyer has seen the product." Not "Two presentations could not be confirmed."
+  Answer: what does this mean for the deal, the forecast, or the close date.
   Good: "Strong champion, but the Aug 30 close still looks early."
   Good: "Deal is real. The blocker is external."
   Good: "Commit looks aggressive with no reply in 13 days."

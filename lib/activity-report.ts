@@ -120,6 +120,8 @@ type Row = {
   /** Outbound emails since they last said anything. The chase count. */
   chases?: number;
   lastChaseAbout?: string | null;
+  /** A captured call or a real inbound email has happened at least once. */
+  engaged?: boolean;
 };
 
 /**
@@ -180,6 +182,24 @@ async function contactHistory(
  * "A meeting is on the calendar" is a fact a leader cannot act on. When, and
  * with whom, is the difference between a row he reads and a row he asks about.
  */
+/** Deals with at least one CAPTURED call. A calendar event is not engagement. */
+async function capturedCallDeals(tenantId: string, dealIds: string[]): Promise<Set<string>> {
+  const db = supabaseAdmin();
+  const out = new Set<string>();
+  const CHUNK = 60;
+  for (let i = 0; i < dealIds.length; i += CHUNK) {
+    const res = await db
+      .from("calls")
+      .select("deal_id")
+      .eq("tenant_id", tenantId)
+      .eq("outcome", "captured")
+      .in("deal_id", dealIds.slice(i, i + CHUNK));
+    if (res.error) throw new Error(`calls read failed: ${res.error.message}`);
+    for (const c of (res.data ?? []) as Array<{ deal_id: string }>) out.add(c.deal_id);
+  }
+  return out;
+}
+
 async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<Map<string, NextMeeting>> {
   const db = supabaseAdmin();
   const out = new Map<string, NextMeeting>();
@@ -208,18 +228,41 @@ async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<M
 }
 
 /** "Thu Aug 27, 1:30pm with Liam", rather than "a meeting is on the calendar". */
-function meetingLine(n: NextMeeting): string {
-  const when = new Date(n.at).toLocaleString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  return `${when}${n.who.length ? ` with ${n.who.join(", ")}` : ""}`;
+/**
+ * A meeting title a person would say, not the calendar record.
+ *
+ * "Confirmed - FTZ Febest Parts | Magaya ABI Demo" becomes "ABI demo". The raw
+ * string carries the vendor name, the customer name, a confirmation prefix and
+ * a pipe, none of which a leader needs in a table cell, and printing it whole
+ * is what pushed the booked pill into the next column.
+ */
+function shortMeeting(title: string | null): string {
+  let t = (title ?? "").trim();
+  if (!t) return "";
+  t = t.split("|")[0];
+  t = t.replace(/^\s*(confirmed|updated|invitation|reminder|tentative)\s*[-:,]?\s*/i, "");
+  t = t.replace(/\bmagaya\b/gi, "");
+  t = t.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, "");
+  t = t.replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, "");
+  t = t.replace(/\b(mon|tues?|wed(nes)?|thur?s?|fri|sat(ur)?|sun)(day)?\b/gi, "");
+  t = t.replace(/[<>/]+/g, " ").replace(/[-–—]+/g, " ").replace(/\s{2,}/g, " ").trim();
+  t = t.replace(/^[,.\s]+|[,.\s]+$/g, "");
+  const KIND = /(demo|discovery|proposal|pricing|kickoff|onboarding|review|training|walkthrough|follow.?up|intro|scoping|technical|check.?in)/i;
+  const k = KIND.exec(t);
+  if (k) {
+    // Two or three words around the kind word beats a company name and a date.
+    const words = t.split(/\s+/);
+    const at = words.findIndex((w) => KIND.test(w));
+    return words.slice(Math.max(0, at - 1), at + 2).join(" ").slice(0, 26);
+  }
+  return t.slice(0, 26);
 }
 
+const shortDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
 const STATUS = {
+  never:   { label: "Never engaged",     tone: "neu"  },
   moving:  { label: "Moving",            tone: "ok"   },
   active:  { label: "Active, not moving", tone: "warn" },
   stalled: { label: "Stalled",           tone: "amber" },
@@ -240,6 +283,12 @@ type StatusKey = keyof typeof STATUS;
  * Moving with two missed demos behind it because a future invite existed.
  */
 function statusOf(r: Row): StatusKey {
+  // NEVER ENGAGED COMES FIRST. A deal cannot go silent if the customer was never
+  // there: "gone silent" and "has never come back to us" both imply an earlier
+  // interaction that never happened. Engagement means a CAPTURED call or a real
+  // inbound email. A calendar event is not engagement, and a meeting DealRipe
+  // could not get into proves nothing either way.
+  if (!r.engaged) return "never";
   if (r.activity.verdict === "silent") return "silent";
   const noShow = r.deal.flags.some((f) => f.kind === "no_show");
   const overdue = commitmentState(r) === "overdue";
@@ -264,18 +313,23 @@ function commitmentState(r: Row): NextStepState {
 /** "Demo booked, Aug 31" / "Agreed, not booked" / "Overdue 13d" / "None". */
 function nextStep(r: Row): { label: string; tone: "ok" | "warn" | "amber" | "bad"; detail: string | null } {
   const st = commitmentState(r);
-  const owed = r.deal.agreedNextStep ? String(r.deal.agreedNextStep) : null;
   switch (st) {
-    case "booked":
-      return { label: r.next ? `Booked, ${meetingLine(r.next)}` : "Booked", tone: "ok", detail: null };
+    case "booked": {
+      const what = r.next ? shortMeeting(r.next.title) : "";
+      return {
+        label: r.next ? `Booked, ${shortDate(r.next.at)}` : "Booked",
+        tone: "ok",
+        detail: what || null,
+      };
+    }
     case "agreed":
-      return { label: "Agreed, not booked", tone: "warn", detail: owed ? owed.slice(0, 110) : null };
+      return { label: "Agreed", tone: "warn", detail: "Not booked" };
     case "overdue": {
       const aged = r.agreedAt ? Math.floor((Date.now() - Date.parse(r.agreedAt)) / 86_400_000) : null;
-      return { label: `Overdue${aged ? `, ${aged}d` : ""}`, tone: "bad", detail: owed ? owed.slice(0, 110) : null };
+      return { label: `Overdue${aged ? `, ${aged}d` : ""}`, tone: "bad", detail: "Agreed, never booked" };
     }
     case "waiting_customer":
-      return { label: "Waiting on customer", tone: "amber", detail: owed ? owed.slice(0, 110) : null };
+      return { label: "Waiting", tone: "amber", detail: "On the customer" };
     default:
       return { label: "None", tone: "bad", detail: null };
   }
@@ -303,8 +357,21 @@ const ACTION_BY_FLAG: Record<string, string> = {
 
 function actionOf(r: Row, status: StatusKey): { text: string; hard: boolean } | null {
   const top = [...r.deal.flags].sort((a, b) => sev(b.severity) - sev(a.severity))[0];
+  const ns = commitmentState(r);
+
+  // THE ACTION MUST NOT ARGUE WITH THE ROW.
+  //
+  // "Ask why it was never booked" printed next to "Booked, Aug 31" is the kind
+  // of contradiction that ends a leader's trust in the whole page. The next step
+  // is checked first, so a booked meeting can never produce a chase-the-booking
+  // action, and an external blocker gets a wait rather than a meeting request.
+  if (ns === "booked") {
+    return status === "stalled" ? { text: "Make sure this one holds", hard: false } : null;
+  }
+  if (ns === "waiting_customer") return { text: "Waiting on customer", hard: false };
+  if (status === "never") return { text: "Confirm this is real", hard: false };
   if (status === "silent") return { text: "Confirm it is still live", hard: true };
-  if (commitmentState(r) === "overdue") return { text: "Ask why it was never booked", hard: true };
+  if (ns === "overdue") return { text: "Ask why it was never booked", hard: true };
   // On a deal that is moving, the gap is the next meeting, not the forecast.
   // "Challenge the forecast" on a customer who just agreed to sign reads as
   // the report not having read its own evidence.
@@ -346,7 +413,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
   const ns = nextStep(r);
   const action = actionOf(r, status);
   const silentDays = r.activity.quietDays;
-  const changed = r.headline ?? "No meaningful change";
+  const changed = r.headline;
 
   return `<tr class="main">
     <td class="acct"><b>${esc(r.deal.account)}</b><i>${dealMeta(r)}</i></td>
@@ -357,7 +424,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
           } follow-up${(r.chases ?? 0) === 1 ? "" : "s"} &middot; 0 replies</i>`
         : ""
     }</td>
-    <td class="chg">${esc(changed)}</td>
+    <td class="chg">${changed ? esc(changed) : `<span class="none">No change</span>`}</td>
     <td class="ns">${pill(ns.label, ns.tone)}${ns.detail ? `<i class="sub">${esc(ns.detail)}</i>` : ""}</td>
     <td class="read">${
       r.read ? esc(r.read) : `<i class="sub">Nothing captured on this deal yet.</i>`
@@ -394,7 +461,7 @@ function section(
 export type ActivityReport = {
   subject: string;
   html: string;
-  counts: { total: number; silent: number; moving: number; stalled: number; notMoving: number; unknown: number };
+  counts: { total: number; silent: number; moving: number; stalled: number; notMoving: number; never: number; unknown: number };
 };
 
 export async function buildActivityReport(args: {
@@ -418,7 +485,20 @@ export async function buildActivityReport(args: {
   const sinceIso = new Date(now - windowDays * 86_400_000).toISOString();
   const untilIso = new Date(now).toISOString();
   const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
-  const allDeals = pc.deals as DealChangeRecord[];
+  const raw = pc.deals as DealChangeRecord[];
+  // SALES PIPELINE, NOT EVERY RECORD DEALRIPE TOUCHES. Mark asked for all deals,
+  // meaning all deals being sold. A closed opportunity and an onboarding session
+  // are neither, and one closed-won row in a forecast pack costs more trust than
+  // it adds coverage. Pre-opportunity evaluations stay: at Magaya the
+  // opportunity is created after discovery, so excluding them would drop most of
+  // the real early pipeline.
+  const CLOSED = /(closed|won|lost)/i;
+  const allDeals = raw.filter((d) => {
+    if (d.archived) return false;
+    if (d.stageName && CLOSED.test(d.stageName)) return false;
+    if (d.isRenewal && !d.inRolldog) return false;
+    return true;
+  });
   const deals = args.limit ? allDeals.slice(0, args.limit) : allDeals;
   const capped = deals.length < allDeals.length ? allDeals.length : 0;
 
@@ -439,11 +519,13 @@ export async function buildActivityReport(args: {
   const nextByDeal = await nextMeetingByDeal(tenantId, dealIds);
   const agreedAtByDeal = await nextStepAgreedAt(tenantId, dealIds);
   const contactByDeal = await contactHistory(tenantId, dealIds);
+  const capturedDeals = await capturedCallDeals(tenantId, dealIds);
 
   const rows: Row[] = deals.map((deal) => ({
     deal,
     next: nextByDeal.get(deal.dealId),
     agreedAt: agreedAtByDeal.get(deal.dealId),
+    engaged: capturedDeals.has(deal.dealId) || Boolean(contactByDeal.get(deal.dealId)?.lastInbound),
     chases: contactByDeal.get(deal.dealId)?.chases,
     lastChaseAbout: contactByDeal.get(deal.dealId)?.lastChaseAbout ?? null,
     lastContact: (() => {
@@ -499,21 +581,36 @@ export async function buildActivityReport(args: {
     }
   }
 
-  const byValue = (a: Row, b: Row) => (b.deal.dealSizeAnnual ?? 0) - (a.deal.dealSizeAnnual ?? 0);
-  const bySilence = (a: Row, b: Row) => {
-    const aq = a.activity.quietDays;
-    const bq = b.activity.quietDays;
-    if (aq === null && bq !== null) return 1;
-    if (bq === null && aq !== null) return -1;
-    if (aq !== null && bq !== null && aq !== bq) return bq - aq;
-    return byValue(a, b);
+  // MONEY FIRST, IN EVERY SECTION.
+  //
+  // Sorting the silent list by days quiet put a $4K deal quiet for 36 days above
+  // a $245K Expect quiet for 15. A leader triages by exposure, so the amount
+  // leads and urgency breaks the tie. Deals with no amount in Rolldog sort after
+  // every deal that has one, because an unknown number is not a small one.
+  const byValue = (a: Row, b: Row) => {
+    const av = a.deal.dealSizeAnnual ?? 0;
+    const bv = b.deal.dealSizeAnnual ?? 0;
+    if (av > 0 && bv <= 0) return -1;
+    if (bv > 0 && av <= 0) return 1;
+    return bv - av;
   };
+  const then = (second: (a: Row, b: Row) => number) => (a: Row, b: Row) => byValue(a, b) || second(a, b);
+  const bySilence = then((a, b) => (b.activity.quietDays ?? -1) - (a.activity.quietDays ?? -1));
+  const byOverdue = then((a, b) => {
+    const age = (r: Row) => (r.agreedAt ? Date.now() - Date.parse(r.agreedAt) : -1);
+    return age(b) - age(a);
+  });
+  const byClose = then((a, b) => {
+    const c = (r: Row) => (r.deal.closeDate ? Date.parse(r.deal.closeDate) : Number.POSITIVE_INFINITY);
+    return c(a) - c(b);
+  });
 
   const of = (k: StatusKey) => rows.filter((r) => statusOf(r) === k);
   const silent = of("silent").sort(bySilence);
-  const stalled = of("stalled").sort(byValue);
-  const notMoving = of("active").sort(byValue);
-  const moving = of("moving").sort(byValue);
+  const stalled = of("stalled").sort(byOverdue);
+  const notMoving = of("active").sort(byClose);
+  const moving = of("moving").sort(byClose);
+  const never = of("never").sort(byValue);
   const unknown = rows.filter((r) => r.activity.verdict === "unknown");
   const sum = (rs: Row[]) => rs.reduce((n, r) => n + (r.deal.dealSizeAnnual ?? 0), 0);
 
@@ -525,7 +622,7 @@ export async function buildActivityReport(args: {
   // behaviour decides and field completeness does not.
   const atRisk = forecasted.filter((r) => {
     const st = statusOf(r);
-    if (st === "silent" || st === "stalled") return true;
+    if (st === "silent" || st === "stalled" || st === "never") return true;
     // A deal that is MOVING is not at risk because a field is blank. Integrity
     // Customs had the proposal accepted, the signature agreed and a named
     // external blocker with a date, and was being called unsupported over a
@@ -551,7 +648,9 @@ export async function buildActivityReport(args: {
       const money = money1(r.deal.dealSizeAnnual);
       const band = r.deal.forecastCategory ?? "";
       const claim =
-        st === "silent"
+        st === "never"
+          ? `has never engaged`
+          : st === "silent"
           ? r.activity.quietDays !== null
             ? `gone silent for ${r.activity.quietDays} days`
             : `has never come back to us`
@@ -562,10 +661,20 @@ export async function buildActivityReport(args: {
               : r.deal.closeDate && Date.parse(r.deal.closeDate) - now < 14 * 86_400_000
                 ? `closes soon and is not ready`
                 : `needs a look`;
+      // Sales shorthand, not fragments. "overdue, 13d" reads as a stray field;
+      // "13d overdue" is how a person says it.
       const facts: string[] = [];
-      if (st === "silent") facts.push(`${r.chases ?? 0} follow-up${(r.chases ?? 0) === 1 ? "" : "s"} and no reply`);
-      if (ns.label === "None") facts.push("no next step");
-      else if (ns.tone !== "ok") facts.push(ns.label.toLowerCase());
+      if (st === "silent" || st === "never") {
+        const n = r.chases ?? 0;
+        facts.push(n > 0 ? `${n} follow-up${n === 1 ? "" : "s"}, no reply` : "no reply ever");
+      }
+      const nsState = commitmentState(r);
+      if (nsState === "none") facts.push("no next step");
+      else if (nsState === "overdue") {
+        const aged = r.agreedAt ? Math.floor((now - Date.parse(r.agreedAt)) / 86_400_000) : null;
+        facts.push(aged ? `${aged}d overdue` : "next step overdue");
+      } else if (nsState === "agreed") facts.push("agreed, never booked");
+      else if (nsState === "waiting_customer") facts.push("waiting on customer");
       if (!r.deal.economicBuyer?.engaged) facts.push("signer unknown");
       return {
         tone: st === "silent" ? "bad" : st === "stalled" ? "amber" : "warn",
@@ -585,7 +694,7 @@ export async function buildActivityReport(args: {
         --bad:#B42318;--amber:#B54708;--warn:#A16207;--ok:#027A48}
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;background:#fff;color:var(--ink);
-       padding:34px 30px;font-size:11pt;line-height:1.5;-webkit-font-smoothing:antialiased}
+       padding:34px 30px;font-size:11pt;line-height:1.55;-webkit-font-smoothing:antialiased}
   .wrap{max-width:1240px;margin:0 auto}
 
   .brand{font-size:10.5pt;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--ok)}
@@ -629,20 +738,22 @@ export async function buildActivityReport(args: {
   .empty{font-size:10.5pt;color:var(--sub);font-style:italic;padding:12px 0}
 
   table{width:100%;border-collapse:collapse;margin-top:6px;table-layout:fixed}
-  th{font-size:9.5pt;font-weight:700;letter-spacing:.03em;color:var(--ink);text-align:left;
-     padding:12px 14px 10px 0;border-bottom:1px solid var(--line)}
-  th.c1{width:19%} th.c2{width:13%} th.c3{width:23%} th.c4{width:15%} th.c5{width:18%} th.c6{width:12%}
-  td{padding:14px 14px 14px 0;font-size:10pt;vertical-align:top;color:var(--body);
-     border-bottom:1px solid var(--soft);border-right:1px solid var(--soft)}
+  th{font-size:10pt;font-weight:700;letter-spacing:.01em;color:var(--ink);text-align:left;
+     padding:14px 16px 11px 0;border-bottom:1.5px solid var(--ink)}
+  th.c1{width:17%} th.c2{width:10%} th.c3{width:26%} th.c4{width:11%} th.c5{width:24%} th.c6{width:12%}
+  td{padding:16px 16px 16px 0;font-size:10.5pt;vertical-align:top;color:var(--body);
+     border-bottom:1px solid var(--soft);border-right:1px solid var(--soft);
+     overflow-wrap:anywhere;word-break:normal;hyphens:auto}
   td:last-child{border-right:0}
   tr{break-inside:avoid}
-  .acct b{font-size:11.5pt;font-weight:700;color:var(--ink);display:block;line-height:1.35}
-  .acct i,i.sub{display:block;font-style:normal;font-size:9pt;color:var(--sub);margin-top:5px;font-weight:400;line-height:1.5}
+  .acct b{font-size:12pt;font-weight:700;color:var(--ink);display:block;line-height:1.35}
+  .acct i,i.sub{display:block;font-style:normal;font-size:9.5pt;color:var(--sub);margin-top:6px;font-weight:400;line-height:1.55}
   .chg{color:var(--ink)}
   .read{color:var(--body)}
-  .act b{font-weight:700;color:var(--ink);font-size:10pt} .act b.hard{color:var(--bad)}
-  .pill{display:inline-flex;align-items:center;gap:6px;font-size:9pt;font-weight:700;white-space:nowrap;
-        padding:4px 11px 4px 8px;border-radius:14px;border:1px solid var(--line);background:#fff}
+  .act b{font-weight:700;color:var(--ink);font-size:10.5pt;display:block;line-height:1.4} .act b.hard{color:var(--bad)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:9.5pt;font-weight:700;white-space:nowrap;
+        max-width:100%;padding:4px 11px 4px 8px;border-radius:14px;border:1px solid var(--line);background:#fff}
+  .none{color:#98A2B3;font-size:10.5pt}
   .pill i{width:7px;height:7px;border-radius:50%;background:#98A2B3;display:inline-block}
   .pill.ok{color:var(--ok);border-color:#A6F4C5} .pill.ok i{background:var(--ok)}
   .pill.warn{color:var(--warn);border-color:#FEDF89} .pill.warn i{background:var(--warn)}
@@ -663,6 +774,7 @@ export async function buildActivityReport(args: {
     <div class="cell"><div class="ck">Stalled</div><div class="cv amber">${stalled.length}</div><div class="cs">${money1(sum(stalled)) || "no size in Rolldog"}</div></div>
     <div class="cell"><div class="ck">Gone silent</div><div class="cv bad">${silent.length}</div><div class="cs">${money1(sum(silent)) || "no size in Rolldog"}</div></div>
   </div>
+  <p class="method" style="margin:-18px 0 30px">${notMoving.length} active but not moving &middot; ${never.length} never engaged.</p>
 
   ${
     before.length > 0
@@ -689,6 +801,9 @@ export async function buildActivityReport(args: {
     </div>
   </div>
 
+  ${section("Never engaged",
+    "DealRipe has never captured a call or a reply from these. A meeting may have been attempted, but nobody has actually engaged yet.",
+    never, now, "grey")}
   ${section("Gone silent", "Nothing from the customer in 14 days or more, and nothing booked. Longest silence first.", silent, now, "red", "quiet")}
   ${section("Stalled", "The customer was engaged and then something broke: a no-show, or an agreed next step that never happened.", stalled, now, "amber")}
   ${section("Active, not moving", "They are talking to us. Nothing closed and nothing got booked this week.", notMoving, now, "amber")}
@@ -701,6 +816,6 @@ export async function buildActivityReport(args: {
   return {
     subject: `DealRipe pipeline review, week of ${when}. ${silent.length} gone silent, ${stalled.length} stalled`,
     html,
-    counts: { total: rows.length, silent: silent.length, moving: moving.length, stalled: stalled.length, notMoving: notMoving.length, unknown: unknown.length },
+    counts: { total: rows.length, silent: silent.length, moving: moving.length, stalled: stalled.length, notMoving: notMoving.length, never: never.length, unknown: unknown.length },
   };
 }

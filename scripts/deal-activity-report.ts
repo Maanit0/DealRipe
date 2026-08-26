@@ -34,7 +34,7 @@ function arg(name: string): string | undefined {
   writeFileSync(out, report.html, "utf8");
   console.log(`\n  subject: ${report.subject}`);
   console.log(
-    `  ${report.counts.total} deals: ${report.counts.moving} moving, ${report.counts.notMoving} active not moving, ${report.counts.stalled} stalled, ${report.counts.silent} gone silent`,
+    `  ${report.counts.total} deals: ${report.counts.moving} moving, ${report.counts.notMoving} active not moving, ${report.counts.stalled} stalled, ${report.counts.silent} gone silent, ${report.counts.never} never engaged`,
   );
   console.log(`  wrote ${out}\n`);
   execFile("open", [out], () => {});
