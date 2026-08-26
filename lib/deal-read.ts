@@ -56,6 +56,14 @@ export type DealEvidence = {
    * diff against a snapshot of ourselves.
    */
   changedThisWeek: string[];
+  /**
+   * The last thing we learned and when, for the weeks where nothing moved.
+   *
+   * "Nothing new" is a dead cell. A leader looking at a deal that did not move
+   * still needs to know when it last did, and what we knew as of then. Maanit,
+   * 2026-08-26: "I just don't want any cell to be useless to Mark."
+   */
+  lastLearned: { key: string; at: string } | null;
   /** False when there is genuinely nothing to read. No model call is made. */
   hasSubstance: boolean;
 };
@@ -169,8 +177,15 @@ export async function buildDealEvidence(args: {
   for (const f of fields) {
     if (d10(f.updated_at) < weekAgo) continue;
     const key = f.framework_field_key.replace(/^sql\d_/, "").replace(/_/g, " ");
-    const answer = String(f.answer ?? "").trim();
-    changedThisWeek.push(answer ? `${key}: ${answer.slice(0, 92)}${answer.length > 92 ? "..." : ""}` : key);
+    // THE TAG, NOT THE SENTENCE.
+    //
+    // This column is scanned, and a cell holding "timeline notes: they need to
+    // resolve a CBP articles of organization issue first, which..." is narrative
+    // wedged into a table: it is truncated mid thought and it crowds out the two
+    // other things learned that week. What the customer actually SAID belongs in
+    // the read directly below, which is written from the full answer and has room
+    // for it. Here the useful fact is only which gates moved.
+    changedThisWeek.push(key);
   }
   for (const c of callRows) {
     const day = d10(c.scheduled_start);
@@ -186,28 +201,25 @@ export async function buildDealEvidence(args: {
             : `meeting${subject ? `: ${subject}` : ""}`,
     );
   }
-  // A COUNT IS NOT SOMETHING A LEADER CAN ACT ON. "2 emails from us" is a tally;
-  // what they were about is a fact. subjectTopic strips the Re: chain so a
-  // thread eight replies deep does not print as "RE: RE: FW:".
-  const inWeek = messages.filter((m) => d10(m.sent_at) >= weekAgo);
-  const topicsOf = (rows: typeof inWeek): string => {
-    const seen: string[] = [];
-    for (const m of rows) {
-      const t = subjectTopic(m.subject);
-      if (t && !seen.includes(t)) seen.push(t);
-    }
-    return seen.slice(0, 2).join("; ");
-  };
-  const inbound = inWeek.filter((m) => m.customer_side);
-  const outbound = inWeek.filter((m) => !m.customer_side);
-  if (inbound.length > 0) {
-    const t = topicsOf(inbound);
-    changedThisWeek.push(`${inbound.length} from them${t ? ` about "${t}"` : ""}`);
-  }
-  if (outbound.length > 0) {
-    const t = topicsOf(outbound);
-    changedThisWeek.push(`${outbound.length} from us${t ? ` about "${t}"` : ""}`);
-  }
+  // EMAIL SUBJECTS ARE NOT THINGS WE LEARNED.
+  //
+  // GHY printed: 2 from us about "Audit Session Times & Cont. Sessions Times to
+  // meet with K...; Lunch?". Two subjects mashed together, truncated mid word,
+  // and one of them is the word Lunch. A subject line is not a fact about a
+  // deal, and putting it in a column headed "learned" makes the column
+  // untrustworthy for the lines that ARE facts.
+  //
+  // Email still counts, in two places where it means something: the customer
+  // signal column, which is about recency, and the read, which is written from
+  // the full thread rather than its subject.
+
+  const newest = fields[fields.length - 1];
+  const lastLearned = newest?.updated_at
+    ? {
+        key: newest.framework_field_key.replace(/^sql\d_/, "").replace(/_/g, " "),
+        at: d10(newest.updated_at),
+      }
+    : null;
 
   return {
     account: args.account,
@@ -218,6 +230,7 @@ export async function buildDealEvidence(args: {
     closeDate: args.closeDate,
     lines,
     changedThisWeek,
+    lastLearned,
     hasSubstance: fields.length > 0 || callRows.length > 0 || messages.length > 0,
   };
 }

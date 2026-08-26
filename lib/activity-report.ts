@@ -95,7 +95,65 @@ async function nextStepAgreedAt(tenantId: string, dealIds: string[]): Promise<Ma
   }
   return out;
 }
-type Row = { deal: DealChangeRecord; activity: ActivityRead; next?: NextMeeting; agreedAt?: string; read?: string; changed?: string[] };
+type LastContact = { at: string; kind: "call" | "email"; what: string };
+type Row = {
+  deal: DealChangeRecord;
+  activity: ActivityRead;
+  next?: NextMeeting;
+  agreedAt?: string;
+  read?: string;
+  changed?: string[];
+  lastLearned?: { key: string; at: string } | null;
+  lastContact?: LastContact;
+  /** Outbound emails since they last said anything. The chase count. */
+  chases?: number;
+};
+
+/**
+ * The last time the customer actually did something, and how many times we have
+ * written since.
+ *
+ * A quiet deal needs different columns from a live one. "CRM this week: no
+ * change. DealRipe learned: nothing new. Next: nothing booked." is three empty
+ * cells telling a leader nothing. What he needs is when it went dark, what the
+ * last real interaction was, and how hard the rep has chased since.
+ */
+async function contactHistory(
+  tenantId: string,
+  dealIds: string[],
+): Promise<Map<string, { lastInbound: { at: string; subject: string | null } | null; chases: number }>> {
+  const db = supabaseAdmin();
+  const out = new Map<string, { lastInbound: { at: string; subject: string | null } | null; chases: number }>();
+  const CHUNK = 60;
+  for (let i = 0; i < dealIds.length; i += CHUNK) {
+    const res = await db
+      .from("deal_messages")
+      .select("deal_id, customer_side, subject, sent_at")
+      .eq("tenant_id", tenantId)
+      .eq("is_calendar_response", false)
+      .in("deal_id", dealIds.slice(i, i + CHUNK))
+      .order("sent_at", { ascending: false });
+    if (res.error) throw new Error(`deal_messages read failed: ${res.error.message}`);
+    const byDeal = new Map<string, Array<{ customer_side: boolean; subject: string | null; sent_at: string | null }>>();
+    for (const m of (res.data ?? []) as Array<{ deal_id: string; customer_side: boolean; subject: string | null; sent_at: string | null }>) {
+      const list = byDeal.get(m.deal_id) ?? [];
+      list.push(m);
+      byDeal.set(m.deal_id, list);
+    }
+    for (const [dealId, msgs] of byDeal) {
+      const lastIn = msgs.find((m) => m.customer_side && m.sent_at) ?? null;
+      // Newest first, so everything before the last inbound is a chase.
+      const chases = lastIn
+        ? msgs.filter((m) => !m.customer_side && m.sent_at && Date.parse(m.sent_at) > Date.parse(lastIn.sent_at!)).length
+        : msgs.filter((m) => !m.customer_side).length;
+      out.set(dealId, {
+        lastInbound: lastIn && lastIn.sent_at ? { at: lastIn.sent_at, subject: lastIn.subject } : null,
+        chases,
+      });
+    }
+  }
+  return out;
+}
 
 /**
  * The next scheduled meeting per deal, with who is on it.
@@ -130,7 +188,7 @@ async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<M
   return out;
 }
 
-function rowHtml(r: Row, now: number): string {
+function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
   const d = r.deal;
   const amount = money(d.dealSizeAnnual);
   // A BLANK STAGE IS A FACT, NOT A MISSING VALUE.
@@ -153,16 +211,41 @@ function rowHtml(r: Row, now: number): string {
   // first three are the ones the stage ordering puts first, which is the order a
   // rep has to close them in anyway.
   const blocking = (d.missing ?? []).slice(0, 3);
-  const changed = (r.changed ?? []).slice(0, 5);
+  const changed = (r.changed ?? []).slice(0, 6);
   const crm = d.movement?.summary && d.movement.moved ? d.movement.summary : "";
   return `<tr class="main">
-    <td class="acct"><b>${esc(d.account)}</b><i>${esc(d.repName || d.repEmail || "")}</i></td>
+    <td class="acct"><b>${esc(d.account)}</b><i>${esc(d.repName || d.repEmail || "")}</i><i>${esc(stage)}</i></td>
     <td class="num">${esc(amount)}</td>
-    <td class="meta">${esc(stage)}${band ? `<i>${esc(band)}</i>` : ""}</td>
-    <td class="moved">${
-      [crm, ...changed].filter(Boolean).map((c) => `<span>${esc(c)}</span>`).join("") ||
-      `<span class="dim">nothing this week</span>`
+    <td class="meta">${band ? `<b>${esc(band)}</b>` : `<span class="dim">no band</span>`}${
+      d.closeDate
+        ? `<i>closes ${new Date(d.closeDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</i>`
+        : `<i>no close date</i>`
     }</td>
+    ${
+      variant === "quiet"
+        ? `<td class="moved">${
+            r.lastContact
+              ? `<b>${new Date(r.lastContact.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</b>` +
+                `<span>${esc(r.lastContact.kind === "call" ? "on a call" : "they emailed")}</span>` +
+                `<span>${esc(String(r.lastContact.what).slice(0, 90))}</span>`
+              : `<span class="dim">no contact on record</span>`
+          }</td>
+          <td class="moved">${
+            r.chases
+              ? `<b>${r.chases}</b><span>follow-up${r.chases === 1 ? "" : "s"} from us since</span>`
+              : `<span class="dim">no follow-up sent</span>`
+          }</td>`
+        : `<td class="moved">${crm ? `<span>${esc(crm)}</span>` : `<span class="dim">no change</span>`}</td>
+           <td class="moved">${
+             changed.length
+               ? `<span>${esc(changed.join(", "))}</span>`
+               : r.lastLearned
+                 ? `<span>nothing new. Last learned <b>${esc(r.lastLearned.key)}</b> on ${new Date(
+                     r.lastLearned.at,
+                   ).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>`
+                 : `<span>nothing captured on this deal yet</span>`
+           }</td>`
+    }
     <td class="why">${
       r.next
         ? `<b>${esc(meetingLine(r.next))}</b>`
@@ -178,7 +261,7 @@ function rowHtml(r: Row, now: number): string {
     }<span class="sig">${esc(r.activity.reason)}</span></td>
   </tr>${
     r.read
-      ? `<tr class="readrow"><td colspan="5"><span class="rl">DealRipe&rsquo;s read</span>${esc(r.read)}</td></tr>`
+      ? `<tr class="readrow"><td colspan="6"><span class="rl">DealRipe&rsquo;s read</span>${esc(r.read)}</td></tr>`
       : ""
   }`;
 }
@@ -195,7 +278,7 @@ function meetingLine(n: NextMeeting): string {
   return `${when}${n.who.length ? ` with ${n.who.join(", ")}` : ""}`;
 }
 
-function section(title: string, sub: string, rows: Row[], now: number, tone: "red" | "green" | "grey"): string {
+function section(title: string, sub: string, rows: Row[], now: number, tone: "red" | "green" | "grey", variant: "live" | "quiet" = "live"): string {
   const total = rows.reduce((n, r) => n + (r.deal.dealSizeAnnual ?? 0), 0);
   const noAmount = rows.filter((r) => !(r.deal.dealSizeAnnual ?? 0)).length;
   return `<section class="sec ${tone}">
@@ -209,8 +292,12 @@ function section(title: string, sub: string, rows: Row[], now: number, tone: "re
     ${
       rows.length === 0
         ? `<p class="empty">Nothing in this list this week.</p>`
-        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Stage</th><th>Changed this week</th><th>Next interaction</th></tr></thead>
-           <tbody>${rows.map((r) => rowHtml(r, now)).join("")}</tbody></table>`
+        : `<table><thead><tr><th>Deal</th><th class="num">Annual</th><th>Rep forecast</th>${
+            variant === "quiet"
+              ? `<th>Last contact<i>when it went dark</i></th><th>Chased<i>since they last spoke</i></th>`
+              : `<th>CRM this week<i>what the rep entered</i></th><th>DealRipe learned<i>gates that moved</i></th>`
+          }<th>Next interaction</th></tr></thead>
+           <tbody>${rows.map((r) => rowHtml(r, now, variant)).join("")}</tbody></table>`
     }
   </section>`;
 }
@@ -262,11 +349,24 @@ export async function buildActivityReport(args: {
   const dealIds = deals.map((d) => d.dealId);
   const nextByDeal = await nextMeetingByDeal(tenantId, dealIds);
   const agreedAtByDeal = await nextStepAgreedAt(tenantId, dealIds);
+  const contactByDeal = await contactHistory(tenantId, dealIds);
 
   const rows: Row[] = deals.map((deal) => ({
     deal,
     next: nextByDeal.get(deal.dealId),
     agreedAt: agreedAtByDeal.get(deal.dealId),
+    chases: contactByDeal.get(deal.dealId)?.chases,
+    lastContact: (() => {
+      const inb = contactByDeal.get(deal.dealId)?.lastInbound ?? null;
+      const call = deal.lastConversationAt;
+      // Whichever came last IS the last contact. A call three weeks after their
+      // last email is the real final interaction, and the reverse is just as true.
+      if (call && (!inb || Date.parse(call) > Date.parse(inb.at))) {
+        return { at: call, kind: "call" as const, what: deal.agreedNextStep ?? "a call was held" };
+      }
+      if (inb) return { at: inb.at, kind: "email" as const, what: inb.subject ?? "they emailed" };
+      return undefined;
+    })(),
     activity: readActivity(
       {
         nextMeetingBooked: deal.nextMeetingBooked,
@@ -300,6 +400,7 @@ export async function buildActivityReport(args: {
         missing: r.deal.missing ?? [],
       });
       r.changed = ev.changedThisWeek;
+      r.lastLearned = ev.lastLearned;
       const stored = await refreshDealRead({ tenantId, dealId: r.deal.dealId, evidence: ev, readOnly: args.readOnly });
       r.read = stored?.text;
     } catch (err) {
@@ -365,6 +466,7 @@ export async function buildActivityReport(args: {
   .empty{font-size:14px;color:#334155;margin-top:14px;font-style:italic}
   table{width:100%;border-collapse:collapse;margin-top:14px}
   th{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#0F172A;text-align:left;padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+  th i{display:block;font-style:normal;font-weight:600;letter-spacing:0;text-transform:none;font-size:10.5px;color:#334155;margin-top:3px}
   td{padding:10px 10px 10px 0;border-bottom:1px solid #F5F7F9;font-size:13px;vertical-align:top;line-height:1.4}
   tr:last-child td{border-bottom:0}
   .acct b{font-weight:700;font-size:13.5px}
@@ -415,6 +517,7 @@ export async function buildActivityReport(args: {
     silent,
     now,
     "red",
+    "quiet",
   )}
   ${section(
     "In contact with the customer",
