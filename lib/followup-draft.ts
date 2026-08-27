@@ -102,6 +102,8 @@ export type FollowUpDraftInput = {
    * did.
    */
   callSubtype?: string | null;
+  /** The call verbatim. THE SOURCE. See autoDraftFollowUpForCall's note. */
+  transcript?: string | null;
 };
 
 export type FollowUpDraft = {
@@ -624,6 +626,13 @@ function isPreDemoStage(stageKey: string | null | undefined): boolean {
   return Number(m[1]) < 3;
 }
 
+/**
+ * How much of the call goes into the draft prompt. A 36k-character transcript
+ * is the measured worst case, so this is effectively all of it, capped so one
+ * unusually long call cannot crowd out the checked detail underneath.
+ */
+const TRANSCRIPT_CHARS = 30_000;
+
 function buildUserMessage(
   input: FollowUpDraftInput,
   samples: string[],
@@ -634,7 +643,6 @@ function buildUserMessage(
   booked: { label: string; subject: string | null } | null,
 ): string {
   const s = input.summary;
-  const open = s.stillOpen.slice(0, 4).map((f) => `- ${f.label ?? f.fieldKey}`).join("\n");
   const today = new Date().toISOString().slice(0, 10);
   // Stated as a fact at the top, the same way the briefing states call type, so
   // the model routes on it rather than inferring the shape from the transcript.
@@ -647,9 +655,13 @@ function buildUserMessage(
     customer: "EXISTING CUSTOMER",
     internal: "INTERNAL",
   };
+  const transcript = (input.transcript ?? "").trim().slice(0, TRANSCRIPT_CHARS);
   return [
     `TODAY: ${today}`,
-    `CUSTOMER: ${input.account}`,
+    `CUSTOMER (DealRipe's internal label, NOT necessarily how they spell it. Take the company's own name from the call, and the people's names from WRITING TO below, never from the transcript, which mishears them): ${input.account}`,
+    transcript
+      ? `THE CALL, VERBATIM. This is your source. Write from what was actually said, and use the customer's own words where they said something worth echoing back. Everything below this is checked detail to get right, not material to narrate.\n\n${transcript}`
+      : "",
     KIND_LABEL[kind]
       ? `THIS WAS A ${KIND_LABEL[kind]} CALL. Write the email that kind of call needs.`
       : `CALL KIND NOT CLASSIFIED, so write the default discovery shape.`,
@@ -702,7 +714,7 @@ function buildUserMessage(
     // A meeting already on the calendar outranks everything: never ask a
     // customer to book something they have already booked.
     booked
-      ? `\nA MEETING WITH THIS CUSTOMER IS ALREADY ON THE CALENDAR: ${booked.label}${booked.subject ? ` ("${booked.subject}")` : ""}.\nDo NOT propose a time and do NOT ask them to book anything. Reference the existing meeting as settled ("ahead of ${booked.label}") and make the ask something else: confirming who will join, or the softer process question.`
+      ? `\nA MEETING WITH THIS CUSTOMER IS ALREADY ON THE CALENDAR: ${booked.label}${booked.subject ? ` ("${booked.subject}")` : ""}.\nDo NOT propose a time and do NOT ask them to book anything. Reference the existing meeting as settled ("ahead of ${booked.label}") and make the ask something else, drawn from what was actually said on the call: confirming who is joining, or chasing a specific thing they said they would do.`
       : slots.length > 0
         ? `\nPROPOSE ONE OF THESE EXACT TIMES, copied verbatim. They are confirmed free on the rep's calendar:\n${slots.map((s) => `- ${s.label}`).join("\n")}\nUse the FIRST one unless the transcript gives a reason to prefer another. Never invent a different date or time.`
         : `\nNO CONFIRMED FREE SLOTS ARE AVAILABLE. Do NOT invent a specific time. Ask them to propose one, or offer a named week ("early next week").`,
@@ -903,7 +915,10 @@ export async function generateFollowUpDraft(
     // Last thing before this reaches a customer's inbox. A rep who says
     // "acelink" on a call had it copied straight into the draft; the prompt
     // glossary makes that unlikely and this makes it impossible.
-    subject: applyMagayaTerms(parsed.subject || `Following up on our call, ${input.account}`),
+    // Never the account field here. It holds DealRipe's own deal key, so this
+    // fallback was putting "Following up on our call, Gfcus" and "Snsiq" in
+    // front of customers on every fresh draft. No name beats the wrong name.
+    subject: applyMagayaTerms(parsed.subject || "Following up on our call"),
     body: applyMagayaTerms(parsed.body),
     replyToMessageId: thread?.id ?? null,
     to,
@@ -1022,6 +1037,23 @@ export async function autoDraftFollowUpForCall(args: {
   meetingType: string | null;
   /** calls.call_subtype, written by transcript-sync minutes before this runs. */
   callSubtype?: string | null;
+  /**
+   * The call, verbatim. THE SOURCE the email is written from.
+   *
+   * This used to be absent and the draft was built from the summary, which is
+   * built from the extraction, so it inherited the extraction's shape. That is
+   * the same topology that made the recap read like a form, and Eduardo named
+   * it: "it's very tied to the checks that we have." The recap was fixed by
+   * going to the transcript; the draft never was.
+   *
+   * Measured over eight real drafts before this changed: six of the eight
+   * closed with a near-identical "is there a formal approval process on your
+   * end we should plan around", across four different reps and eight different
+   * customers. That is DealRipe's own qualification gap list arriving in a
+   * customer's inbox as a question, which is exactly what Steven Johnson said
+   * he would delete.
+   */
+  transcript?: string | null;
   summary: PostCallSummary;
   /** Verified commitments from the narrative pass. See FollowUpDraftInput. */
   agreed?: { weOwe: string[]; customerOwes: string[] };

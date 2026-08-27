@@ -349,6 +349,8 @@ export async function runRecapSync(
               meetingType: row.meeting_type,
               // So a proposal call gets a terms email and a discovery call gets a recap.
               callSubtype: row.call_subtype ?? null,
+              // The source the email is written from. Everything else is checked detail.
+              transcript,
               summary: notify.summary,
               agreed: notify.agreed,
               callDate: d.scheduled_start ?? d.call_date,

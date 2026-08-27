@@ -120,7 +120,16 @@ export async function classifyCallSubtype(args: {
   transcript: string;
   meetingType: MeetingType;
 }): Promise<CallSubtype | null> {
-  if (args.meetingType === "existing_customer") return "customer";
+  // Internal short-circuits; there is no customer and nothing to follow up.
+  //
+  // existing_customer deliberately does NOT. It used to return "customer"
+  // before reading a word of the transcript, which threw away the subtype for
+  // every call with a paying customer: a demo of a new module was recorded as
+  // "customer" and nothing else, so the follow-up draft never learned a demo
+  // had happened. meeting_type already carries the standing; the subtype is a
+  // different question about what the call WAS, and collapsing the two loses
+  // the more useful half. Same discipline as Account.Type against
+  // outcome_label, which answer different questions and are both kept.
   if (args.meetingType === "internal") return "internal";
   // Null, not "discovery". Nothing to read is not a reading. A transcript this
   // short is a no-show or a join failure, and calling it discovery invents a
