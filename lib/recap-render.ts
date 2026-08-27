@@ -22,6 +22,7 @@
  */
 
 import type { DemoStrategy, Narrative, PassResult, QuotedFact } from "./recap-passes";
+import { applyMagayaTerms } from "./magaya-terms";
 
 /** "Debra said X ("quote")." with the attribution only when we have it. */
 function sentenceWithQuote(f: QuotedFact): string {
@@ -312,7 +313,7 @@ export function renderGeneralRecapNote(args: {
  * finishes reading is worse than a shorter one that gets acted on, and the rep
  * already has the long version where they will actually use it.
  */
-export function renderRecapEmailBody(args: {
+function renderRecapEmailBodyInner(args: {
   narrative: PassResult<Narrative>;
   demoStrategy: PassResult<DemoStrategy>;
   noteUrl?: string | null;
@@ -441,4 +442,13 @@ export function renderDemoStrategyProse(d: DemoStrategy): string {
   }
 
   return out.join("\n").trimEnd();
+}
+
+/**
+ * The recap as the rep reads it, with Magaya's own spelling of its own product
+ * applied last. See lib/magaya-terms.ts: one wrong proper noun does not get
+ * corrected by the reader, it discards the whole document.
+ */
+export function renderRecapEmailBody(args: Parameters<typeof renderRecapEmailBodyInner>[0]): string {
+  return applyMagayaTerms(renderRecapEmailBodyInner(args));
 }

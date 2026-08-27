@@ -26,6 +26,7 @@
 
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
+import { applyMagayaTerms, MAGAYA_GLOSSARY } from "./magaya-terms";
 import { repName } from "./display-names";
 import { listMeetingsBetween } from "./microsoft-graph";
 import type { PostCallSummary } from "./post-call-summary";
@@ -651,6 +652,7 @@ function buildUserMessage(
       ? `THIS WAS A ${KIND_LABEL[kind]} CALL. Write the email that kind of call needs.`
       : `CALL KIND NOT CLASSIFIED, so write the default discovery shape.`,
     input.attendees ? `ON THE CALL: ${input.attendees}` : "",
+    MAGAYA_GLOSSARY,
     input.recipients
       ? `WRITING TO (greet these people and nobody else): ${input.recipients}`
       : "",
@@ -876,8 +878,11 @@ export async function generateFollowUpDraft(
   );
 
   return {
-    subject: parsed.subject || `Following up on our call, ${input.account}`,
-    body: parsed.body,
+    // Last thing before this reaches a customer's inbox. A rep who says
+    // "acelink" on a call had it copied straight into the draft; the prompt
+    // glossary makes that unlikely and this makes it impossible.
+    subject: applyMagayaTerms(parsed.subject || `Following up on our call, ${input.account}`),
+    body: applyMagayaTerms(parsed.body),
     replyToMessageId: thread?.id ?? null,
     to,
     attachmentsToAdd: parsed.attachmentsToAdd,
@@ -1001,6 +1006,13 @@ export async function autoDraftFollowUpForCall(args: {
   attendees?: string;
   callDate?: string | null;
   participants: unknown;
+  /**
+   * True only when transcript-sync is re-attempting a draft that already
+   * failed. It gates the "rep already followed up" check below, which exists to
+   * stop a RETRY dropping a near-duplicate and was never meant to suppress a
+   * first attempt.
+   */
+  isRetry?: boolean;
 }): Promise<{ created: boolean; reason?: string }> {
   const { supabaseAdmin } = await import("./supabase");
   const { allowedMailboxes } = await import("./graph-mail");
@@ -1027,19 +1039,28 @@ export async function autoDraftFollowUpForCall(args: {
     return { created: false, reason: "no customer-side attendee on the call" };
   }
 
-  // Has the rep already followed up themselves?
+  // Has the rep already followed up themselves? ONLY ASKED ON A RETRY.
   //
   // A draft exists to save a job, not to duplicate one that is done. On
   // 2026-08-13 three of Ariel's drafts failed transiently and he wrote all
   // three himself within hours; a retry that ignored that would have dropped
-  // near-duplicates into his Outlook the next day. Now that transcript-sync
-  // retries automatically, this check is what stops the retry being worse than
-  // the failure.
+  // near-duplicates into his Outlook the next day. This check is what stops the
+  // retry being worse than the failure, which is the only thing it was built
+  // for.
+  //
+  // Applying it to the FIRST attempt inverts it. Steven Johnson, 2026-08-27:
+  // "I don't really get any of the drafts. I think I've gotten one." He is the
+  // fastest follow-up on the team and sends his own thanks-for-connecting
+  // within minutes, so on four of his five captured calls the check fired and
+  // held the draft. The rule punished the rep who does the right thing quickest
+  // and denied it to the one who wanted it most. A first attempt now always
+  // writes the draft and the rep decides whether to use it, which is the whole
+  // premise: it is a starting point, not a send.
   //
   // A mailbox we could not read returns nothing, which must NOT be read as "no
-  // follow-up happened". Failing to check is a reason to hold off, not a
-  // licence to write.
-  const callEnd = args.callDate ? new Date(args.callDate) : null;
+  // follow-up happened". Failing to check is a reason to hold off on a RETRY,
+  // not a licence to write one.
+  const callEnd = args.isRetry && args.callDate ? new Date(args.callDate) : null;
   if (callEnd && !Number.isNaN(callEnd.getTime())) {
     const { listMailboxMessages, domainOf: domOf } = await import("./graph-mail");
     const domains = Array.from(new Set(customerEmails.map((e) => domOf(e)).filter(Boolean))) as string[];

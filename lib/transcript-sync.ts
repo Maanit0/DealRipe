@@ -295,6 +295,9 @@ async function retryFailedDrafts(): Promise<void> {
         account: r.deals.account,
         repEmail: r.deals.rep_email,
         meetingType: r.meeting_type,
+        // This IS the retry path. The already-followed-up guard exists to stop a
+        // retry dropping a near-duplicate, so it applies here and nowhere else.
+        isRetry: true,
         // So a proposal call gets a terms email and a discovery call gets a recap.
         callSubtype: r.call_subtype ?? null,
         summary,

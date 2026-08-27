@@ -39,6 +39,7 @@
  */
 
 import { runModel } from "./model-run";
+import { MAGAYA_GLOSSARY } from "./magaya-terms";
 import { groundingScore } from "./grounding";
 
 /**
@@ -295,7 +296,10 @@ Return a single JSON object, no prose, no markdown fences:
     "customerOwes": [{"statement": string, "quote": string, "speaker": string|null}],
     "weOwe": [{"statement": string, "quote": string, "speaker": string|null}]
   }
-}`;
+}
+
+${MAGAYA_GLOSSARY}
+`;
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
   const s = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
@@ -548,7 +552,10 @@ Return a single JSON object, no prose, no markdown fences:
   "recommendation": string,
   "positioning": string,
   "buildsOnRepPlan": boolean
-}`;
+}
+
+${MAGAYA_GLOSSARY}
+`;
 
 function renderNarrativeForDemo(n: Narrative): string {
   const lines: string[] = [];

@@ -5,6 +5,7 @@
  */
 
 import type { PostCallSummary } from "../post-call-summary";
+import { applyMagayaTermsToEmail } from "../magaya-terms";
 import type { GeneratedTask } from "../tasks";
 import type { DemoStrategy, Narrative, PassResult } from "../recap-passes";
 
@@ -74,7 +75,7 @@ function buildFlags(summary: PostCallSummary): string[] {
   return flags;
 }
 
-export function renderPostCallSummaryEmail(
+function renderPostCallSummaryEmailInner(
   summary: PostCallSummary,
   tasks: GeneratedTask[] = [],
   /**
@@ -379,4 +380,9 @@ export function renderReadoutOnlyEmail(args: {
     .join("\n");
 
   return { subject: `Recap: ${args.account}`, html, text };
+}
+
+/** Magaya's own spelling of its own product, applied last. See lib/magaya-terms.ts. */
+export function renderPostCallSummaryEmail(...args: Parameters<typeof renderPostCallSummaryEmailInner>): ReturnType<typeof renderPostCallSummaryEmailInner> {
+  return applyMagayaTermsToEmail(renderPostCallSummaryEmailInner(...args));
 }

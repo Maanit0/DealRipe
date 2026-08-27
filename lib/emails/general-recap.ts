@@ -5,6 +5,7 @@
  */
 
 import type { GeneralRecap, MeetingType } from "../meeting-classify";
+import { applyMagayaTermsToEmail } from "../magaya-terms";
 
 const BG = "#F4F6F9";
 const CARD = "#FFFFFF";
@@ -27,7 +28,7 @@ const TYPE_LABEL: Record<MeetingType, string> = {
   internal: "internal meeting",
 };
 
-export function renderGeneralRecapEmail(args: {
+function renderGeneralRecapEmailInner(args: {
   account: string;
   recap: GeneralRecap;
   meetingType: MeetingType;
@@ -105,4 +106,9 @@ export function renderGeneralRecapEmail(args: {
   else t.push("- None set on this call.");
 
   return { subject, html, text: t.join("\n") };
+}
+
+/** Magaya's own spelling of its own product, applied last. See lib/magaya-terms.ts. */
+export function renderGeneralRecapEmail(...args: Parameters<typeof renderGeneralRecapEmailInner>): ReturnType<typeof renderGeneralRecapEmailInner> {
+  return applyMagayaTermsToEmail(renderGeneralRecapEmailInner(...args));
 }
