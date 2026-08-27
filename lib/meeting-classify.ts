@@ -119,10 +119,13 @@ import type { CallSubtype } from "./meeting-labels";
 export async function classifyCallSubtype(args: {
   transcript: string;
   meetingType: MeetingType;
-}): Promise<CallSubtype> {
+}): Promise<CallSubtype | null> {
   if (args.meetingType === "existing_customer") return "customer";
   if (args.meetingType === "internal") return "internal";
-  if (!process.env.ANTHROPIC_API_KEY || args.transcript.trim().length < 50) return "discovery";
+  // Null, not "discovery". Nothing to read is not a reading. A transcript this
+  // short is a no-show or a join failure, and calling it discovery invents a
+  // call that did not happen.
+  if (!process.env.ANTHROPIC_API_KEY || args.transcript.trim().length < 50) return null;
 
   const system = `Classify a B2B sales call's PURPOSE into exactly one label. Reply with ONLY the label word, nothing else.
 - discovery: fact-finding about the prospect's operations, needs, and current tools. Early stage, no in-depth product shown.
@@ -144,18 +147,27 @@ Pick the label that best fits what the call was mostly about.`;
     if (text.includes("follow")) return "follow_up";
     return "discovery";
   } catch (err) {
-    // transcript-sync wraps this call in `.catch(() => null)`, intending to
-    // store null when the subtype is unknown. That catch can never fire while
-    // this one returns a value, so a failure is stored as "discovery" instead.
-    // Leaving the default in place (changing it would change what lands in the
-    // calls row) but saying so, because "discovery" on a signed-contract call
-    // is the kind of wrong that reads as a product that is not paying attention.
+    // NULL, not "discovery".
+    //
+    // transcript-sync already wraps this in `.catch(() => null)`, intending to
+    // store null when the subtype is unknown. That catch could never fire while
+    // this returned a value, so an API blip was written to the row as a
+    // confident "discovery" and every consumer read it as a read.
+    //
+    // It reaches a customer. The follow-up draft is told "THIS WAS A DISCOVERY
+    // CALL. Write the email that kind of call needs", so one transient failure
+    // on a pricing call produces a thank-you-for-your-time email to someone
+    // negotiating terms. Steven Johnson's complaint was exactly this shape:
+    // the wrong artifact for the stage he was actually at.
+    //
+    // Unclassified is a state the consumers already handle. Discovery is a
+    // claim, and it was one we could not support.
     console.warn(
-      `[meeting-classify] subtype classification failed, defaulting to discovery, which is a guess and not a read: ${
+      `[meeting-classify] subtype classification failed, storing null rather than guessing: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
-    return "discovery";
+    return null;
   }
 }
 
