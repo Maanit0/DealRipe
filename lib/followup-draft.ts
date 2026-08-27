@@ -628,6 +628,8 @@ function buildUserMessage(
   input: FollowUpDraftInput,
   samples: string[],
   hasThread: boolean,
+  /** The newest message in that thread, already truncated. Empty when unread. */
+  threadBody: string,
   slots: ProposedSlot[],
   booked: { label: string; subject: string | null } | null,
 ): string {
@@ -662,6 +664,9 @@ function buildUserMessage(
       : `CUSTOMER TIMEZONE: not stated on the call. Use the rep's zone and label it explicitly.`,
     hasThread
       ? `THIS IS A REPLY on an existing thread. Do not re-introduce yourself and do not restate context they already have.`
+      : "",
+    threadBody
+      ? `THE LAST MESSAGE IN THAT THREAD, so you can pick up where it left off rather than repeat it. If it asks a question that is still open, answer it or say when you will:\n${threadBody}`
       : `THERE IS NO EXISTING THREAD. Write a fresh email and include a subject.`,
     ``,
     `WHAT WAS SAID ON THE CALL:`,
@@ -804,6 +809,23 @@ export async function generateFollowUpDraft(
       : Promise.resolve<ExistingMeetingRead>({ status: "no_calendar", meeting: null }),
   ]);
 
+  // What was actually said in the thread, not just that a thread exists.
+  //
+  // The prompt used to get a bare "THIS IS A REPLY, do not re-introduce
+  // yourself", which tells the model to avoid repeating context it has never
+  // been shown. So a draft could thank someone for a call while ignoring the
+  // question they asked in writing the day before. Steven Johnson wants the
+  // draft to be a starting point he edits rather than one he rewrites, and a
+  // follow-up that misses the open question in the thread is a rewrite.
+  //
+  // Best-effort and truncated. A mailbox we cannot read costs the context and
+  // not the draft, and a long thread must not crowd out the call itself.
+  const threadBody = thread
+    ? await getMessageBody({ tenantIdOrDomain: GRAPH_TENANT, mailbox: input.mailbox, messageId: thread.id })
+        .then((b) => (b ?? "").replace(/\s+/g, " ").trim().slice(0, 1500))
+        .catch(() => "")
+    : "";
+
   // The draft is composed the same way either way; a rep reviews it before it
   // sends, and withholding a draft over a calendar blip helps nobody. But an
   // unread calendar is the one condition under which this draft can ask a
@@ -823,7 +845,7 @@ export async function generateFollowUpDraft(
     maxTokens: 3000,
     temperature: 0.3, // a shade of variation so it reads human, not templated
     system: SYSTEM,
-    messages: [{ role: "user", content: buildUserMessage(input, samples, Boolean(thread), slots, booked) }],
+    messages: [{ role: "user", content: buildUserMessage(input, samples, Boolean(thread), threadBody, slots, booked) }],
   });
   const block = resp.message.content.find((b) => b.type === "text");
   const raw = block && "text" in block ? block.text : "";
@@ -1018,8 +1040,22 @@ export async function autoDraftFollowUpForCall(args: {
   const { allowedMailboxes } = await import("./graph-mail");
   const { recordSentMessage } = await import("./sent-messages");
 
-  if (args.meetingType !== "new_opportunity") {
-    return { created: false, reason: `meeting type '${args.meetingType ?? "unclassified"}' is not an opportunity call` };
+  // Internal only. Every call with a customer on it earns a follow-up.
+  //
+  // This used to require new_opportunity, which silently excluded every
+  // existing-customer call: a renewal or an expansion conversation got no
+  // draft at all. It also contradicted the subtype routing forty lines below,
+  // which already varies the draft so a proposal call gets a terms email and a
+  // discovery call gets a recap. The generator knew how to write a proposal
+  // follow-up and was never asked to.
+  //
+  // Unclassified is deliberately allowed through. meeting_type is written by
+  // transcript-sync and can be null, and refusing on null would turn "we did
+  // not classify this" into "this was not a customer call", which is the
+  // failure this codebase keeps relearning. The real filter is the
+  // customer-side attendee check below: no external attendee, no draft.
+  if (args.meetingType === "internal") {
+    return { created: false, reason: "internal meeting, no customer to follow up with" };
   }
   const mailbox = (args.repEmail ?? "").trim().toLowerCase();
   if (!mailbox) return { created: false, reason: "no rep email on the deal" };
@@ -1073,7 +1109,12 @@ export async function autoDraftFollowUpForCall(args: {
         maxPages: 3,
       });
       const already = msgs
-        .filter((m) => m.outbound)
+        // A calendar invite is not a follow-up. See MailMessage.isMeetingMessage:
+        // Outlook files invites in the mailbox as outbound messages to the
+        // customer's domain, and a rep who books the next meeting on the call
+        // and sends the invite would otherwise be read as having already
+        // written. That rep is the one who most wants the draft.
+        .filter((m) => m.outbound && !m.isMeetingMessage)
         .find((m) => [...m.to, ...m.cc].some((a) => domains.includes(domOf(a) ?? "")));
       if (already) {
         return {

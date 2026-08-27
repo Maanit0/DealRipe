@@ -169,6 +169,22 @@ export type MailMessage = {
   subject: string;
   /** When it arrived (inbound) or was sent (outbound). */
   at: string | null;
+  /**
+   * True for a meeting invite, cancellation or response rather than an email.
+   *
+   * Outlook files these in the mailbox like any other message, so a calendar
+   * invite the rep sent looks identical to a follow-up email: outbound, to the
+   * customer's domain, subject line and all. Steven Johnson, 2026-08-27, is
+   * exactly the shape that breaks: "I don't send emails right away, I could do
+   * better at that, that's why I want DealRipe to do it. What I'm good about is
+   * sending a calendar invite over email for the next meeting." Every one of
+   * his suppressed drafts cited a MEETING subject, MAGAYA CUSTOMS COMPLIANCE
+   * followed by the call type, not an email he had written.
+   *
+   * Graph annotates derived types on the message collection, so an invite comes
+   * back as #microsoft.graph.eventMessageRequest without needing a second call.
+   */
+  isMeetingMessage: boolean;
   from: string | null;
   to: string[];
   cc: string[];
@@ -329,6 +345,9 @@ export async function listMailboxMessages(args: {
         to,
         cc,
         outbound: from === me,
+        isMeetingMessage: String((m as { "@odata.type"?: string })["@odata.type"] ?? "")
+          .toLowerCase()
+          .includes("eventmessage"),
         preview: (m.bodyPreview ?? "").trim(),
       });
     }
