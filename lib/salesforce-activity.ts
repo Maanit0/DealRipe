@@ -66,7 +66,7 @@ async function query<T>(instanceUrl: string, token: string, soql: string): Promi
  * which is a different question from "has anyone logged anything".
  */
 let integrationUserId: string | null = null;
-async function getIntegrationUserId(instanceUrl: string, token: string): Promise<string | null> {
+export async function getIntegrationUserId(instanceUrl: string, token: string): Promise<string | null> {
   if (integrationUserId) return integrationUserId;
   const res = await sf(instanceUrl, token, `/services/oauth2/userinfo`);
   if (!res.ok) return null;

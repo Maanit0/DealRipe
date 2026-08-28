@@ -919,3 +919,144 @@ export async function readOpportunitySituation(accountId: string): Promise<Oppor
     };
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * What the BDR already did, before the rep's first call.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** One thing the BDR did with this prospect, ahead of the handoff. */
+export type PriorActivity = {
+  kind: "email" | "note";
+  /** Who did it, for attribution in the briefing. A rep trusts a named source. */
+  actor: string;
+  at: string;
+  subject: string;
+  /** Headers stripped, whitespace collapsed, capped. */
+  body: string;
+};
+
+/**
+ * present  we read the account and found activity
+ * empty    we read the account and there genuinely is none
+ * unavailable  the read failed, which is NOT the same as none
+ *
+ * The third case is the whole point. A Salesforce timeout that returned an
+ * empty array would otherwise brief the rep as "the BDR left you nothing",
+ * which is this codebase's signature failure wearing a new hat.
+ */
+export type PriorActivityRead =
+  | { status: "present"; items: PriorActivity[] }
+  | { status: "empty" }
+  | { status: "unavailable"; error: string };
+
+const ACTIVITY_BODY_MAX = 1200;
+const ACTIVITY_LIMIT = 6;
+
+/**
+ * Strip Salesforce's logged-email envelope.
+ *
+ * A Task created by Salesforce email logging carries the whole envelope in
+ * Description: "Additional To: ... CC: ... BCC: ... Attachment: ... Subject:
+ * ... Body: ...". The rep wants the body. Handing them the header block is
+ * worse than handing them nothing, because they stop reading.
+ */
+function emailBody(description: string): string {
+  const s = description.replace(/\r/g, "");
+  const i = s.search(/(^|\n)\s*Body:\s*/i);
+  const body = i >= 0 ? s.slice(s.indexOf(":", i) + 1) : s;
+  return body
+    .replace(/^\s*(Additional To|To|CC|BCC|Attachment|Subject):.*$/gim, "")
+    .replace(/_{10,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Teams and Zoom paste their join blurb into Description. Not a note. */
+function isMeetingChrome(text: string): boolean {
+  return /microsoft teams meeting|teams\.microsoft\.com\/meet|zoom\.us\/j\/|meet\.google\.com|Meeting ID:|Passcode:/i.test(
+    text,
+  );
+}
+
+/**
+ * Everything the BDR logged on this account before a given moment.
+ *
+ * Juan Lopez, 2026-08-28: "when we get the email with the briefing, we don't
+ * really have any data. It's saying go gather all this information, because it
+ * doesn't have any of the pre-qualification data. But there IS data the BDRs
+ * are entering in Salesforce." He is right, and it was never read.
+ *
+ * Measured over 60 days before building this: 158 of 200 Tasks carry a real
+ * Description and they are the BDR's own logged correspondence with the
+ * prospect, body included. Events mostly carry Teams join chrome, with the
+ * occasional one-line note. Salesforce Notes are not used at all: all 40
+ * ContentNotes in that window were DealRipe's own recaps. So the email is the
+ * source worth reading and the note field is the long tail.
+ *
+ * Description cannot be filtered in SOQL on either object, so this fetches and
+ * filters here.
+ */
+export async function readPriorActivity(args: {
+  accountId: string;
+  /** Only what happened BEFORE this, so a briefing cannot cite its own call. */
+  before: string;
+}): Promise<PriorActivityRead> {
+  try {
+    const { token, instanceUrl } = await getSalesforceClient();
+    const run = async (soql: string): Promise<Record<string, unknown>[]> => {
+      const res = await fetch(
+        `${instanceUrl}/services/data/v60.0/query?q=${encodeURIComponent(soql)}`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 160)}`);
+      return ((await res.json()) as { records?: Record<string, unknown>[] }).records ?? [];
+    };
+    const before = new Date(args.before).toISOString();
+    // Exclude what DealRipe itself wrote.
+    //
+    // salesforce-activity logs a call Task and a next-step Task on every
+    // captured call, so without this the briefing quotes our own recap back to
+    // the rep as "what the BDR already covered". Circular, and it teaches them
+    // the section is worthless. Excluded by AUTHOR rather than by subject
+    // pattern, because the pattern is ours to change and the author is not.
+    const { getIntegrationUserId } = await import("./salesforce-activity");
+    const ours = await getIntegrationUserId(instanceUrl, token).catch(() => null);
+    const notOurs = ours ? ` AND CreatedById != '${ours}' ` : " ";
+    const [tasks, events] = await Promise.all([
+      run(
+        `SELECT Owner.Name, Subject, Description, CreatedDate FROM Task ` +
+          `WHERE WhatId = '${args.accountId}' AND CreatedDate < ${before}${notOurs}` +
+          `ORDER BY CreatedDate DESC LIMIT 40`,
+      ),
+      run(
+        `SELECT Owner.Name, Subject, Description, ActivityDate, CreatedDate FROM Event ` +
+          `WHERE WhatId = '${args.accountId}' AND CreatedDate < ${before}${notOurs}` +
+          `ORDER BY CreatedDate DESC LIMIT 40`,
+      ),
+    ]);
+
+    const items: PriorActivity[] = [];
+    const push = (r: Record<string, unknown>, kind: PriorActivity["kind"]) => {
+      const raw = String(r.Description ?? "");
+      const subject = String(r.Subject ?? "").trim();
+      const body = kind === "email" ? emailBody(raw) : raw.replace(/\s+/g, " ").trim();
+      // Meeting chrome and one-word stubs are noise. A briefing that quotes
+      // "Microsoft Teams meeting Join:" teaches the rep to skip the section.
+      if (body.length < 25 || isMeetingChrome(body)) return;
+      items.push({
+        kind,
+        actor: String((r.Owner as { Name?: string } | undefined)?.Name ?? "someone at Magaya"),
+        at: String(r.CreatedDate ?? "").slice(0, 10),
+        subject: subject.replace(/^Email:\s*/i, ""),
+        body: body.slice(0, ACTIVITY_BODY_MAX),
+      });
+    };
+    for (const r of tasks) push(r, /^email:/i.test(String(r.Subject ?? "")) ? "email" : "note");
+    for (const r of events) push(r, "note");
+
+    if (items.length === 0) return { status: "empty" };
+    return { status: "present", items: items.slice(0, ACTIVITY_LIMIT) };
+  } catch (err) {
+    return { status: "unavailable", error: err instanceof Error ? err.message : String(err) };
+  }
+}
