@@ -109,12 +109,21 @@ function escapeHtml(s: string): string {
  * Twelve separate white boxes holding two lines each read as confetti: the eye
  * has to cross a border and a shadow to get from one fact to the next, and the
  * brief looks sparse even when it is dense. Three cards with internal headings
- * put related things next to each other, which is how they get used. 11.5px
- * navy rather than the 11px grey caption these started as, which a rep scanning
- * for "what do I ask" had nothing to land on.
+ * put related things next to each other, which is how they get used.
+ *
+ * SIZED TO MATCH THE RECAP, 16.5px navy against 15px body. These were 11.5px
+ * uppercase, which made every heading smaller than the text under it: a rep
+ * scanning for "what do I ask" had nothing to land on, and the briefing and the
+ * recap set their headings differently for no reason a reader could see. The
+ * two artifacts arrive within hours of each other about the same meeting and
+ * should look like one product.
+ *
+ * The colour parameter is still honoured here, unlike the recap's, because this
+ * page genuinely uses red for "Do not" and "If you don't", where the colour is
+ * the warning rather than decoration.
  */
 function sub(text: string, color: string = NAVY): string {
-  return `<div style="font-family:${SANS};font-size:11.5px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:${color};margin:0 0 7px 0;">${escapeHtml(text)}</div>`;
+  return `<div style="font-family:${SANS};font-size:16.5px;font-weight:700;line-height:24px;color:${color};margin:0 0 10px 0;">${escapeHtml(text)}</div>`;
 }
 
 function rule(): string {
