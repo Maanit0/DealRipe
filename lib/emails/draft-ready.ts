@@ -21,7 +21,7 @@
  *
  * THE EXCERPT IS DELIBERATELY PARTIAL. A rep who can read the entire email here
  * has no reason to click, and the click is the whole point: the draft is only
- * editable and sendable in Outlook. Enough to judge whether it is worth opening,
+ * editable and sendable in their mail client. Enough to judge whether it is worth opening,
  * not enough to substitute for opening it.
  *
  * Pure function, no external deps. No em-dashes (project convention).
@@ -57,7 +57,7 @@ export type DraftReadyInput = {
   /** Who the draft is addressed to. */
   to: string[];
   /**
-   * The subject Outlook ACTUALLY gave the draft.
+   * The subject the MAIL CLIENT actually gave the draft.
    *
    * Never the one we generated. On a reply Graph replaces ours with the
    * thread's, and printing our version sends the rep looking for something that
@@ -183,7 +183,7 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
     ``,
     `FOLLOW UP ON THIS MEETING`,
     ``,
-    `Subject in Outlook: ${input.draftSubject}`,
+    `Subject: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
     (input.unaddressed ?? []).length > 0
       ? `Also spoke, not on the invite and no address on file: ${(input.unaddressed ?? []).join(", ")}. Add them yourself if they should get this.`
@@ -193,7 +193,7 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
     ex.truncated ? `...` : null,
     ``,
     input.webLink
-      ? `Open draft in Outlook: ${input.webLink}`
+      ? `Open draft: ${input.webLink}`
       : `It is in your mailbox under that subject.`,
     `This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.`,
   ]
