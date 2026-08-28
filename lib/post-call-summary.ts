@@ -161,7 +161,15 @@ Rules:
      "ndaInPlace": boolean (a mutual NDA is ACTUALLY SIGNED or confirmed in place; a rep merely offering or promising to send an NDA is NOT in place, so this is false),
      "customerResisted": boolean (the customer questioned or pushed back on signing an NDA) }
    The rep wants an over-reminder here: if a demo is coming and the NDA is not yet signed, demoIsNext true + ndaInPlace false is correct even when the rep has said they will send it.
-10. "coaching": ONE short, kind, specific coaching note for the rep IF and only if the transcript clearly shows the rep moved off a pain point too quickly or dominated the talking when the customer should have. At most about 20 words, second person. null if the rep ran the call well. Do not invent a critique.
+10. "coaching": ONE short, kind, specific coaching note, and USUALLY null. At most about 20 words, second person.
+
+    IT MUST CITE SOMETHING THAT HAPPENED, not something that could have. Measured over 28 recaps, 18 of them said a variant of "you moved on quickly, a follow-up question could have deepened the pain", because the previous version of this instruction named that case explicitly and a model with nothing sharper will always reach for it. It is unfalsifiable: every call ever recorded could have had one more question. A rep who reads the same note on two thirds of their calls stops reading the section, and the ones that DO matter are lost with it.
+
+    So: no counterfactuals. Never "could have asked", "a follow-up question would have", "consider pausing longer", "a few more questions there". If the only thing you can say is that more probing was possible, return null.
+
+    What DOES qualify is an event in the transcript with a witness: the customer redirected the rep or asked them to move on; the rep quoted a price or made a commitment before a gate that their own process requires; the customer raised the same thing three times and it was never answered; the rep contradicted themselves or promised something they then said they were unsure of; the rep talked through a question the customer had asked. Each of those is checkable against the transcript by someone who disagrees with you.
+
+    Null is the right answer most of the time. A rep who ran a good call should get nothing here, and silence is not a failure of this field.
 
 Return a single JSON object, no prose, no markdown fences:
 { "recap": string, "suggestedNextStep": string, "nextStepCommitment": string|null, "followUpMeetingExpected": boolean, "shouldBookNextMeeting": boolean, "customerTimezone": string|null, "nda": {"demoIsNext": boolean, "ndaInPlace": boolean, "customerResisted": boolean}|null, "coaching": string|null }`;

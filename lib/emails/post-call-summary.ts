@@ -15,7 +15,17 @@ const BORDER = "#E7EBF0";
 const NAVY = "#0F172A";
 const INK = "#1E293B";
 const MUTED = "#5B6470"; // readable secondary text (was too light at #94A3B8)
-const GREEN = "#10B981";
+const GREEN = "#10B981"; // the DealRipe wordmark, and nothing else
+/**
+ * The tick beside a confirmed gate.
+ *
+ * #10B981 is a mint that reads as decorative at 15px and sits close to the
+ * contrast floor on white. This is the same hue with enough depth to look
+ * deliberate rather than like a default. Deliberately NOT the wordmark colour:
+ * one of them is branding and the other is telling the rep something is
+ * confirmed, and they were sharing a constant.
+ */
+const GREEN_MARK = "#047857";
 const AMBER = "#B45309";
 
 const SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
@@ -35,8 +45,22 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function label(text: string, color: string): string {
-  return `<div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${color};margin:0 0 10px 0;">${escapeHtml(text)}</div>`;
+/**
+ * A section heading.
+ *
+ * Always navy, always larger than the text under it, and the caller's colour is
+ * accepted and ignored. Headings were 11px uppercase in green, amber or grey
+ * depending on the section, which made the label smaller than its own contents
+ * and, for the grey ones, quieter than text the rep is meant to act on. Colour
+ * was carrying no information: nothing tells a reader what "amber" means, and
+ * the sections it marked were not more urgent than the navy ones.
+ *
+ * The parameter stays so every call site keeps compiling; there are a dozen and
+ * changing them all to pass a colour that is discarded is churn. Deleting it
+ * would be the tidier change and a worse diff.
+ */
+function label(text: string, _color?: string): string {
+  return `<div style="font-family:${SANS};font-size:15px;font-weight:700;line-height:22px;color:${NAVY};margin:0 0 9px 0;">${escapeHtml(text)}</div>`;
 }
 
 function bodyText(text: string): string {
@@ -51,7 +75,7 @@ function card(inner: string): string {
 
 function listRow(marker: string, markerColor: string, inner: string, first: boolean): string {
   return `<tr>
-    <td valign="top" width="22" style="padding:${first ? "0" : "10px"} 10px 0 0;font-family:${SANS};font-size:15px;line-height:23px;color:${markerColor};font-weight:700;">${marker}</td>
+    <td valign="top" width="24" style="padding:${first ? "0" : "10px"} 10px 0 0;font-family:${SANS};font-size:17px;line-height:23px;color:${markerColor};font-weight:700;">${marker}</td>
     <td valign="top" style="padding:${first ? "0" : "10px"} 0 0 0;font-family:${SANS};font-size:15px;line-height:23px;color:${INK};">${inner}</td>
   </tr>`;
 }
@@ -233,7 +257,7 @@ function renderPostCallSummaryEmailInner(
           .map((c, i) =>
             listRow(
               "&#10003;",
-              GREEN,
+              GREEN_MARK,
               `<strong style="color:${NAVY};font-weight:600;">${escapeHtml(c.label)}:</strong> ${escapeHtml(c.answer)}`,
               i === 0,
             ),
@@ -296,7 +320,15 @@ function renderPostCallSummaryEmailInner(
         <!--DEALRIPE_CARD_SLOT-->
 
         <div style="font-family:${SANS};font-size:18px;line-height:24px;color:${NAVY};font-weight:700;margin:0 0 3px 2px;">Recap</div>
-        <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:0 0 14px 2px;">${escapeHtml(stageLabel)} &middot; ${summary.captured.length} captured &middot; ${summary.stillOpen.length} still open</div>
+        <!--
+          THE STAGE IS OFF THIS LINE. It read "Proposal Validation" directly
+          under the account, as a fact, while the deal row said SQL0 and the CRM
+          said Lead. It is DealRipe's own read from the confirmed gates, and the
+          disagreement with the CRM is disclosed eight cards further down, which
+          is too late to stop a rep taking the header at face value. The counts
+          are what this line is for.
+        -->
+        <div style="font-family:${SANS};font-size:13px;color:${INK};margin:0 0 14px 2px;">${summary.captured.length} gates captured &middot; ${summary.stillOpen.length} still open</div>
 
         ${readoutCards}
 
