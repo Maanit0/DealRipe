@@ -60,7 +60,7 @@ function escapeHtml(s: string): string {
  * would be the tidier change and a worse diff.
  */
 function label(text: string, _color?: string): string {
-  return `<div style="font-family:${SANS};font-size:15px;font-weight:700;line-height:22px;color:${NAVY};margin:0 0 9px 0;">${escapeHtml(text)}</div>`;
+  return `<div style="font-family:${SANS};font-size:16.5px;font-weight:700;line-height:24px;color:${NAVY};margin:0 0 10px 0;">${escapeHtml(text)}</div>`;
 }
 
 function bodyText(text: string): string {
