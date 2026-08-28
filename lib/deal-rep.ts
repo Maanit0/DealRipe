@@ -26,15 +26,16 @@
  * So this is deliberately narrow, and it abstains rather than guessing.
  */
 
+import { listOpportunities } from "./rolldog";
 import { supabaseAdmin } from "./supabase";
 import { REP_UID } from "./rolldog-reconcile";
 import { repEmailForDeal } from "./pilot-config";
 
 export type DealRepVerdict =
-  /** Every captured call is organized by one pilot rep, and it is the one on the deal. */
-  | { status: "agrees"; repEmail: string }
-  /** Every captured call is organized by ONE pilot rep, and it is NOT the one on the deal. */
-  | { status: "disagrees"; repEmail: string; current: string | null; calls: number }
+  /** The source we trusted names the rep already on the deal. */
+  | { status: "agrees"; repEmail: string; source: RepSource }
+  /** The source we trusted names a DIFFERENT rep from the one on the deal. */
+  | { status: "disagrees"; repEmail: string; current: string | null; source: RepSource; detail: string }
   /**
    * The deal is pinned in the static pilot map. A human wrote that down, so it
    * outranks anything inferred here and is never contradicted.
@@ -50,6 +51,22 @@ export type DealRepVerdict =
    * made.
    */
   | { status: "no_rep_organizer"; current: string | null };
+
+/**
+ * Where the answer came from, in the order they are consulted.
+ *
+ * "rolldog_owner" is FIRST and it is the only one of these that is a statement
+ * about ownership rather than a proxy for it. Juan's report was "this opp is not
+ * under my name", which is a sentence about the opportunity owner: that field is
+ * the concept the sales team actually uses, maintained by them, in the system
+ * CLAUDE.md calls the one where the sales team lives.
+ *
+ * Measured 2026-08-28 over the 67 live deals carrying a Rolldog opportunity: 51
+ * owners map to a pilot rep, and they agree with rep_email on 49. The two
+ * disagreements were both real, and one of them is why this ladder exists at all
+ * (see below).
+ */
+export type RepSource = "pilot_map" | "rolldog_owner" | "call_organizer";
 
 const PILOT_REPS = new Set(Object.keys(REP_UID).map((e) => e.toLowerCase()));
 
@@ -68,11 +85,35 @@ export async function resolveDealRep(args: {
   dealId: string;
   externalId: string | null;
   currentRepEmail: string | null;
+  rolldogOpportunityId: string | null;
 }): Promise<DealRepVerdict> {
   const current = args.currentRepEmail ? args.currentRepEmail.trim().toLowerCase() : null;
 
   const pinned = args.externalId ? repEmailForDeal(args.externalId) : null;
   if (pinned) return { status: "pinned", repEmail: pinned.toLowerCase() };
+
+  // ROLLDOG'S OWNER FIRST, and it OUTRANKS the organizer.
+  //
+  // The organizer was tried as the primary signal and it is a proxy, not the
+  // fact. Vivot is the case that settled it: every captured call is organized by
+  // Ariel, so the organizer rule moved the deal to him, and Rolldog records
+  // Alexandra as the owner. Both are true. One of them is a statement about who
+  // ran a meeting and the other is a statement about whose deal it is, and only
+  // the second is what routes a rep's customer mail. Reading them the other way
+  // round reassigns a deal on the evidence of a single co-sold call.
+  //
+  // It also sees cases the organizer cannot: Cargocleared routed to Juan with
+  // Alexandra owning the opportunity, and no pilot rep organizes its calls at
+  // all, so there was nothing for the organizer rule to notice.
+  if (args.rolldogOpportunityId) {
+    const owner = await rolldogOwnerEmail(args.rolldogOpportunityId);
+    if (owner) {
+      const detail = `Rolldog opportunity ${args.rolldogOpportunityId} is owned by them`;
+      return current === owner
+        ? { status: "agrees", repEmail: owner, source: "rolldog_owner" }
+        : { status: "disagrees", repEmail: owner, current, source: "rolldog_owner", detail };
+    }
+  }
 
   const db = supabaseAdmin();
   const { data, error } = await db
@@ -97,6 +138,35 @@ export async function resolveDealRep(args: {
   }
 
   const [repEmail, calls] = [...organizers.entries()][0];
-  if (current === repEmail) return { status: "agrees", repEmail };
-  return { status: "disagrees", repEmail, current, calls };
+  const detail = `all ${calls} captured call${calls === 1 ? "" : "s"} organized by them, and the deal has no readable Rolldog owner`;
+  return current === repEmail
+    ? { status: "agrees", repEmail, source: "call_organizer" }
+    : { status: "disagrees", repEmail, current, source: "call_organizer", detail };
+}
+
+
+/**
+ * The pilot rep who owns a Rolldog opportunity, or null.
+ *
+ * Null covers three different things on purpose, and all three mean "do not act
+ * on this" rather than "no owner": the opportunity did not come back (16 of 67
+ * on 2026-08-28, archived or deleted), it carries no user-id, or the user-id is
+ * not one of the six enrolled reps. Falling through to the organizer is the
+ * right response to all of them, and inventing an owner from any of them is not.
+ */
+async function rolldogOwnerEmail(opportunityId: string): Promise<string | null> {
+  let rows;
+  try {
+    rows = await listOpportunities(`filter[id]=${encodeURIComponent(opportunityId)}&page[size]=1`);
+  } catch {
+    // A Rolldog outage must not reassign anyone. Fall through to the organizer,
+    // which is local and cannot fail this way.
+    return null;
+  }
+  const owner = rows[0]?.owner;
+  if (!owner) return null;
+  for (const [email, uid] of Object.entries(REP_UID)) {
+    if (String(uid) === String(owner)) return email.toLowerCase();
+  }
+  return null;
 }

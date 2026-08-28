@@ -29,12 +29,12 @@ async function main(): Promise<void> {
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("deals")
-    .select("id, account, external_id, rep_email, rep_notes, outcome_label")
+    .select("id, account, external_id, rep_email, rep_notes, rolldog_opportunity_id, outcome_label")
     .is("outcome_label", null);
   if (error) throw new Error(error.message);
 
   const counts = new Map<DealRepVerdict["status"], number>();
-  const wrong: Array<{ id: string; account: string; from: string | null; to: string; calls: number }> = [];
+  const wrong: Array<{ id: string; account: string; from: string | null; to: string; source: string; detail: string }> = [];
   const coSold: string[] = [];
 
   for (const d of data ?? []) {
@@ -42,10 +42,11 @@ async function main(): Promise<void> {
       dealId: d.id as string,
       externalId: (d.external_id as string | null) ?? null,
       currentRepEmail: (d.rep_email as string | null) ?? null,
+      rolldogOpportunityId: (d.rolldog_opportunity_id as string | null) ?? null,
     });
     counts.set(v.status, (counts.get(v.status) ?? 0) + 1);
     if (v.status === "disagrees") {
-      wrong.push({ id: d.id as string, account: d.account as string, from: v.current, to: v.repEmail, calls: v.calls });
+      wrong.push({ id: d.id as string, account: d.account as string, from: v.current, to: v.repEmail, source: v.source, detail: v.detail });
     }
     if (v.status === "co_sold") {
       coSold.push(`${String(d.account).padEnd(22)} on the deal: ${v.current ?? "(none)"}, organizing calls: ${v.reps.join(", ")}`);
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
 
   console.log(`\n${wrong.length} deals route to a rep who organizes NONE of their calls:`);
   for (const w of wrong) {
-    console.log(`  ${w.account.padEnd(22)} ${String(w.from ?? "(none)").padEnd(24)} -> ${w.to}   (${w.calls} calls)`);
+    console.log(`  ${w.account.padEnd(22)} ${String(w.from ?? "(none)").padEnd(24)} -> ${w.to.padEnd(24)} [${w.source}] ${w.detail}`);
   }
 
   if (!APPLY) {
@@ -87,7 +88,7 @@ async function main(): Promise<void> {
   const stamp = new Date().toISOString().slice(0, 10);
   for (const w of wrong) {
     const { data: row } = await db.from("deals").select("rep_notes").eq("id", w.id).maybeSingle();
-    const note = `${String(row?.rep_notes ?? "").trim()} Rep corrected to ${w.to} on ${stamp}: all ${w.calls} captured calls on this deal are organized by them, and rep_email had been set from whichever calendar calendar-sync read the invite off first.`.trim();
+    const note = `${String(row?.rep_notes ?? "").trim()} Rep corrected to ${w.to} on ${stamp}: ${w.detail}. rep_email had been set from whichever calendar calendar-sync read the invite off first.`.trim();
     const { error: upErr } = await db.from("deals").update({ rep_email: w.to, rep_notes: note }).eq("id", w.id);
     if (upErr) throw new Error(`update failed for ${w.account}: ${upErr.message}`);
     console.log(`  wrote ${w.account} -> ${w.to}`);

@@ -60,6 +60,23 @@ export type BriefingShape = {
    * material, which is precisely when brevity matters most.
    */
   maxWords: number;
+  /**
+   * NOTE ON CAPS, 2026-08-28. The per-block "at most N" limits are gone and this
+   * budget is now the only governor.
+   *
+   * They were belt-and-braces on top of it and they were costing real content:
+   * with 14 populated Sales Development fields and a five-line ceiling, the BDR
+   * block dropped Compelling Events, Budget Confirmed and Executive Sponsorship,
+   * which is precisely the pre-qualification data the block was built to carry.
+   * A cap cannot tell a fact the rep needs from one they do not, so it drops
+   * whatever the model ranked last, and short unglamorous fields rank last next
+   * to narrative ones.
+   *
+   * Relevance is the rule everywhere now; length is governed here, in one place,
+   * where a briefing that runs long is caught and regenerated rather than
+   * silently trimmed. The maxima below were raised to match, so a deal with a
+   * full record cannot fail the length check twice and be suppressed.
+   */
   /** Which optional blocks this call type asks for, beyond the always-present core. */
   blocks: BlockName[];
   /** How many asks. Zero is a legitimate answer for a call where asking is not the move. */
@@ -128,7 +145,7 @@ const DEFAULT_SHAPE: BriefingShape = {
   // budget set at the measured ceiling does not fail safe here, it fails to
   // send. The rep who lost the briefing would be the one this whole change was
   // for.
-  maxWords: 860,
+  maxWords: 1000,
   purpose:
     "We could not tell what kind of call this is, so do not assume a stage. Lead with what is open and what the customer last said, ask only what is genuinely unknown, and leave with a dated commitment. Never open as though meeting for the first time unless the deal has no history at all.",
 };
@@ -197,7 +214,7 @@ const SHAPES: Record<string, BriefingShape> = {
     // buys the rep something they cannot get anywhere else on a first call:
     // every other block is assembled from OUR history, and on a discovery call
     // we have none.
-    maxWords: 800,
+    maxWords: 950,
     purpose:
       "Learn what actually hurts, what they run today, and who decides, then leave with a dated next step. Asking is the main move. Do not pitch.",
   },
@@ -274,11 +291,11 @@ export function shapeForCallType(callType: string | null | undefined): BriefingS
  * which parts to skip, is how the current schema became a template.
  */
 const BLOCK_CONTRACT: Record<BlockName, string> = {
-  bdrHandoff: `"bdrHandoff": { "lines": [ { "label": string, "point": string } ], "asOf": string | null } | null   // WHAT THE BDR ALREADY LEARNED, taken ONLY from the "Recorded by the BDR before this call" block and from nowhere else. Null when that block is absent or says the Sales Development section is empty. NEVER infer it, never carry a point over from our own calls, and never write it from the framework. 2 to 5 lines, most consequential first. "label" is two or three words naming what the line is ABOUT ("What hurts", "What they run today", "Why now", "Who decides", "Go-live"). "point" is ONE sentence in the CUSTOMER's own words where the field holds them, quoted, and in plain words where it does not. Keep their phrasing: it is the only unmediated thing on the page. Do NOT restate a Magaya field name, do not write "Budget Confirmed: true"; write what that means for this call. "asOf" is the date the BDR recorded it if the block gives one, else null. This is a HANDOFF, not analysis: the rep is reading it because Salesforce is not open in front of them.`,
-  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 3 people, the ones who decide what happens in this room. "person" is the NAME ONLY, exactly as it appears in the attendee list: their job title is already printed beside it and repeating it wastes the line. "note" is up to 30 words and carries what THEY care about, in their own words where we have them: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
-  openItems: `"openItems": { "us": [string], "them": [string] }   // Up to 3 per side. Each line names the item, when it was agreed, and its STATUS in plain words: "sent Aug 21", "still not sent", "agreed Aug 13 for Thursday, never booked". A rep needs to know which ones are outstanding at a glance, so never leave the status off. Empty array when a side owes nothing.`,
+  bdrHandoff: `"bdrHandoff": { "lines": [ { "label": string, "point": string } ], "asOf": string | null } | null   // WHAT THE BDR ALREADY LEARNED, taken ONLY from the "Recorded by the BDR before this call" block and from nowhere else. Null when that block is absent or says the Sales Development section is empty. NEVER infer it, never carry a point over from our own calls, and never write it from the framework. THIS BLOCK IS A HANDOFF AND ITS JOB IS COVERAGE: the rep is reading it because Salesforce is not open in front of them and the BDR is not on the call, so a fact that was recorded and does not appear here is a fact they have lost. THERE IS NO LINE LIMIT: emit one line per distinct thing the BDR recorded, most consequential first, grouping closely related fields onto one line. The only reason to leave something out is that it carries no information, never that you have written enough lines already. In particular you MUST carry, whenever the block records them: (a) what hurts today, (b) what they said they need, (c) what they run today, (d) any date they named, and (e) THE QUALIFICATION POSITION, meaning budget confirmed or not, executive sponsorship, and whether a compelling event was recorded. (e) is the single thing most often asked for and it is the easiest to lose, because it is short and unglamorous next to the narrative fields: losing it is a failure of this block, not a saving. Only omit a field that genuinely carries nothing ("N/A", "No" to a question nobody asked). "label" is two or three words naming what the line is ABOUT ("What hurts", "What they run today", "Why now", "Budget and sponsor", "Go-live"). "point" is ONE sentence in the CUSTOMER's own words where the field holds them, quoted, and in plain words where it does not. Keep their phrasing: it is the only unmediated thing on the page. Do NOT restate a Magaya field name and do not write "Budget Confirmed: true"; write what it means for this call. "asOf" is the date the BDR recorded it if the block gives one, else null.`,
+  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // The people who decide what happens in this room. No fixed limit, but this is not an attendee list: someone who has never appeared on a captured call and carries nothing to say about them belongs here only if their presence is itself the news. "person" is the NAME ONLY, exactly as it appears in the attendee list: their job title is already printed beside it and repeating it wastes the line. "note" is up to 30 words and carries what THEY care about, in their own words where we have them: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
+  openItems: `"openItems": { "us": [string], "them": [string] }   // Every item still outstanding on each side, not a sample of them. No fixed limit: an unclosed commitment that got trimmed to fit is the exact thing this block exists to prevent. Each line names the item, when it was agreed, and its STATUS in plain words: "sent Aug 21", "still not sent", "agreed Aug 13 for Thursday, never booked". A rep needs to know which ones are outstanding at a glance, so never leave the status off. Empty array when a side owes nothing.`,
   sinceLastContact: `"sinceLastContact": string   // ONE or TWO sentences, no more. What we last said, what they last said, how long ago. Summarise the CONTENT, never the subject line.`,
-  theNumbers: `"theNumbers": [ { "label": string, "value": string, "note": string | null } ]   // AT MOST 4 figures: what we quoted, what they pay today, user or seat counts, volumes, contract terms. Empty array if we hold none. NEVER a bare number. "label" says what the figure IS and WHOSE it is, in two to four words: "What we quoted, monthly", "Their CargoWise spend today", "Users in scope". A rep who reads "$34,400 per month" without knowing which side of the table it sits on will say it out loud and be wrong. "value" is the figure alone. "note" is where it came from and when, one short clause, for example "quoted August 14, Debra said it is within her range", or null when we do not know.`,
+  theNumbers: `"theNumbers": [ { "label": string, "value": string, "note": string | null } ]   // Every figure we actually hold that bears on this call: what we quoted, what they pay today, user or seat counts, volumes, contract terms. No fixed limit, because a number the rep needs and does not have is worse than a longer list; drop a figure only when it bears on nothing. Empty array if we hold none. NEVER a bare number. "label" says what the figure IS and WHOSE it is, in two to four words: "What we quoted, monthly", "Their CargoWise spend today", "Users in scope". A rep who reads "$34,400 per month" without knowing which side of the table it sits on will say it out loud and be wrong. "value" is the figure alone. "note" is where it came from and when, one short clause, for example "quoted August 14, Debra said it is within her range", or null when we do not know.`,
   questions: `"questions": [ { "ask": string, "why": string, "targetFields": [string], "targetLabel": string } ]`,
   showThis: `"showThis": [ { "item": string, "why": string } ]   // 2 or 3, in the order THEY would care about. "why" is ONE line, at most 16 words, tied to something they said. Not a feature tour.`,
   fork: `"fork": { "question": string, "branches": [ { "ifThey": string, "then": string } ] } | null   // ONE fork, 2 or 3 branches. "ifThey" and "then" are each ONE short line. Null when there is no real fork; do not invent one.`,
@@ -312,7 +329,7 @@ export function contractFor(shape: BriefingShape): string {
     // and a rep scanning for the money finds it only by reading the timeline
     // first. The facts were never joined by anything except being true, so they
     // are separated here and each one is told what it is about.
-    `  "whereItStands": [ { "label": string, "point": string } ],   // 3 to 6 lines, ordered most consequential first. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.${handoffSplit}`,
+    `  "whereItStands": [ { "label": string, "point": string } ],   // Ordered most consequential first, as many lines as there are consequential things and no more. No fixed limit, and equally no quota: do not pad to reach a length. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.${handoffSplit}`,
     `  "nextStepCommitment": string,`,
     `  "whatsAtRisk": string,`,
     `  "signalFlag": string | null`,
