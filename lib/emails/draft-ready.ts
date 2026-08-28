@@ -50,8 +50,10 @@ const EXCERPT_CHARS = 340;
 export type DraftReadyInput = {
   /** The company, as the CRM spells it. */
   account: string;
-  /** "Aug 28, 2026 at 1:00 PM CT", already formatted for the rep's timezone. */
+  /** "AUGUST 28 2026 . 01:00 PM", already formatted for the rep's timezone. */
   meetingWhen?: string | null;
+  /** The calendar subject, when it says something the account name does not. */
+  meetingTitle?: string | null;
   /** Who the draft is addressed to. */
   to: string[];
   /**
@@ -64,7 +66,19 @@ export type DraftReadyInput = {
   draftSubject: string;
   /** The draft body. Only the opening is shown. */
   body: string;
-  /** Opens the draft in Outlook on the web. */
+  /**
+   * People who SPOKE on the call, were not on the invite, and whose address we
+   * do not have anywhere.
+   *
+   * Named on the card because the draft cannot reach them and the rep can. On
+   * the Orvia call five customer stakeholders spoke and exactly one of them,
+   * Rafael, exists as an address: not on the invite, not in the account's
+   * Salesforce contacts, and not in 120 days of the rep's mail with that domain.
+   * The draft going only to Rafael is correct, and a rep who does not know that
+   * will read it as the draft dropping people.
+   */
+  unaddressed?: string[];
+  /** Opens the draft in the rep's mail client. */
   webLink?: string | null;
 };
 
@@ -95,23 +109,28 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
 
   const excerptHtml = ex.text
     .split("\n")
-    .map((l) => `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${INK};">${esc(l)}</div>`)
+    .map((l) => `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${NAVY};">${esc(l)}</div>`)
     .join("");
 
   const button = input.webLink
-    ? `<a href="${esc(input.webLink)}" style="display:inline-block;background:${NAVY};color:#FFFFFF;font-family:${SANS};font-size:15px;font-weight:600;line-height:20px;padding:13px 26px;border-radius:7px;text-decoration:none;">Open draft in Outlook</a>
-       <div style="font-family:${SANS};font-size:12.5px;line-height:19px;color:${MUTED};margin-top:9px;">This does not send it. It opens the draft in your Outlook, on the right thread, so you can edit it and send it yourself.</div>`
+    ? `<a href="${esc(input.webLink)}" style="display:inline-block;background:${NAVY};color:#FFFFFF;font-family:${SANS};font-size:15px;font-weight:600;line-height:20px;padding:13px 26px;border-radius:7px;text-decoration:none;">Open draft</a>
+       <div style="font-family:${SANS};font-size:12.5px;line-height:19px;color:${INK};margin-top:9px;">This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.</div>`
     : // A missing link is a different thing from a broken one. Say where to look
       // rather than render a dead button.
-      `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${MUTED};">We could not get a direct link for this one. It is in your mailbox under the subject above. Nothing has been sent.</div>`;
+      `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};">We could not get a direct link for this one. It is in your mailbox under the subject above. Nothing has been sent.</div>`;
 
   const html = `<div style="background:${BG};padding:24px 0;">
   <div style="max-width:600px;margin:0 auto;background:${CARD};border:1px solid ${BORDER};border-radius:10px;padding:24px 26px;">
 
     <div style="font-family:${SANS};font-size:21px;line-height:28px;color:${NAVY};font-weight:700;">${esc(input.account)}</div>
     ${
+      input.meetingTitle
+        ? `<div style="font-family:${SANS};font-size:14.5px;line-height:21px;color:${INK};margin-top:3px;">${esc(input.meetingTitle)}</div>`
+        : ""
+    }
+    ${
       input.meetingWhen
-        ? `<div style="font-family:${SANS};font-size:12.5px;letter-spacing:0.4px;text-transform:uppercase;color:${MUTED};margin-top:4px;">${esc(input.meetingWhen)}</div>`
+        ? `<div style="font-family:${SANS};font-size:12.5px;letter-spacing:0.6px;color:${INK};font-weight:600;margin-top:5px;">${esc(input.meetingWhen)}</div>`
         : ""
     }
 
@@ -121,26 +140,33 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
 
     <div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
       <!--
-        LABELLED, and as an eyebrow rather than inline.
+        INLINE AND BOLD, the way Sybill writes it.
 
-        Sybill writes "Subject: Re: ..." on one line, which gives the label and
-        the subject the same weight. Here the subject is the payload rather than
-        a field: the rep is being told the exact string to search their mailbox
-        for, because the one they would guess is wrong. So the label goes above,
-        small and quiet, and the subject stays the loudest line in the card.
+        An eyebrow label was tried and Maanit reversed it: "Subject:" reads
+        faster in front of the string than stacked above it, and a rep already
+        knows the thing beginning "RE:" is a subject. It stays labelled at all
+        because the string is the payload here. A follow-up is written as a reply
+        so it threads onto the customer conversation, the mail provider then
+        replaces our subject with the thread's, and Ariel Rodriguez spent twenty
+        minutes looking for "Following up on our call" when his mailbox had
+        called it "RE: Magaya / Grupo Orvia (Cost/Budget)".
       -->
-      <div style="font-family:${SANS};font-size:11px;letter-spacing:0.7px;text-transform:uppercase;color:${MUTED};font-weight:700;">Subject in Outlook</div>
-      <div style="font-family:${SANS};font-size:15px;line-height:22px;color:${NAVY};font-weight:700;margin-top:3px;">${esc(input.draftSubject)}</div>
+      <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${NAVY};font-weight:700;">Subject: ${esc(input.draftSubject)}</div>
       ${
         to
-          ? `<div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-top:3px;">To ${esc(to)}</div>`
+          ? `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};margin-top:4px;">To ${esc(to)}</div>`
+          : ""
+      }
+      ${
+        (input.unaddressed ?? []).length > 0
+          ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;">Also spoke, not on the invite and no address on file: ${esc((input.unaddressed ?? []).join(", "))}. Add them yourself if they should get this.</div>`
           : ""
       }
       <div style="height:1px;background:${BORDER};margin:12px 0;"></div>
       ${excerptHtml}
       ${
         ex.truncated
-          ? `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin-top:2px;">...</div>`
+          ? `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${INK};margin-top:2px;">...</div>`
           : ""
       }
     </div>
@@ -152,12 +178,16 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
 
   const text = [
     input.account,
+    input.meetingTitle ?? null,
     input.meetingWhen ?? null,
     ``,
     `FOLLOW UP ON THIS MEETING`,
     ``,
     `Subject in Outlook: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
+    (input.unaddressed ?? []).length > 0
+      ? `Also spoke, not on the invite and no address on file: ${(input.unaddressed ?? []).join(", ")}. Add them yourself if they should get this.`
+      : null,
     ``,
     ex.text,
     ex.truncated ? `...` : null,
@@ -165,7 +195,7 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
     input.webLink
       ? `Open draft in Outlook: ${input.webLink}`
       : `It is in your mailbox under that subject.`,
-    `This does not send it. It opens the draft in your Outlook, on the right thread, so you can edit it and send it yourself.`,
+    `This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.`,
   ]
     .filter((l) => l !== null)
     .join("\n");

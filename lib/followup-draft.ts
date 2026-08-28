@@ -1110,6 +1110,38 @@ export async function createFollowUpDraft(
  *     re-ingest cannot leave the rep two drafts of the same email.
  */
 /**
+ * People who spoke on this call and whom the draft cannot reach.
+ *
+ * Not on the invite, so we have no address for them, and the draft is therefore
+ * correctly addressed to fewer people than were in the room. The Orvia call is
+ * the case: five customer stakeholders spoke and only Rafael has an address, in
+ * the invite, in the account's Salesforce contacts, or anywhere in 120 days of
+ * the rep's mail with that domain.
+ *
+ * DELIBERATELY NOT GUESSED. Seeing rafael@orvia.com.mx and writing
+ * claudia@orvia.com.mx is a one-line change and it would put a customer email
+ * on the wire to an address nobody has ever confirmed exists. The rep knows
+ * these people and can add them in two seconds; we are telling them, not
+ * deciding for them.
+ *
+ * Returns an empty list on any failure, since this line is an aid and must never
+ * cost the notification.
+ */
+async function unaddressedSpeakers(tenantId: string, dealId: string, callId: string): Promise<string[]> {
+  try {
+    const { getDealAttendanceHistory } = await import("./attendance");
+    const history = await getDealAttendanceHistory(tenantId, dealId, 8);
+    const call = history.find((c) => c.callId === callId);
+    if (!call) return [];
+    return call.invitees
+      .filter((i) => i.spoke && !i.onInvite && !i.email && String(i.name ?? "").trim())
+      .map((i) => String(i.name).trim());
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Whether this rep gets the "draft ready" email.
  *
  * DRAFT_READY_REPS is a comma-separated list of mailboxes, or "*" for everyone.
@@ -1134,23 +1166,28 @@ export function draftReadyEnabledFor(mailbox: string): boolean {
   return wanted.has(mailbox.trim().toLowerCase());
 }
 
-/** "Aug 28, 2026 at 1:00 PM CT". Central, because Magaya works Central. */
+/**
+ * "AUGUST 28 2026 . 01:00 PM CT". Central, because Magaya works Central.
+ *
+ * Never left to the reader's locale, for the same reason lib/graph-time.ts
+ * exists: Microsoft hands us event times with no offset, and a rep in a
+ * different timezone reading their own clock off our string is how a meeting
+ * gets missed.
+ */
 function formatMeetingWhen(iso: string): string | null {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return null;
   const d = new Date(t);
-  const date = d.toLocaleDateString("en-US", {
-    timeZone: "America/Chicago",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const month = d.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "long" }).toUpperCase();
+  const day = d.toLocaleDateString("en-US", { timeZone: "America/Chicago", day: "numeric" });
+  const year = d.toLocaleDateString("en-US", { timeZone: "America/Chicago", year: "numeric" });
   const time = d.toLocaleTimeString("en-US", {
     timeZone: "America/Chicago",
-    hour: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   });
-  return `${date} at ${time} CT`;
+  return `${month} ${day} ${year} \u00b7 ${time} CT`;
 }
 
 /**
@@ -1202,6 +1239,7 @@ async function notifyDraftReady(args: {
     to: args.to,
     draftSubject,
     body: args.body,
+    unaddressed: await unaddressedSpeakers(args.tenantId, args.dealId, args.callId),
     webLink: args.webLink,
   });
 
