@@ -1109,6 +1109,25 @@ export async function createFollowUpDraft(
  *   - not already drafted for this call, checked against sent_messages, so a
  *     re-ingest cannot leave the rep two drafts of the same email.
  */
+/** "Aug 28, 2026 at 1:00 PM CT". Central, because Magaya works Central. */
+function formatMeetingWhen(iso: string): string | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  const date = d.toLocaleDateString("en-US", {
+    timeZone: "America/Chicago",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const time = d.toLocaleTimeString("en-US", {
+    timeZone: "America/Chicago",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${date} at ${time} CT`;
+}
+
 /**
  * Email the rep that their draft exists, with a link into it.
  *
@@ -1130,6 +1149,7 @@ async function notifyDraftReady(args: {
   body: string;
   webLink: string | null;
   internetMessageId: string | null;
+  meetingWhen: string | null;
 }): Promise<void> {
   if (process.env.DRAFT_READY_ENABLED !== "1") return;
 
@@ -1150,19 +1170,13 @@ async function notifyDraftReady(args: {
     if (state.status === "draft" || state.status === "sent") draftSubject = state.subject;
   }
 
-  const firstLines = args.body
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(1, 3)
-    .join(" ");
-
   const email = renderDraftReadyEmail({
     account: args.account,
+    meetingWhen: args.meetingWhen,
     to: args.to,
     draftSubject,
+    body: args.body,
     webLink: args.webLink,
-    preview: firstLines.length > 0 ? `${firstLines.slice(0, 180)}${firstLines.length > 180 ? "..." : ""}` : null,
   });
 
   const res = await sendEmail({ to: [args.mailbox], subject: email.subject, html: email.html, text: email.text });
@@ -1437,6 +1451,10 @@ export async function autoDraftFollowUpForCall(args: {
     body: res.draft.body,
     webLink: res.webLink ?? null,
     internetMessageId: res.draftId ?? null,
+    // Central, because Magaya works Central and a rep reading "1:00 PM" wants
+    // their own clock. See lib/graph-time.ts for why this is never left to the
+    // reader's locale.
+    meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,
   }).catch((err: unknown) => {
     console.warn(`[followup-draft] draft-ready notice failed for ${args.account}: ${err instanceof Error ? err.message : err}`);
   });

@@ -52,18 +52,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const body = String(row.body_text ?? "");
-  const firstLines = body.split("\n").map((l) => l.trim()).filter(Boolean).slice(1, 3).join(" ");
-
   const email = renderDraftReadyEmail({
     account: String(deal?.account ?? "the customer"),
+    meetingWhen: String(row.sent_at ?? "").slice(0, 10),
     to: [],
     draftSubject: state.subject,
-    // The real webLink is only returned at creation time and is not stored, so
-    // the preview shows the shape without a live link. Say so rather than
-    // rendering a fake one.
-    webLink: null,
-    preview: firstLines ? firstLines.slice(0, 180) : null,
+    body: String(row.body_text ?? ""),
+    // Graph returns the real webLink only at creation time and we do not store
+    // it, so this preview shows the BUTTON with a stand-in href. Marked as such
+    // in the console output: the layout is real, this particular link is not.
+    webLink: "https://outlook.office.com/mail/drafts/",
   });
 
   mkdirSync(".previews", { recursive: true });
@@ -73,6 +71,7 @@ async function main(): Promise<void> {
   console.log(`  the draft's REAL subject in Outlook: "${state.subject}"`);
   console.log(`  what we had recorded instead:        "${row.subject}"`);
   console.log(`\n${email.text}\n`);
+  console.log(`  the Open button here uses a stand-in link. In production it is the webLink Graph returns at creation.`);
   console.log(`  wrote ${out}\n`);
   execFile("open", [out], () => {});
 }
