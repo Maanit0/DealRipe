@@ -488,10 +488,26 @@ export async function runRecapSync(
             );
           }
         } catch (draftErr) {
-          console.error(
-            `[recap-sync] draft threw for ${row.id}:`,
-            draftErr instanceof Error ? draftErr.message : draftErr,
-          );
+          // RECORD IT. A throw used to leave followup_draft_state on
+          // 'not_attempted', which is the value a call carries when nothing was
+          // ever tried, so an exception here was indistinguishable from a call
+          // we deliberately skipped. The success and held paths above were
+          // fixed for exactly this reason and this one was missed, so the only
+          // trace of a crashed draft was a log line nobody reads.
+          //
+          // Found 2026-08-28: two calls carried a sent recap, a
+          // followup_draft_state of 'not_attempted', and no draft. Steven
+          // Johnson's whole complaint was a draft that silently never arrived.
+          const message = draftErr instanceof Error ? draftErr.message : String(draftErr);
+          console.error(`[recap-sync] draft threw for ${row.id}:`, message);
+          await db
+            .from("calls")
+            .update({ followup_draft_state: "failed", followup_draft_reason: `threw: ${message}`.slice(0, 500) })
+            .eq("id", row.id)
+            .then(
+              () => undefined,
+              () => undefined,
+            );
         }
       }
     } catch (err) {
