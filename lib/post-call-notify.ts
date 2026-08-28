@@ -18,6 +18,7 @@ import { type MeetingType } from "./meeting-classify";
 import { buildRecap, type RecapBuild } from "./recap-build";
 import { formatMeetingTime } from "./graph-time";
 import { renderRecapEmailBody, renderRecapNote } from "./recap-render";
+import { formatMeetingWhen } from "./followup-draft";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
@@ -87,6 +88,8 @@ export async function sendPostCallSummary(args: {
    * stage of SQL3 and nothing scoped the audit back to the call.
    */
   callAt?: string | null;
+  /** The calendar subject, for the recap header. */
+  callTitle?: string | null;
   /** Bypass the idempotency guard and re-send even if a recap was already
    *  emailed for this call. Manual recovery scripts set this; the automatic
    *  pipeline never does, so a re-ingest can't double-send. */
@@ -192,7 +195,10 @@ export async function sendPostCallSummary(args: {
   let agreed: { weOwe: string[]; customerOwes: string[] } | undefined;
   let genTasks: GeneratedTask[] = [];
 
-  email = renderRecapEmail(built);
+  email = renderRecapEmail(built, {
+    meetingTitle: args.callTitle ?? null,
+    meetingWhen: args.callAt ? formatMeetingWhen(args.callAt) : null,
+  });
   if (built.kind === "qualification") {
     genTasks = built.tasks;
 
@@ -354,24 +360,50 @@ export function prependDraftCard<T extends { html: string; text: string }>(
   email: T,
   card: { html: string; text: string },
 ): T {
-  const shell = `<div style="max-width:640px;margin:0 auto;padding:18px 16px 0 16px;"><div style="background:#FFFFFF;border:1px solid #E7EBF0;border-radius:10px;padding:20px 22px;">${card.html}</div></div>`;
-  const html = email.html.replace(/(<body[^>]*>)/i, (m) => `${m}${shell}`);
-  // If there was no <body> to match, the card would be silently dropped. Append
-  // rather than lose it, and say so in the log: a card that vanishes because a
-  // renderer changed its shell is exactly the kind of quiet loss this codebase
-  // keeps paying for.
-  const injected = html !== email.html;
-  if (!injected) {
-    console.warn("[post-call] recap html had no <body> tag, draft card appended at the end instead");
+  const shell = `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:18px;line-height:24px;color:#0F172A;font-weight:700;margin:0 0 9px 2px;">Follow up on this meeting</div><div style="background:#FFFFFF;border:1px solid #E7EBF0;border-radius:10px;padding:18px 20px;margin:0 0 22px 0;">${card.html}</div>`;
+
+  // THE SLOT FIRST, the <body> tag only as a fallback.
+  //
+  // Prepending after <body> put the card above the DealRipe wordmark, outside
+  // the 600px layout, so it read as a separate email stapled to the top of a
+  // recap rather than the first section of one. The recap template carries an
+  // explicit slot inside the layout, under the header and above the RECAP
+  // label, which is where it belongs: same page, named section, in the order the
+  // rep acts.
+  const SLOT = "<!--DEALRIPE_CARD_SLOT-->";
+  let html: string;
+  let placed: "slot" | "body" | "prepended";
+  if (email.html.includes(SLOT)) {
+    html = email.html.replace(SLOT, shell);
+    placed = "slot";
+  } else {
+    const afterBody = email.html.replace(/(<body[^>]*>)/i, (m) => `${m}${shell}`);
+    if (afterBody !== email.html) {
+      html = afterBody;
+      placed = "body";
+    } else {
+      // Never lose the card because a renderer changed shape. Say so: a section
+      // that vanishes quietly is exactly the failure this codebase keeps paying
+      // for.
+      html = `${shell}${email.html}`;
+      placed = "prepended";
+    }
   }
+  if (placed !== "slot") {
+    console.warn(`[post-call] recap html had no card slot, follow-up card ${placed} instead`);
+  }
+
   return {
     ...email,
-    html: injected ? html : `${shell}${email.html}`,
-    text: `${card.text}\n\n${"-".repeat(40)}\n\n${email.text}`,
+    html,
+    text: `FOLLOW UP ON THIS MEETING\n\n${card.text}\n\n${"-".repeat(40)}\n\n${email.text}`,
   };
 }
 
-export function renderRecapEmail(built: RecapBuild): ReturnType<typeof renderPostCallSummaryEmail> | null {
+export function renderRecapEmail(
+  built: RecapBuild,
+  meeting?: { meetingTitle?: string | null; meetingWhen?: string | null },
+): ReturnType<typeof renderPostCallSummaryEmail> | null {
   if (built.kind === "general") {
     // The readout is the artifact. renderGeneralRecapEmail is the fallback
     // shape and only fires when the narrative produced nothing at all.

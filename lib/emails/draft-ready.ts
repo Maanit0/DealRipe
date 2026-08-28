@@ -127,9 +127,11 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
        <div style="font-family:${SANS};font-size:12.5px;line-height:19px;color:${INK};margin-top:9px;">This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.</div>`
     : `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};">We could not get a direct link for this one. It is in your mailbox under the subject above. Nothing has been sent.</div>`;
 
-  const html = `<div style="font-family:${SANS};font-size:12px;letter-spacing:0.7px;text-transform:uppercase;color:${GREEN};font-weight:700;">Follow up on this meeting</div>
-
-    <div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
+  // The "Follow up on this meeting" label is the SECTION heading and belongs to
+  // whatever is placing this block, not to the block. Inside the recap it sits
+  // above the card with the RECAP label as its sibling; the standalone email
+  // renders its own. Emitting it here too printed it twice.
+  const html = `<div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
       <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${NAVY};font-weight:700;">Subject: ${esc(input.draftSubject)}</div>
       ${
         to
@@ -153,8 +155,6 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
     <div style="margin-top:18px;">${button}</div>`;
 
   const text = [
-    `FOLLOW UP ON THIS MEETING`,
-    ``,
     `Subject: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
     (input.unaddressed ?? []).length > 0

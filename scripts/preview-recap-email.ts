@@ -150,7 +150,10 @@ async function main(): Promise<void> {
     meetingType: (call.data.meeting_type as MeetingType | null) ?? undefined,
   });
 
-  let email = renderRecapEmail(built);
+  let email = renderRecapEmail(built, {
+    meetingTitle: (call.data.title as string | null) ?? null,
+    meetingWhen: call.data.scheduled_start ? formatMeetingWhen(String(call.data.scheduled_start)) : null,
+  });
   if (!email) {
     // The same answer production gives: nothing to send, and why.
     console.error(

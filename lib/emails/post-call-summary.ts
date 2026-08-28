@@ -75,6 +75,44 @@ function buildFlags(summary: PostCallSummary): string[] {
   return flags;
 }
 
+/**
+ * A paragraph as bullets, one sentence each.
+ *
+ * "The call" and "The detail that matters" arrive as prose and were rendered as
+ * prose, which put a five-sentence block at the top of the artifact a rep is
+ * meant to scan. Splitting is lossless: every sentence survives, in order, with
+ * nothing summarised away. Only the wrapping changes.
+ *
+ * Abbreviations are why this is not a plain split on ". ": "e.g.", "Inc." and a
+ * decimal like "1.5" all end a sentence by that rule and none of them do. A
+ * sentence has to end with a terminator, a space, and then a capital or a digit,
+ * and the fragment before it has to be long enough to be a sentence at all.
+ */
+function bulletList(items: ReadonlyArray<string>): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${items
+    .map(
+      (t) =>
+        `<tr><td style="font-family:${SANS};font-size:14px;line-height:22px;color:${INK};padding:0 0 7px 0;">&bull;&nbsp; ${escapeHtml(t)}</td></tr>`,
+    )
+    .join("")}</table>`;
+}
+
+function sentenceBullets(text: string): string[] {
+  const parts = String(text ?? "")
+    .trim()
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  // Rejoin anything too short to stand alone: an abbreviation that slipped
+  // through is better attached to its neighbour than sitting as its own bullet.
+  const out: string[] = [];
+  for (const p of parts) {
+    if (out.length > 0 && p.length < 25) out[out.length - 1] = `${out[out.length - 1]} ${p}`;
+    else out.push(p);
+  }
+  return out;
+}
+
 function renderPostCallSummaryEmailInner(
   summary: PostCallSummary,
   tasks: GeneratedTask[] = [],
@@ -91,6 +129,10 @@ function renderPostCallSummaryEmailInner(
     demoStrategy: PassResult<DemoStrategy>;
     /** What the CRM claims, when it disagrees with what the calls confirm. */
     crmStageKey?: string | null;
+    /** The calendar subject, for the header. */
+    meetingTitle?: string | null;
+    /** "AUGUST 28 2026 . 01:00 PM CT", formatted before it gets here. */
+    meetingWhen?: string | null;
   },
 ): RenderedEmail {
   const stageLabel = STAGE_LABELS[summary.stageKey] ?? summary.stageKey;
@@ -106,29 +148,29 @@ function renderPostCallSummaryEmailInner(
   const d = readout?.demoStrategy.status === "present" ? readout.demoStrategy.value : null;
   const readoutCards = n
     ? [
-        n.executiveSummary ? card(`${label("The call", NAVY)}${bodyText(n.executiveSummary)}`) : "",
+        n.executiveSummary ? card(`${label("Quick summary", NAVY)}${bulletList(sentenceBullets(n.executiveSummary))}`) : "",
         n.painPoints.length
           ? card(
-              `${label("What hurts, in their order", AMBER)}` +
+              `${label("Pain points", AMBER)}` +
                 `<ol style="margin:6px 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
                 n.painPoints.slice(0, 4).map((p) => `<li style="margin:0 0 6px 0;">${escapeHtml(p.statement)}</li>`).join("") +
                 `</ol>`,
             )
           : "",
         n.operationalDetail
-          ? card(`${label("The detail that matters", MUTED)}${bodyText(n.operationalDetail)}`)
+          ? card(`${label("How their operation works today", NAVY)}${bulletList(sentenceBullets(n.operationalDetail))}`)
           : "",
         n.nextSteps.weOwe.length || n.nextSteps.customerOwes.length
           ? card(
               `${label("Agreed next steps", GREEN)}` +
                 (n.nextSteps.weOwe.length
-                  ? `<div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:6px 0 2px;">We owe them</div>` +
+                  ? `<div style="font-family:${SANS};font-size:14px;font-weight:700;color:${NAVY};margin:8px 0 4px;">We owe them</div>` +
                     `<ul style="margin:0 0 8px 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
                     n.nextSteps.weOwe.map((f) => `<li style="margin:0 0 4px 0;">${escapeHtml(f.statement)}</li>`).join("") +
                     `</ul>`
                   : "") +
                 (n.nextSteps.customerOwes.length
-                  ? `<div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:6px 0 2px;">They owe us</div>` +
+                  ? `<div style="font-family:${SANS};font-size:14px;font-weight:700;color:${NAVY};margin:12px 0 4px;">They owe us</div>` +
                     `<ul style="margin:0 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
                     n.nextSteps.customerOwes.map((f) => `<li style="margin:0 0 4px 0;">${escapeHtml(f.statement)}</li>`).join("") +
                     `</ul>`
@@ -141,7 +183,7 @@ function renderPostCallSummaryEmailInner(
         // cannot wait in the Note.
         d && d.validateInternally.length
           ? card(
-              `${label("Resolve internally before the demo", AMBER)}` +
+              `${label("Answer these before the next session", AMBER)}` +
                 `<ul style="margin:6px 0 0 18px;padding:0;font-family:${SANS};font-size:14px;color:${NAVY};line-height:1.55;">` +
                 d.validateInternally.slice(0, 3).map((v) => `<li style="margin:0 0 6px 0;">${escapeHtml(v)}</li>`).join("") +
                 `</ul>`,
@@ -181,7 +223,7 @@ function renderPostCallSummaryEmailInner(
         );
 
   const coachingCard = summary.coaching
-    ? card(`${label("Coaching", MUTED)}${bodyText(summary.coaching)}`)
+    ? card(`${label("Coaching", NAVY)}${bodyText(summary.coaching)}`)
     : "";
 
   const capturedRows =
@@ -227,15 +269,41 @@ function renderPostCallSummaryEmailInner(
           <span style="color:${NAVY};">Deal</span><span style="color:${GREEN};">Ripe</span>
         </div>
 
-        <div style="font-family:${SANS};font-size:18px;font-weight:700;color:${NAVY};margin:0 0 3px 2px;">Recap &middot; ${escapeHtml(summary.account)}</div>
-        <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:0 0 18px 2px;">${escapeHtml(stageLabel)} &middot; ${summary.captured.length} captured &middot; ${summary.stillOpen.length} still open</div>
+        <!--
+          THE HEADER SAYS WHICH MEETING, THEN THE PAGE HAS TWO NAMED SECTIONS.
+
+          It used to open "Recap . Orvia" and go straight into the readout, so a
+          rep with five calls that day had the account name and nothing else to
+          tell one recap from another, and the follow-up card prepended above the
+          DealRipe wordmark looked like a separate email that had been stapled on.
+
+          Account, meeting, time. Then FOLLOW UP ON THIS MEETING, then RECAP.
+          Two things the rep can act on, each labelled, in the order they act:
+          the draft is what they send, the recap is what they read.
+        -->
+        <div style="font-family:${SANS};font-size:21px;font-weight:700;line-height:28px;color:${NAVY};margin:0 0 2px 2px;">${escapeHtml(summary.account)}</div>
+        ${
+          readout?.meetingTitle
+            ? `<div style="font-family:${SANS};font-size:14.5px;line-height:21px;color:${INK};margin:0 0 2px 2px;">${escapeHtml(readout.meetingTitle)}</div>`
+            : ""
+        }
+        ${
+          readout?.meetingWhen
+            ? `<div style="font-family:${SANS};font-size:12.5px;letter-spacing:0.6px;font-weight:600;color:${INK};margin:0 0 18px 2px;">${escapeHtml(readout.meetingWhen)}</div>`
+            : `<div style="height:14px;"></div>`
+        }
+
+        <!--DEALRIPE_CARD_SLOT-->
+
+        <div style="font-family:${SANS};font-size:18px;line-height:24px;color:${NAVY};font-weight:700;margin:0 0 3px 2px;">Recap</div>
+        <div style="font-family:${SANS};font-size:13px;color:${MUTED};margin:0 0 14px 2px;">${escapeHtml(stageLabel)} &middot; ${summary.captured.length} captured &middot; ${summary.stillOpen.length} still open</div>
 
         ${readoutCards}
 
         ${
           readout?.crmStageKey && readout.crmStageKey !== summary.stageKey
             ? card(
-                `${label("Where the CRM has this", MUTED)}${bodyText(
+                `${label("Where the CRM has this", NAVY)}${bodyText(
                   `The calls confirm ${STAGE_LABELS[summary.stageKey] ?? summary.stageKey}. ` +
                     `The CRM has this deal at ${STAGE_LABELS[readout.crmStageKey] ?? readout.crmStageKey}. ` +
                     `The gaps below are measured against what the calls establish, not against the CRM.`,
@@ -244,15 +312,22 @@ function renderPostCallSummaryEmailInner(
             : ""
         }
 
-        ${card(`${label("What happened", MUTED)}${bodyText(summary.recap)}`)}
+        ${
+          // DROPPED when the narrative ran, because it is the same paragraph
+          // twice. "Quick summary" and this both carried Orvia's Pulpo pain, the
+          // cubic-meter billing model and the booked Monday meeting, four cards
+          // apart. It stays for the case the narrative pass produced nothing,
+          // where it is the only prose the rep gets.
+          n ? "" : card(`${label("What happened", NAVY)}${bodyText(summary.recap)}`)
+        }
 
         ${card(
-          `${label("Captured on this call", GREEN)}
+          `${label("SQL gates captured on this call", GREEN)}
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${capturedRows}</table>`,
         )}
 
         ${card(
-          `${label("Still open", AMBER)}
+          `${label("SQL gates still open", AMBER)}
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${openRows}</table>`,
         )}
 
@@ -260,7 +335,15 @@ function renderPostCallSummaryEmailInner(
 
         ${flagsCard}
 
-        ${card(`${label("Suggested next step", MUTED)}${bodyText(summary.suggestedNextStep)}`)}
+        ${
+          // DROPPED when there are generated actions, because it restates the
+          // first one. On Orvia the questionnaire send appeared three times:
+          // here, in "Your next actions", and in "We owe them". A rep reading
+          // the same instruction three times stops reading.
+          tasks.length > 0
+            ? ""
+            : card(`${label("Suggested next step", NAVY)}${bodyText(summary.suggestedNextStep)}`)
+        }
 
         ${coachingCard}
 
@@ -345,11 +428,11 @@ export function renderReadoutOnlyEmail(args: {
     `</ul>`;
 
   const cards = [
-    n.executiveSummary ? card(`${label("The call", NAVY)}${bodyText(n.executiveSummary)}`) : "",
+    n.executiveSummary ? card(`${label("Quick summary", NAVY)}${bulletList(sentenceBullets(n.executiveSummary))}`) : "",
     n.painPoints.length
-      ? card(`${label("What hurts, in their order", AMBER)}${list(n.painPoints.map((p) => p.statement))}`)
+      ? card(`${label("Pain points", AMBER)}${list(n.painPoints.map((p) => p.statement))}`)
       : "",
-    n.operationalDetail ? card(`${label("The detail that matters", MUTED)}${bodyText(n.operationalDetail)}`) : "",
+    n.operationalDetail ? card(`${label("How their operation works today", NAVY)}${bulletList(sentenceBullets(n.operationalDetail))}`) : "",
     n.nextSteps.weOwe.length ? card(`${label("What we owe them", GREEN)}${list(n.nextSteps.weOwe.map((f) => f.statement))}`) : "",
     n.nextSteps.customerOwes.length
       ? card(`${label("What they owe us", GREEN)}${list(n.nextSteps.customerOwes.map((f) => f.statement))}`)
@@ -369,8 +452,8 @@ export function renderReadoutOnlyEmail(args: {
 
   const text = [
     n.executiveSummary,
-    n.painPoints.length ? `\nWhat hurts, in their order:\n${n.painPoints.map((p, i) => `${i + 1}. ${p.statement}`).join("\n")}` : "",
-    n.operationalDetail ? `\nThe detail that matters:\n${n.operationalDetail}` : "",
+    n.painPoints.length ? `\nPain points:\n${n.painPoints.map((p, i) => `${i + 1}. ${p.statement}`).join("\n")}` : "",
+    n.operationalDetail ? `\nHow their operation works today:\n${n.operationalDetail}` : "",
     n.nextSteps.weOwe.length ? `\nWhat we owe them:\n${n.nextSteps.weOwe.map((f) => `  - ${f.statement}`).join("\n")}` : "",
     n.nextSteps.customerOwes.length
       ? `\nWhat they owe us:\n${n.nextSteps.customerOwes.map((f) => `  - ${f.statement}`).join("\n")}`

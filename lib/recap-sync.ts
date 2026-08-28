@@ -109,7 +109,7 @@ export async function runRecapSync(
   // marker would be a second thing to keep true.
   const calls = await db
     .from("calls")
-    .select("id, tenant_id, deal_id, meeting_type, call_subtype, outcome, scheduled_start, deals!inner(external_id)")
+    .select("id, tenant_id, deal_id, meeting_type, call_subtype, outcome, scheduled_start, title, deals!inner(external_id)")
     .eq("has_been_extracted", true)
     .gte("scheduled_start", since)
     .order("scheduled_start", { ascending: true });
@@ -125,6 +125,7 @@ export async function runRecapSync(
     call_subtype: string | null;
     outcome: string | null;
     scheduled_start: string | null;
+    title: string | null;
     deals: { external_id: string | null };
   }>;
 
@@ -393,6 +394,7 @@ export async function runRecapSync(
             // today rather than where it stood on the call, and history can
             // cite a later conversation than the one being recapped.
             callAt: row.scheduled_start,
+            callTitle: row.title ?? null,
             makeDraft,
           }),
       );
