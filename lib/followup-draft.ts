@@ -748,7 +748,6 @@ function buildUserMessage(
     (isPreDemoStage(s?.stageKey) || agreedMentionsUpcomingDemo(input.agreed))
       ? `\nA demo is still ahead and no NDA is signed. Magaya requires one first, so make the proposed date contingent on it rather than raising the NDA as a separate request.`
       : "",
-    open ? `\nQUALIFICATION GAPS STILL OPEN (work at most ONE in as a question, never list them):\n${open}` : "",
     ``,
     samples.length > 0
       ? `HOW THIS REP WRITES. Copy the voice, not the content:\n\n${samples.join("\n\n---\n\n")}`
