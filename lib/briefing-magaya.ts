@@ -436,6 +436,13 @@ export function buildMagayaBriefingUserMessage(args: {
       args.crmContext,
       ``,
       `Treat the block above as unverified. A colleague wrote it down; the customer has not confirmed any of it to us. Use it to make the questions specific and to avoid asking what is already known, but never state it back as established fact, and never let it fill a qualification gap. If something in it is important and unconfirmed, that is a good thing to ask about.`,
+      // The block used to have no destination in the output, so a model given
+      // the customer's own stated needs could only spend them on sharpening
+      // questions. The rep then read a page of good questions and no answers,
+      // which is precisely what Juan Lopez reported: "it's saying to go gather
+      // all this information, because it doesn't have any of the
+      // pre-qualification data". It did have it. There was nowhere to put it.
+      `If the contract you are filling has a "bdrHandoff" field, PASS THIS THROUGH TO IT. The rep may be running the call with no CRM open and no BDR available to hand off, so the substance of the block above has to reach them on the page. Keep the customer's own phrasing, do not analyse it, and do not translate it into Magaya field names. If the contract has no such field, this block only sharpens the questions as described above.`,
     );
   }
 

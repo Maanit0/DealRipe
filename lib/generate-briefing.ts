@@ -70,6 +70,15 @@ export type MagayaBriefing = {
    * may have asked is how a rep stops reading the whole product.
    */
   coachThis?: { lastTime: string; thisTime: string } | null;
+  /**
+   * What the BDR put in Salesforce before this call was ever booked.
+   *
+   * Sourced ONLY from the account context block, never from our own extraction.
+   * On a first discovery call it is the only thing on the page the customer
+   * actually said, because every other block is assembled from a history we do
+   * not have yet.
+   */
+  bdrHandoff?: { lines: Array<{ label: string; point: string }>; asOf?: string | null } | null;
   inTheRoom?: Array<{ person: string; note: string }> | null;
   openItems?: { us: string[]; them: string[] } | null;
   sinceLastContact?: string | null;

@@ -31,6 +31,7 @@
  */
 
 export type BlockName =
+  | "bdrHandoff"
   | "bookThis"
   | "coachThis"
   | "inTheRoom"
@@ -110,9 +111,24 @@ export const CORE_FIELDS = ["callObjective", "whereItStands", "nextStepCommitmen
  * not know the meeting".
  */
 const DEFAULT_SHAPE: BriefingShape = {
-  blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+  // bdrHandoff is here as well as on discovery, because the resolver returns
+  // unknown for roughly 60% of meetings and a call we hold intake notes for and
+  // no captured history of our own is a first conversation whatever the resolver
+  // could prove. The block renders nothing when there are no notes, so the cost
+  // of being wrong is zero and the cost of omitting it is Juan's call.
+  blocks: ["bookThis", "coachThis", "bdrHandoff", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
-  maxWords: 700,
+  // 700 -> 860 with the handoff, and the extra 60 over discovery's 800 is
+  // HEADROOM RATHER THAN PERMISSION.
+  //
+  // This is the widest shape in the file, it covers roughly 60% of meetings,
+  // and unlike discovery it can land on a deal carrying full history: the first
+  // Cargosystems run under the new block came in at 766 and only after one
+  // regeneration for length. Two failures suppress a briefing entirely, so a
+  // budget set at the measured ceiling does not fail safe here, it fails to
+  // send. The rep who lost the briefing would be the one this whole change was
+  // for.
+  maxWords: 860,
   purpose:
     "We could not tell what kind of call this is, so do not assume a stage. Lead with what is open and what the customer last said, ask only what is genuinely unknown, and leave with a dated commitment. Never open as though meeting for the first time unless the deal has no history at all.",
 };
@@ -168,9 +184,20 @@ const SHAPES: Record<string, BriefingShape> = {
    * invented before you know what they want is a guess.
    */
   discovery: {
-    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+    // bdrHandoff sits at the front of the KNOW card and only on this shape and
+    // unknown. Juan Lopez asked for it by naming what a briefing without it
+    // costs him: "if I don't have Salesforce on me for any reason, or the BDR
+    // can't join the call, they can't hand it off." He also drew the boundary
+    // himself when asked whether he wanted it on demo and proposal calls too,
+    // and said no. By then the customer has told US, and the intake note is
+    // history.
+    blocks: ["bookThis", "coachThis", "bdrHandoff", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
     questionBudget: 3,
-    maxWords: 700,
+    // 700 -> 800 for the handoff block. It is the one raise on this shape that
+    // buys the rep something they cannot get anywhere else on a first call:
+    // every other block is assembled from OUR history, and on a discovery call
+    // we have none.
+    maxWords: 800,
     purpose:
       "Learn what actually hurts, what they run today, and who decides, then leave with a dated next step. Asking is the main move. Do not pitch.",
   },
@@ -247,6 +274,7 @@ export function shapeForCallType(callType: string | null | undefined): BriefingS
  * which parts to skip, is how the current schema became a template.
  */
 const BLOCK_CONTRACT: Record<BlockName, string> = {
+  bdrHandoff: `"bdrHandoff": { "lines": [ { "label": string, "point": string } ], "asOf": string | null } | null   // WHAT THE BDR ALREADY LEARNED, taken ONLY from the "Recorded by the BDR before this call" block and from nowhere else. Null when that block is absent or says the Sales Development section is empty. NEVER infer it, never carry a point over from our own calls, and never write it from the framework. 2 to 5 lines, most consequential first. "label" is two or three words naming what the line is ABOUT ("What hurts", "What they run today", "Why now", "Who decides", "Go-live"). "point" is ONE sentence in the CUSTOMER's own words where the field holds them, quoted, and in plain words where it does not. Keep their phrasing: it is the only unmediated thing on the page. Do NOT restate a Magaya field name, do not write "Budget Confirmed: true"; write what that means for this call. "asOf" is the date the BDR recorded it if the block gives one, else null. This is a HANDOFF, not analysis: the rep is reading it because Salesforce is not open in front of them.`,
   inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // AT MOST 3 people, the ones who decide what happens in this room. "person" is the NAME ONLY, exactly as it appears in the attendee list: their job title is already printed beside it and repeating it wastes the line. "note" is up to 30 words and carries what THEY care about, in their own words where we have them: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
   openItems: `"openItems": { "us": [string], "them": [string] }   // Up to 3 per side. Each line names the item, when it was agreed, and its STATUS in plain words: "sent Aug 21", "still not sent", "agreed Aug 13 for Thursday, never booked". A rep needs to know which ones are outstanding at a glance, so never leave the status off. Empty array when a side owes nothing.`,
   sinceLastContact: `"sinceLastContact": string   // ONE or TWO sentences, no more. What we last said, what they last said, how long ago. Summarise the CONTENT, never the subject line.`,
@@ -260,6 +288,22 @@ const BLOCK_CONTRACT: Record<BlockName, string> = {
 };
 
 export function contractFor(shape: BriefingShape): string {
+  // WHERE IT STANDS AND THE HANDOFF COMPETE FOR THE SAME FACTS.
+  //
+  // On a first discovery call whereItStands has no history of ours to draw on,
+  // so given the BDR block it fills itself from the BDR block. The first
+  // Coordinadora briefing generated under this shape said their in-house system
+  // supports one customer, what they need built, and their January go-live
+  // date, twice, in two sections a few lines apart. Both were accurate, and the
+  // page still read as padded, which on an artifact whose whole budget is two
+  // minutes of a rep's attention is a real cost.
+  //
+  // Told to the model as a division of labour rather than a prohibition. "Do
+  // not repeat" makes a model drop the fact from both blocks; naming what each
+  // block is FOR keeps it in the right one.
+  const handoffSplit = shape.blocks.includes("bdrHandoff")
+    ? ` THIS SHAPE ALSO CARRIES "bdrHandoff", AND THE TWO BLOCKS MUST NOT OVERLAP. The handoff already carries their pain, their requirements, their current software, their go-live date and their budget or sponsorship position. So "whereItStands" MAY NOT CONTAIN A LINE ABOUT ANY OF THOSE. It is banned from restating them in other words, from summarising them, and from labelling them differently ("Core pain", "Scope", "What they need" and "Go-live target" are all forbidden here when the handoff exists). It covers ONLY what is true about the DEAL and not about the customer: whether we have ever spoken to them, what we owe and when, what has not been verified, what is missing that we would need, and what the timeline demands of US. If that leaves fewer than 3 lines, RETURN FEWER LINES. Two true lines the handoff did not already say beat five that restate it.`
+    : "";
   const core = [
     `  "callObjective": string,`,
     // LABELLED LINES, NEVER A PARAGRAPH.
@@ -268,7 +312,7 @@ export function contractFor(shape: BriefingShape): string {
     // and a rep scanning for the money finds it only by reading the timeline
     // first. The facts were never joined by anything except being true, so they
     // are separated here and each one is told what it is about.
-    `  "whereItStands": [ { "label": string, "point": string } ],   // 3 to 6 lines, ordered most consequential first. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.`,
+    `  "whereItStands": [ { "label": string, "point": string } ],   // 3 to 6 lines, ordered most consequential first. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.${handoffSplit}`,
     `  "nextStepCommitment": string,`,
     `  "whatsAtRisk": string,`,
     `  "signalFlag": string | null`,

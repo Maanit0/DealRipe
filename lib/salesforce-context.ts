@@ -390,6 +390,29 @@ export async function getAccountContextByDomain(
  * failure throws, because "we could not read it" must not look like "it is not
  * there".
  */
+/**
+ * Fields whose one recorded value is the same on the whole book.
+ *
+ * COUNTED, not assumed, over the 123 accounts carrying a confirmed deal link on
+ * 2026-08-28: Special Handling Instructions is "No" on 123 of 123. A field with
+ * one observed value carries no information about the account in front of the
+ * rep, and printing it on every briefing spends a line and some of the reader's
+ * trust to say nothing.
+ *
+ * The neighbouring booleans were counted in the same pass and are all KEPT,
+ * because they are genuinely answered: Compelling Events splits 57/43, Budget
+ * Confirmed 78/22, Executive Sponsorship 55/45. That distinction is the whole
+ * point of measuring rather than eyeballing. Unlike a Rolldog checklist box,
+ * where false means unset, a "No" in these fields is a BDR's recorded answer
+ * and the briefing may rely on it.
+ *
+ * Suppression is keyed to the VALUE, not the field, so the day a BDR types a
+ * real special-handling instruction it appears. Re-measure before adding to
+ * this map; a field that is constant across 123 accounts is a fact about the
+ * book, and the book changes.
+ */
+const UNINFORMATIVE = new Map<string, string>([["Special Handling Instructions", "No"]]);
+
 export async function loadAccountContext(id: string): Promise<SalesforceAccountContext | null> {
   const map = await accountFieldMap();
   const select = ["Id", "Name", "Website", ...map.values()].join(", ");
@@ -404,7 +427,9 @@ export async function loadAccountContext(id: string): Promise<SalesforceAccountC
   const fields: SalesforceAccountContext["fields"] = [];
   for (const [label, api] of map) {
     const v = render(rec[api]);
-    if (v) fields.push({ label, value: v });
+    if (!v) continue;
+    if (UNINFORMATIVE.get(label) === v.trim()) continue;
+    fields.push({ label, value: v });
   }
 
   const accountId = String(rec.Id);

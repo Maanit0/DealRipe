@@ -520,6 +520,47 @@ const SIGNOFF_RE =
  * Returns null when the samples do not agree on anything, because a guessed
  * signature on outgoing customer mail is worse than the generic one.
  */
+/**
+ * A rep's real closing block, as the rep themselves supplied it.
+ *
+ * learnSignature reads the richest block out of a rep's sent mail, which works
+ * whenever their sent mail HAS a rich block in it. Juan Lopez, 2026-08-27, on
+ * the drafts he was getting: "the signature that's on it is as if I was writing
+ * it from my mobile phone." It was, because that is what the sample agreed on.
+ * Stripping "Sent from my iPhone" removes the tagline and cannot put back a
+ * title and a phone number that were never in the mail we sampled.
+ *
+ * So this is not a heuristic and is not derived from anything: it is the block
+ * the rep sent us, kept verbatim. It outranks the learned one, because a rep
+ * telling us their own signature is better evidence than us inferring it.
+ *
+ * ONLY THE LINES BELOW THE SIGN-OFF live here. How a rep says goodbye is still
+ * learned from their mail: Alexandra closes "Kindly," and Juan did not tell us
+ * what he closes with, so inventing one would replace a measured fact with a
+ * guess to fix a problem he did not report.
+ *
+ * The Magaya banner image Juan attached is deliberately NOT here. A draft body
+ * is assembled as text, an <img> needs a URL we would have to host, and a
+ * broken image on outgoing customer mail is worse than no image. It is tracked
+ * as an open item instead.
+ */
+const REP_SIGNATURE_BLOCK: Record<string, string> = {
+  // Supplied by Juan on 2026-08-27, transcribed from the block in his own mail.
+  "jlopez@magaya.com": "JUAN LOPEZ\nSENIOR SOFTWARE ADVISOR\n786.363.6269",
+};
+
+/**
+ * The sign-off line the rep actually uses, taken off their learned block.
+ *
+ * Returns null rather than a default, so the caller can tell "they close with
+ * Kindly" apart from "we never saw them close anything", which are the two
+ * cases that decide whether the generic fallback is right.
+ */
+function learnedSignOff(signature: string | null): string | null {
+  const first = (signature ?? "").split("\n")[0]?.trim();
+  return first && SIGNOFF_RE.test(first) ? first : null;
+}
+
 export function learnSignature(
   samples: ReadonlyArray<string>,
   repDisplayName?: string | null,
@@ -900,7 +941,13 @@ export async function generateFollowUpDraft(
   // regards" gave every rep the same sign-off regardless of how they actually
   // close, and gave none of them their name, title and phone, so the first
   // thing each rep did to a draft was retype their own signature.
-  const signature = learnSignature(samples, repFirstName(input.mailbox));
+  const learned = learnSignature(samples, repFirstName(input.mailbox));
+  // A rep-supplied block replaces the LEARNED BLOCK ONLY, and keeps the rep's
+  // own sign-off word above it when we have measured one.
+  const supplied = REP_SIGNATURE_BLOCK[input.mailbox.toLowerCase()];
+  const signature = supplied
+    ? `${learnedSignOff(learned) ?? "Best regards,"}\n${supplied}`
+    : learned;
   parsed.body = `${parsed.body.trimEnd()}\n\n${signature ?? `Best regards,\n${repFirstName(input.mailbox)}`}`;
 
   // Customer-side addresses from the CALL, computed the same way for a reply and

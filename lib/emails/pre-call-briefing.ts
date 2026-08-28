@@ -12,6 +12,7 @@
 import type { MagayaBriefing } from "../generate-briefing";
 import { dealNumbers, standPoints } from "../briefing-blocks";
 import { shapeForCallType } from "../briefing-shapes";
+import { normalizeDashes } from "../recap-lint";
 import type { BriefingAttendee } from "../attendees";
 
 const BG = "#F4F6F9";
@@ -372,6 +373,42 @@ export function renderPreCallBriefingEmail(
     ? `${sub(`Ask these (${briefing.questions.length})`)}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${questionRows}</table>`
     : "";
 
+  // WHAT THE BDR ALREADY LEARNED. First in the KNOW card, and on a discovery
+  // call it is usually the whole card: open items, last contact and the numbers
+  // are all assembled from a history that does not exist yet on a first
+  // conversation, so without this block the rep gets three empty sections and
+  // a set of questions.
+  //
+  // Attributed and dated on the block rather than in each line. Juan Lopez asked
+  // for it so he could run the call without Salesforce open, which means the
+  // page has to say where this came from and when: a rep who cannot tell our
+  // extraction from a BDR's intake note will quote it to the customer as
+  // something they told US.
+  //
+  // Dashes are AUTO-FIXED here rather than linted. This is the one block on the
+  // page whose words are not model output: a BDR typed them into Salesforce,
+  // and no amount of regenerating the briefing will take an em-dash out of a
+  // field we are quoting. Same reasoning as the dash in the Salesforce Task
+  // title, which is the rep's own calendar subject. Substitution is lossless,
+  // so it happens silently and nothing is suppressed over it.
+  const handoff = briefing.bdrHandoff;
+  const handoffLines = (handoff?.lines ?? [])
+    .filter((l) => String(l?.point ?? "").trim())
+    .map((l) => ({ label: normalizeDashes(String(l.label ?? "")), point: normalizeDashes(String(l.point)) }));
+  const handoffBlock = handoffLines.length
+    ? `${sub("From the BDR, before this call")}${bullets(
+        handoffLines.map((l) =>
+          l.label
+            ? `<b>${esc(l.label)}</b><br><span style="color:${INK};">${esc(l.point)}</span>`
+            : esc(l.point),
+        ),
+      )}<div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-top:6px;">${esc(
+        handoff?.asOf
+          ? `Recorded in Salesforce ${handoff.asOf}. Not confirmed by the customer to us.`
+          : "Recorded in Salesforce by the BDR. Not confirmed by the customer to us.",
+      )}</div>`
+    : "";
+
   const signalCard = briefing.signalFlag
     ? card(`${sub("Signal", RED)}${bodyText(briefing.signalFlag)}`, { bg: RED_SOFT, border: RED_BORDER })
     : "";
@@ -391,7 +428,7 @@ export function renderPreCallBriefingEmail(
       coachBlock,
     ]),
     say: stack([showThisBlock, questionsBlock, forkBlock, doNotBlock]),
-    know: stack([openItemsBlock, sinceBlock, standBlock, numbersBlock]),
+    know: stack([handoffBlock, openItemsBlock, sinceBlock, standBlock, numbersBlock]),
   };
   const order = shapeForCallType(ctx.callType).cardOrder ?? ["act", "say", "know"];
 
@@ -497,6 +534,12 @@ function renderText(
     lines.push(briefing.coachThis.lastTime);
     lines.push(briefing.coachThis.thisTime);
   }
+  secList(
+    "FROM THE BDR, BEFORE THIS CALL",
+    (briefing.bdrHandoff?.lines ?? [])
+      .filter((l) => String(l?.point ?? "").trim())
+      .map((l) => normalizeDashes(`${l.label ? `${l.label}: ` : ""}${l.point}`)),
+  );
   secList(
     "WHAT THEY CARE ABOUT",
     briefing.inTheRoom?.map((r) => `${r.person}: ${r.note}`),

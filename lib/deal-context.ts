@@ -223,7 +223,7 @@ export async function getDealContext(
   // External id (for the Rolldog mapping) + most recent captured call.
   const row = await db
     .from("deals")
-    .select("external_id, rolldog_opportunity_id")
+    .select("external_id, rolldog_opportunity_id, salesforce_account_id, salesforce_link_confidence")
     .eq("id", dealId)
     .maybeSingle();
   const externalId = row.data?.external_id ?? null;
@@ -448,10 +448,60 @@ export async function getDealContext(
   // a consumer-mail deal report "we have our own calls", which sent me looking
   // for an extraction bug that did not exist. A status that can be misread is
   // worse than no status.
-  let crmContextStatus: DealContext["crmContextStatus"] = haveOurOwnCalls
-    ? "have_own_calls"
-    : "no_company_domain";
-  if (!haveOurOwnCalls && externalId?.startsWith("auto:")) {
+  let crmContextStatus: DealContext["crmContextStatus"] = "no_company_domain";
+
+  // THE CONFIRMED LINK IS THE FIRST SOURCE, and for most of the book the only
+  // one that works.
+  //
+  // This block used to reach Salesforce exclusively by re-resolving the account
+  // from an "auto:" external id, which meant two silent exclusions. A deal
+  // linked to a Rolldog opportunity carries a different external id and never
+  // entered the branch at all, and 91 deals carrying a CONFIRMED
+  // salesforce_account_id were re-derived from a domain string rather than
+  // simply read. Juan Lopez, 2026-08-27, on a discovery call briefed with no
+  // qualification data: "it doesn't have any of the pre-qualification data, but
+  // there is some data in there that the BDRs are entering in Salesforce."
+  // There was, on the linked account, and nothing here ever asked for it.
+  //
+  // salesforce_link_confidence is checked for the same reason every writer
+  // checks it: an id set without a confidence is a link nobody has stood
+  // behind, and putting another company's qualification notes in front of a rep
+  // is not recoverable by them noticing.
+  const linkedAccountId =
+    row.data?.salesforce_link_confidence === "confirmed"
+      ? (row.data?.salesforce_account_id ?? null)
+      : null;
+
+  // HAVING OUR OWN CALLS NO LONGER SUPPRESSES THIS, it only labels it.
+  //
+  // The previous rule was that our own calls supersede a BDR's notes, which is
+  // true about PRECEDENCE and was wrong as a gate: it deleted the intake record
+  // the moment we captured anything, so the rep lost the account's stated needs
+  // exactly as the deal got real. It is the same mistake the opportunity-age
+  // test above made and was corrected for, in the same direction, and the
+  // correction is the same. Precedence is stated in the block; the block stays.
+  const supersededNote = haveOurOwnCalls
+    ? " Recorded before our own calls, so where this and a captured call disagree, the call is current."
+    : "";
+
+  if (linkedAccountId) {
+    try {
+      const sf = await loadAccountContext(linkedAccountId);
+      if (sf) crmContacts = sf.contacts;
+      const rendered = sf ? accountContextLines(sf) : "";
+      if (rendered) {
+        crmContext = rendered + bdrNotesAgeNote + supersededNote;
+        crmContextStatus = "present";
+      } else {
+        crmContextStatus = sf ? "empty" : "no_account";
+      }
+    } catch (err) {
+      crmContextStatus = "unavailable";
+      console.warn(
+        `[deal-context] SALESFORCE ACCOUNT READ FAILED for linked account ${linkedAccountId}, briefing will be thinner than it should be: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } else if (externalId?.startsWith("auto:")) {
     const tail = externalId.slice("auto:".length);
     const domain = tail.includes("@") ? (tail.split("@")[1] ?? "") : tail;
     const addresses = tail.includes("@") ? [tail] : [];
@@ -483,7 +533,7 @@ export async function getDealContext(
               resolution.status === "resolved_by_name"
                 ? `\n(This account was matched to the customer by company name, not by their email domain, so confirm it is the right company before relying on it.)`
                 : "";
-            crmContext = rendered + bdrNotesAgeNote + provenance;
+            crmContext = rendered + bdrNotesAgeNote + supersededNote + provenance;
             crmContextStatus = resolution.status === "resolved_by_name" ? "present_by_name" : "present";
           } else {
             // Keep these apart. One "absent" bucket reported Milsped as "account
