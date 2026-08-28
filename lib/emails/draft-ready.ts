@@ -120,7 +120,17 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
     <div style="font-family:${SANS};font-size:12px;letter-spacing:0.7px;text-transform:uppercase;color:${GREEN};font-weight:700;margin-top:17px;">Follow up on this meeting</div>
 
     <div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
-      <div style="font-family:${SANS};font-size:15px;line-height:22px;color:${NAVY};font-weight:700;">${esc(input.draftSubject)}</div>
+      <!--
+        LABELLED, and as an eyebrow rather than inline.
+
+        Sybill writes "Subject: Re: ..." on one line, which gives the label and
+        the subject the same weight. Here the subject is the payload rather than
+        a field: the rep is being told the exact string to search their mailbox
+        for, because the one they would guess is wrong. So the label goes above,
+        small and quiet, and the subject stays the loudest line in the card.
+      -->
+      <div style="font-family:${SANS};font-size:11px;letter-spacing:0.7px;text-transform:uppercase;color:${MUTED};font-weight:700;">Subject in Outlook</div>
+      <div style="font-family:${SANS};font-size:15px;line-height:22px;color:${NAVY};font-weight:700;margin-top:3px;">${esc(input.draftSubject)}</div>
       ${
         to
           ? `<div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-top:3px;">To ${esc(to)}</div>`
@@ -146,7 +156,7 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
     ``,
     `FOLLOW UP ON THIS MEETING`,
     ``,
-    `Subject: ${input.draftSubject}`,
+    `Subject in Outlook: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
     ``,
     ex.text,
