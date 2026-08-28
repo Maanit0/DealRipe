@@ -68,6 +68,29 @@ export type DealRepVerdict =
  */
 export type RepSource = "pilot_map" | "rolldog_owner" | "call_organizer";
 
+/**
+ * WHY SALESFORCE'S OWN "Sales Rep" FIELD IS NOT A RUNG HERE.
+ *
+ * Account.Sales_Rep__c is a lookup to User, so it resolves cleanly to a rep
+ * email and looks like the obvious authority for the deals with no Rolldog
+ * opportunity to ask. It was checked on 2026-08-28 before being used, and it
+ * failed on the one case where we have ground truth from the rep's own mouth.
+ *
+ * Measured over the 123 live deals with a confirmed Salesforce account: 43 have
+ * no Sales Rep set at all, 12 point at someone who is not an enrolled rep, and
+ * 68 map to a pilot rep. Of those 68 it agrees with rep_email on 65 and
+ * disagrees on 3. The first disagreement is Apexcargo, where the field says
+ * jlopez, Rolldog opportunity 92797 is owned by sjohnson, every captured call is
+ * organized by sjohnson, and Juan Lopez told us in as many words that the deal is
+ * not his. The field is stale in exactly the way deals.rep_email is stale:
+ * written once when the account was set up and never maintained afterwards.
+ *
+ * It is not a tiebreaker either, since it is blank on a third of the book and
+ * would have to be trusted precisely where nothing else can check it. Its honest
+ * use is as a SIGNAL: where it disagrees with Rolldog, a human should look. It
+ * is not an answer, and 65 agreements do not license the 3.
+ */
+
 const PILOT_REPS = new Set(Object.keys(REP_UID).map((e) => e.toLowerCase()));
 
 /** True when this address belongs to one of the six enrolled reps. */

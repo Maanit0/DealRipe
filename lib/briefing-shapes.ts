@@ -102,6 +102,21 @@ export type BriefingShape = {
    * which is the mistake this file exists to undo.
    */
   cardOrder?: ReadonlyArray<"act" | "say" | "know">;
+  /**
+   * Whether to print the BDR's Sales Development record on this call type.
+   *
+   * A plain flag rather than a BlockName, because this block is RENDERED from
+   * Salesforce and never asked of the model, so it has no entry in the contract
+   * and does not belong in the list that builds one.
+   *
+   * Juan Lopez drew this line himself when asked whether he wanted the intake
+   * record on demo and proposal calls too, and said no: by then the customer has
+   * told US, our own calls carry it, and twenty fields of a colleague's intake
+   * notes is page a rep has to scroll past. It is on for discovery and for
+   * unknown, since a call we hold intake notes for and no captured history of
+   * our own is a first conversation whatever the resolver could prove.
+   */
+  bdrRecord?: boolean;
 };
 
 /** Everything the briefing always emits, whatever the call type. */
@@ -134,6 +149,7 @@ const DEFAULT_SHAPE: BriefingShape = {
   // of being wrong is zero and the cost of omitting it is Juan's call.
   blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
+  bdrRecord: true,
   // 700 -> 860 with the handoff, and the extra 60 over discovery's 800 is
   // HEADROOM RATHER THAN PERMISSION.
   //
@@ -209,6 +225,7 @@ const SHAPES: Record<string, BriefingShape> = {
     // history.
     blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
     questionBudget: 3,
+    bdrRecord: true,
     // 700 -> 800 for the handoff block. It is the one raise on this shape that
     // buys the rep something they cannot get anywhere else on a first call:
     // every other block is assembled from OUR history, and on a discovery call

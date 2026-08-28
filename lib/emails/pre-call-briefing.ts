@@ -440,7 +440,12 @@ export function renderPreCallBriefingEmail(
   // Dashes are normalised and nothing else is. A BDR typed these into
   // Salesforce, so regenerating the briefing could never fix a dash in them;
   // substitution is exact and lossless. Same case as the Salesforce Task title.
-  const bdrRows = (ctx.bdrFields ?? [])
+  // Gated on the call type, NOT printed wherever the data happens to exist.
+  // Moving this block out of the shape system when it stopped being model-written
+  // silently turned it on for every call type, including the demo and proposal
+  // briefings Juan had specifically said should not carry it.
+  const wantsBdr = shapeForCallType(ctx.callType).bdrRecord === true;
+  const bdrRows = (wantsBdr ? ctx.bdrFields ?? [] : [])
     .map((f) => ({ label: normalizeDashes(String(f.label ?? "").trim()), value: normalizeDashes(String(f.value ?? "").trim()) }))
     .filter((f) => f.label && f.value);
 
@@ -623,7 +628,7 @@ function renderText(
   }
   secList(
     "FROM THE BDR, BEFORE THIS CALL",
-    (ctx.bdrFields ?? [])
+    (shapeForCallType(ctx.callType).bdrRecord === true ? ctx.bdrFields ?? [] : [])
       .filter((f) => String(f.value ?? "").trim())
       .map((f) => normalizeDashes(`${f.label}: ${f.value}`)),
   );
