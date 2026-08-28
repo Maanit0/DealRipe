@@ -413,6 +413,29 @@ export async function getAccountContextByDomain(
  */
 const UNINFORMATIVE = new Map<string, string>([["Special Handling Instructions", "No"]]);
 
+/**
+ * Fields dropped whatever their value, because a briefing is better without them.
+ *
+ * "Less Than 90 Days" is a boolean sitting beside "Desired Go-Live Date", and
+ * COUNTED over the 81 accounts carrying both on 2026-08-28 it disagrees with
+ * that date on 38 of them, with a further 15 dates already in the past. The
+ * first Orvia briefing generated with the handoff block printed the result:
+ * "December 31, 2026, which the BDR flagged as less than 90 days from now",
+ * four months out, in a section whose whole purpose is that the rep can rely on
+ * it without opening Salesforce.
+ *
+ * The date is the fact and the boolean is a stale derivation of it, so there is
+ * nothing to reconcile and nothing lost by dropping it. Keeping it would mean
+ * asking the model to arbitrate between two CRM fields, which is a judgement it
+ * cannot make and should not be handed.
+ *
+ * A go-live date in the PAST is deliberately still shown. That is a real fact
+ * about a real record and the model handles it well on its own: the Cargosystems
+ * briefing flagged a December 2024 target as already passed and told the rep to
+ * confirm the real one, which is exactly right.
+ */
+const NEVER_SHOW = new Set<string>(["Less Than 90 Days"]);
+
 export async function loadAccountContext(id: string): Promise<SalesforceAccountContext | null> {
   const map = await accountFieldMap();
   const select = ["Id", "Name", "Website", ...map.values()].join(", ");
@@ -428,6 +451,7 @@ export async function loadAccountContext(id: string): Promise<SalesforceAccountC
   for (const [label, api] of map) {
     const v = render(rec[api]);
     if (!v) continue;
+    if (NEVER_SHOW.has(label)) continue;
     if (UNINFORMATIVE.get(label) === v.trim()) continue;
     fields.push({ label, value: v });
   }
