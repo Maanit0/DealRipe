@@ -325,6 +325,31 @@ export async function runRecapSync(
 
       // The draft, in the same pass and its own try, so a Graph failure costs
       // the draft and not the recap that already went out.
+      //
+      // notify.summary is set only on the QUALIFICATION path. A general recap
+      // sends fine and returns sent:true with summary undefined, so this test
+      // was false and the whole block below was skipped in silence: no draft,
+      // no state, no log. Two calls on 2026-08-28 read recap-sent and
+      // followup_draft_state 'not_attempted', and the Vercel logs for that
+      // window carried neither a throw nor an idempotent skip, because nothing
+      // had run at all.
+      //
+      // Skipping is still right, since the draft is written from the
+      // qualification summary. Saying nothing about it is not.
+      if (!notify.summary && notify.sent) {
+        await db
+          .from("calls")
+          .update({
+            followup_draft_state: "unavailable",
+            followup_draft_reason: "the recap was a general readout, which carries no qualification summary for the draft to be written from",
+          })
+          .eq("id", row.id)
+          .then(
+            () => undefined,
+            () => undefined,
+          );
+        console.warn(`[recap-sync] no draft for ${row.id}: general recap, no qualification summary`);
+      }
       if (notify.summary) {
         try {
           const { autoDraftFollowUpForCall } = await import("./followup-draft");
