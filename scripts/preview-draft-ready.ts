@@ -15,6 +15,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 import { renderDraftReadyEmail } from "../lib/emails/draft-ready";
+import { formatMeetingWhen } from "../lib/followup-draft";
 import { readMessageStateByInternetId } from "../lib/graph-mail";
 import { supabaseAdmin } from "../lib/supabase";
 
@@ -28,7 +29,7 @@ async function main(): Promise<void> {
   const db = supabaseAdmin();
   const { data } = await db
     .from("sent_messages")
-    .select("sent_at, subject, provider_id, body_text, deal_id")
+    .select("sent_at, subject, provider_id, body_text, deal_id, call_id")
     .eq("kind", "followup_draft")
     .eq("to_email", rep)
     .not("provider_id", "is", null)
@@ -41,6 +42,10 @@ async function main(): Promise<void> {
   }
 
   const { data: deal } = await db.from("deals").select("account").eq("id", row.deal_id as string).maybeSingle();
+  const { data: call } = row.call_id
+    ? await db.from("calls").select("scheduled_start, title").eq("id", row.call_id as string).maybeSingle()
+    : { data: null };
+  const callAt = (call as { scheduled_start?: string } | null)?.scheduled_start ?? null;
 
   const state = await readMessageStateByInternetId({
     tenantIdOrDomain: "magaya.com",
@@ -54,7 +59,13 @@ async function main(): Promise<void> {
 
   const email = renderDraftReadyEmail({
     account: String(deal?.account ?? "the customer"),
-    meetingWhen: String(row.sent_at ?? "").slice(0, 10),
+    // THE SAME FORMATTER PRODUCTION USES. This preview used to slice the raw
+    // timestamp, so it showed "2026-08-28" while the real email showed
+    // "AUGUST 28 2026 . 01:00 PM CT", and a date fix looked like it had not
+    // landed. A preview that formats its own copy of anything will disagree with
+    // the thing it is previewing.
+    meetingWhen: formatMeetingWhen(String(callAt ?? row.sent_at)),
+    meetingTitle: (call as { title?: string | null } | null)?.title ?? null,
     to: [],
     draftSubject: state.subject,
     body: String(row.body_text ?? ""),

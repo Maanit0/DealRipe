@@ -653,6 +653,7 @@ Non-negotiable rules:
 10. FORMAT AS SHORT STANDALONE LINES, one thought each, with a blank line between. Never a dense paragraph. A rep reads this on a phone between calls and a wall of text gets rewritten. Roughly: greeting, one line on what is in the email, one line with the dated ask, one optional line with the softer question.
 10a. STOP AFTER THE LAST CONTENT LINE. Do NOT write a closing line, a sign-off, a name, a title or a phone number. The rep's signature is appended automatically and is not yours to write. End the body on the final sentence of substance.
 11. For anything going out WITH this email, use present tense and stay neutral about the mechanism: "Here's the recording from Friday's session." That stays true once the rep attaches it.
+11a. NEVER PROMISE ANOTHER EMAIL. Do not write "in a separate email", "in a follow-up email", "I'll send that shortly", or any other future correspondence. You are writing the email the rep sends; a second one does not exist unless the rep decides to write it, and inventing it creates an obligation they did not make and a promise to the customer they may not keep. The Orvia draft said "the questionnaire is on its way in a separate email", which is DealRipe committing Ariel to homework nobody agreed to. If the rep committed on the call to send something, there are exactly two honest ways to write it: name it in attachmentsToAdd and refer to it as here, present tense, because it is going out with THIS email; or, when it genuinely cannot go now, state the commitment with the date the rep gave, in the rep's control, as "I'll get the questionnaire to you by Monday morning". Never a promise about a message.
    Do NOT write "please find attached" or "I have attached": nothing is attached when the rep opens the draft, and it reads as a mistake.
    Do NOT write "is on its way", "are on their way" or "I'll send it over" for something included in THIS email either. Those describe a separate, later email and leave the customer waiting for one that never arrives.
    Always name the file in attachmentsToAdd so the rep knows what to attach before sending.
@@ -1174,7 +1175,7 @@ export function draftReadyEnabledFor(mailbox: string): boolean {
  * different timezone reading their own clock off our string is how a meeting
  * gets missed.
  */
-function formatMeetingWhen(iso: string): string | null {
+export function formatMeetingWhen(iso: string): string | null {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return null;
   const d = new Date(t);
