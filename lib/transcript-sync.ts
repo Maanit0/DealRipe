@@ -266,7 +266,7 @@ async function pingRecapSync(extracted: number): Promise<void> {
  * lands, the rep may have sent their own, and a duplicate draft is worse than
  * the original miss.
  */
-async function retryFailedDrafts(): Promise<void> {
+export async function retryFailedDrafts(): Promise<void> {
   const db = supabaseAdmin();
   // Only failed and unavailable. A held draft is a decision, not a queue item,
   // and re-running it would ask Graph the same question and get the same
