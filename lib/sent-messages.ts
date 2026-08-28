@@ -20,7 +20,14 @@ export type SentMessageKind =
    * A re-engagement draft, written because a FLAG fired rather than because a
    * call happened or a message arrived. See lib/reengage-draft.ts.
    */
-  | "reengage_draft";
+  | "reengage_draft"
+  /**
+   * "Your follow-up draft is ready", with a link into it.
+   *
+   * A notification to the rep, not the draft itself and not a second copy of it.
+   * See lib/emails/draft-ready.ts for why a link beats a folder.
+   */
+  | "draft_ready";
 
 export type SentMessage = {
   id: string;

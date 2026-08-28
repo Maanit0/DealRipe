@@ -522,6 +522,46 @@ export async function readMessageStateByInternetId(args: {
     : { status: "sent", conversationId, subject, sentAt: m.sentDateTime ?? null, body };
 }
 
+/**
+ * What is actually sitting in a mailbox's Drafts folder.
+ *
+ * createDraft records "drafted" on the strength of a 201 from Graph and nothing
+ * else, which is a claim about a POST rather than a claim about the rep's
+ * mailbox. Ariel Rodriguez, 2026-08-28, on a call where the row said drafted:
+ * "I don't get anything on draft." A success we never read back is the same
+ * shape as every other bug in this codebase, and the only way to tell "we wrote
+ * it" from "it is there" is to go and look.
+ *
+ * Reads the well-known drafts folder rather than filtering on isDraft, because a
+ * message can be a draft and live somewhere else entirely, and the question the
+ * rep is asking is specifically about the folder they have open.
+ */
+export async function listDrafts(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  top?: number;
+}): Promise<Array<{ id: string; subject: string; createdDateTime: string; to: string[] }>> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const url =
+    `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/mailFolders/drafts/messages` +
+    `?$select=id,subject,createdDateTime,toRecipients&$top=${args.top ?? 25}&$orderby=createdDateTime desc`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    throw new GraphMailError(res.status, `list drafts for ${args.mailbox}: ${(await res.text()).slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    value?: Array<{ id: string; subject?: string; createdDateTime?: string; toRecipients?: Array<{ emailAddress?: { address?: string } }> }>;
+  };
+  return (json.value ?? []).map((m) => ({
+    id: String(m.id),
+    subject: String(m.subject ?? ""),
+    createdDateTime: String(m.createdDateTime ?? ""),
+    to: (m.toRecipients ?? []).map((r) => String(r.emailAddress?.address ?? "")).filter(Boolean),
+  }));
+}
+
 export async function createDraft(args: {
   tenantIdOrDomain: string;
   /** The rep's mailbox (userPrincipalName), e.g. jlopez@magaya.com. */

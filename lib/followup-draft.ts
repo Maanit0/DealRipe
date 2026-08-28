@@ -54,6 +54,21 @@ export type FollowUpDraftInput = {
   customerEmails?: string[];
   account: string;
   /**
+   * The company's real name, from the CRM, for the subject line.
+   *
+   * `account` is DealRipe's own deal key and must never reach a customer: the
+   * fallback subject was putting "Gfcus" and "Snsiq" in front of them, so the
+   * name was dropped entirely and the subject became a bare "Following up on our
+   * call". That fixed the leak and created a different problem, which Ariel
+   * Rodriguez reported on 2026-08-28: with 50 drafts in his folder and no
+   * company name on any of ours, he could not find the one we had just written
+   * him. Verified by message id afterwards, it was there the whole time.
+   *
+   * So: the CRM's spelling when we have one, and no name at all when we do not.
+   * Never the slug.
+   */
+  customerName?: string | null;
+  /**
    * OPTIONAL. Absent on a general recap, which carries no qualification
    * summary. The draft is written from the transcript, so this is supporting
    * detail rather than the source, and its absence costs a timezone hint and a
@@ -970,12 +985,26 @@ export async function generateFollowUpDraft(
     // Never the account field here. It holds DealRipe's own deal key, so this
     // fallback was putting "Following up on our call, Gfcus" and "Snsiq" in
     // front of customers on every fresh draft. No name beats the wrong name.
-    subject: applyMagayaTerms(parsed.subject || "Following up on our call"),
+    subject: applyMagayaTerms(
+      parsed.subject || fallbackSubject(input.customerName),
+    ),
     body: applyMagayaTerms(parsed.body),
     replyToMessageId: thread?.id ?? null,
     to,
     attachmentsToAdd: parsed.attachmentsToAdd,
   };
+}
+
+/**
+ * The subject when the model did not write one.
+ *
+ * Only a name the CRM gave us. A rep hunting a folder of fifty drafts needs
+ * something to search for, and a customer reading it needs it to be their actual
+ * company name rather than our internal key.
+ */
+function fallbackSubject(customerName: string | null | undefined): string {
+  const name = String(customerName ?? "").trim();
+  return name ? `Following up on our call, ${name}` : "Following up on our call";
 }
 
 /** Generate AND write the draft into the rep's Drafts folder. Never sends. */
@@ -1080,6 +1109,106 @@ export async function createFollowUpDraft(
  *   - not already drafted for this call, checked against sent_messages, so a
  *     re-ingest cannot leave the rep two drafts of the same email.
  */
+/**
+ * Email the rep that their draft exists, with a link into it.
+ *
+ * DRAFT_READY_ENABLED must be exactly "1". This is a new email that every rep
+ * starts receiving after every captured call, and turning that on for six people
+ * in a live pilot is a decision to make deliberately rather than by deploying.
+ *
+ * Never throws. The caller fires it without awaiting, and a notification that
+ * fails must not mark a written draft as not written.
+ */
+async function notifyDraftReady(args: {
+  tenantId: string;
+  dealId: string;
+  callId: string;
+  mailbox: string;
+  account: string;
+  to: string[];
+  generatedSubject: string;
+  body: string;
+  webLink: string | null;
+  internetMessageId: string | null;
+}): Promise<void> {
+  if (process.env.DRAFT_READY_ENABLED !== "1") return;
+
+  const { readMessageStateByInternetId } = await import("./graph-mail");
+  const { renderDraftReadyEmail } = await import("./emails/draft-ready");
+  const { sendEmail } = await import("./mailer");
+  const { recordSentMessage } = await import("./sent-messages");
+
+  // What Outlook ACTUALLY called it. Falls back to ours only when the read
+  // fails, and the fallback is the weaker answer: on a reply it is wrong.
+  let draftSubject = args.generatedSubject;
+  if (args.internetMessageId) {
+    const state = await readMessageStateByInternetId({
+      tenantIdOrDomain: GRAPH_TENANT,
+      mailbox: args.mailbox,
+      internetMessageId: args.internetMessageId,
+    });
+    if (state.status === "draft" || state.status === "sent") draftSubject = state.subject;
+  }
+
+  const firstLines = args.body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(1, 3)
+    .join(" ");
+
+  const email = renderDraftReadyEmail({
+    account: args.account,
+    to: args.to,
+    draftSubject,
+    webLink: args.webLink,
+    preview: firstLines.length > 0 ? `${firstLines.slice(0, 180)}${firstLines.length > 180 ? "..." : ""}` : null,
+  });
+
+  const res = await sendEmail({ to: [args.mailbox], subject: email.subject, html: email.html, text: email.text });
+  await recordSentMessage({
+    tenantId: args.tenantId,
+    dealId: args.dealId,
+    callId: args.callId,
+    kind: "draft_ready",
+    toEmail: args.mailbox,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    providerId: res.id || null,
+  });
+}
+
+/**
+ * The company's name as the CRM spells it, or null.
+ *
+ * Salesforce first because the link is confirmed on 91 deals and the name there
+ * is maintained; the deal's own `account` column is deliberately never used, as
+ * it holds DealRipe's auto-created key.
+ *
+ * Returns null on any failure or any doubt. This name goes in a subject line a
+ * customer will read, so "no name" is the correct answer whenever we are not
+ * sure, and the caller renders a subject without one.
+ */
+async function crmCustomerName(dealId: string): Promise<string | null> {
+  try {
+    const { supabaseAdmin } = await import("./supabase");
+    const db = supabaseAdmin();
+    const { data } = await db
+      .from("deals")
+      .select("salesforce_account_id, salesforce_link_confidence")
+      .eq("id", dealId)
+      .maybeSingle();
+    if (!data?.salesforce_account_id || data.salesforce_link_confidence !== "confirmed") return null;
+    const { loadAccountContext } = await import("./salesforce-context");
+    const sf = await loadAccountContext(String(data.salesforce_account_id));
+    const name = String(sf?.accountName ?? "").trim();
+    return name.length > 0 ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function autoDraftFollowUpForCall(args: {
   tenantId: string;
   callId: string;
@@ -1263,11 +1392,18 @@ export async function autoDraftFollowUpForCall(args: {
     );
   }
 
+  const draftAccountName = await crmCustomerName(args.dealId);
+
   const res = await createFollowUpDraft({
     mailbox,
     customerDomains: customerDomainsFor(customerEmails),
     customerEmails,
     account: args.account,
+    // The CRM's spelling for the subject line, resolved once here rather than
+    // trusted from `account`, which is our own deal key. Failure is silent and
+    // simply leaves the name off, since a subject with no company name is a
+    // findability problem and a subject with the wrong one reaches a customer.
+    customerName: draftAccountName,
     summary: args.summary,
     agreed: args.agreed,
     attendees: args.attendees,
@@ -1277,6 +1413,33 @@ export async function autoDraftFollowUpForCall(args: {
     callSubtype: args.callSubtype ?? null,
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
+
+  // TELL THE REP IT EXISTS, with a link straight into it.
+  //
+  // Everything below this line is best effort and must never turn a written
+  // draft into a failure: the draft is the product, this is a pointer to it.
+  //
+  // The subject is READ BACK from the mailbox rather than taken from
+  // res.draft.subject. On a reply Graph replaces ours with the thread's, so the
+  // draft Ariel Rodriguez spent twenty minutes hunting was called "RE: Magaya /
+  // Grupo Orvia (Cost/Budget)" while every record we held said "Following up on
+  // our call". Printing our version in the notification would send him looking
+  // for a subject that does not exist, which is the exact bug this email is
+  // meant to end.
+  void notifyDraftReady({
+    tenantId: args.tenantId,
+    dealId: args.dealId,
+    callId: args.callId,
+    mailbox,
+    account: draftAccountName ?? args.account,
+    to: res.draft.to,
+    generatedSubject: res.draft.subject,
+    body: res.draft.body,
+    webLink: res.webLink ?? null,
+    internetMessageId: res.draftId ?? null,
+  }).catch((err: unknown) => {
+    console.warn(`[followup-draft] draft-ready notice failed for ${args.account}: ${err instanceof Error ? err.message : err}`);
+  });
 
   // Archive it. This is both the audit trail and the idempotency marker, so it
   // is recorded even though nothing was emailed.
