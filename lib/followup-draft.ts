@@ -1109,6 +1109,31 @@ export async function createFollowUpDraft(
  *   - not already drafted for this call, checked against sent_messages, so a
  *     re-ingest cannot leave the rep two drafts of the same email.
  */
+/**
+ * Whether this rep gets the "draft ready" email.
+ *
+ * DRAFT_READY_REPS is a comma-separated list of mailboxes, or "*" for everyone.
+ * Unset means nobody, so the feature ships dark and is turned on per person.
+ *
+ * Per rep rather than global on purpose. Ariel Rodriguez asked for this email by
+ * name and knows it is coming; the other five reps do not, and an unannounced
+ * new artifact after every call is exactly how a rep learns to filter DealRipe
+ * out. Same shape as every other blast-radius gate here: SALESFORCE_PILOT_ACCOUNT_IDS,
+ * GRAPH_MAIL_ALLOWED_MAILBOXES, PILOT_OPPORTUNITY_IDS. Fail closed.
+ */
+export function draftReadyEnabledFor(mailbox: string): boolean {
+  const raw = (process.env.DRAFT_READY_REPS ?? "").trim();
+  if (!raw) return false;
+  if (raw === "*") return true;
+  const wanted = new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return wanted.has(mailbox.trim().toLowerCase());
+}
+
 /** "Aug 28, 2026 at 1:00 PM CT". Central, because Magaya works Central. */
 function formatMeetingWhen(iso: string): string | null {
   const t = Date.parse(iso);
@@ -1131,9 +1156,10 @@ function formatMeetingWhen(iso: string): string | null {
 /**
  * Email the rep that their draft exists, with a link into it.
  *
- * DRAFT_READY_ENABLED must be exactly "1". This is a new email that every rep
- * starts receiving after every captured call, and turning that on for six people
- * in a live pilot is a decision to make deliberately rather than by deploying.
+ * Gated by draftReadyEnabledFor, which is per REP rather than global. Ariel
+ * Rodriguez asked for this email and is expecting it; the other five reps have
+ * never heard of it, and a new artifact appearing unannounced after every call
+ * is how a rep starts ignoring the channel.
  *
  * Never throws. The caller fires it without awaiting, and a notification that
  * fails must not mark a written draft as not written.
@@ -1151,7 +1177,7 @@ async function notifyDraftReady(args: {
   internetMessageId: string | null;
   meetingWhen: string | null;
 }): Promise<void> {
-  if (process.env.DRAFT_READY_ENABLED !== "1") return;
+  if (!draftReadyEnabledFor(args.mailbox)) return;
 
   const { readMessageStateByInternetId } = await import("./graph-mail");
   const { renderDraftReadyEmail } = await import("./emails/draft-ready");
