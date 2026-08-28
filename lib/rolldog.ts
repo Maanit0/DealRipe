@@ -735,6 +735,35 @@ export async function searchAccounts(query: string, opts: { pageSize?: number } 
   });
 }
 
+/**
+ * One account by id, for the website field an OppSummary does not carry.
+ *
+ * listOpportunities returns accountId but not the account's website, and the
+ * website is the only signal that links a deal keyed to a trading domain with
+ * an opportunity filed under a legal entity name. transportnstore.com is
+ * "TNS Cargo Service LLC" in Rolldog; no name comparison was ever going to
+ * join those, and the account carries the domain outright.
+ */
+export async function getAccountById(accountId: string): Promise<AccountSummary | null> {
+  const config = readRolldogConfig();
+  ensureCredentials(config, "(get)", "read");
+  const path = `/accounts/${encodeURIComponent(accountId)}`;
+  const res = await rolldogFetch(config, path, { method: "GET" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new RolldogApiError(res.status, path, await safeBody(res));
+  const json = (await res.json()) as { data?: { id: string; attributes?: Record<string, unknown> } };
+  const r = json.data;
+  if (!r) return null;
+  const a = r.attributes ?? {};
+  const str = (k: string): string | null => (a[k] != null ? String(a[k]) : null);
+  return {
+    id: r.id,
+    name: str("name") ?? str("account-name") ?? "",
+    website: str("website"),
+    createdAt: str("created-at"),
+  };
+}
+
 /** Every opportunity on one account. The reliable route once the account is
  *  known, because it needs no name matching at all. */
 export async function opportunitiesForAccount(accountId: string): Promise<OppSummary[]> {

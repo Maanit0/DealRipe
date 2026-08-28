@@ -23,8 +23,8 @@
 
 import { repName } from "./display-names";
 import { rolldogOppIdForDeal } from "./pilot-config";
-import { listOpportunities, type OppSummary } from "./rolldog";
-import { normalizeName } from "./rolldog-match";
+import { getAccountById, listOpportunities, type OppSummary } from "./rolldog";
+import { normalizeName, websiteDomain } from "./rolldog-match";
 import { logHistoryBackfillToRolldog, writeBackDealToRolldog, type WriteBackResult } from "./rolldog-writeback";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
@@ -90,6 +90,38 @@ const NO_CONTENT = new Set([
 ]);
 
 const RECENT_DAYS = 90;
+
+/** Cached, best effort. A Rolldog blip costs the website signal, not the run. */
+async function accountWebsite(accountId: string, cache: Map<string, string | null>): Promise<string | null> {
+  if (cache.has(accountId)) return cache.get(accountId) ?? null;
+  let site: string | null = null;
+  try {
+    site = (await getAccountById(accountId))?.website ?? null;
+  } catch {
+    site = null;
+  }
+  cache.set(accountId, site);
+  return site;
+}
+
+/**
+ * Free mail is never a company's website. Matching on it would join every deal
+ * keyed to a personal address to whichever account happened to list gmail.com,
+ * which is the same trap that once put an unrelated company on a %@gmail.com
+ * search.
+ */
+const FREE_MAIL = new Set([
+  "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",
+  "icloud.com", "live.com", "msn.com", "me.com", "proton.me", "protonmail.com",
+]);
+
+/** Bare domain from a deal's auto: external id, or null when it is not one. */
+function dealDomain(externalId: string | null): string | null {
+  const raw = String(externalId ?? "");
+  const d = raw.startsWith("auto:") ? raw.slice(5).trim().toLowerCase() : "";
+  if (!d.includes(".") || FREE_MAIL.has(d)) return null;
+  return d;
+}
 const MIN_SLUG = 5;
 const MAX_PAGES = 3;
 
@@ -184,6 +216,9 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
 
   const out: LinkMatch[] = [];
   const unmapped = new Set<string>();
+  // One fetch per account per run, not per deal. A rep's recent opportunities
+  // overlap heavily across their unlinked deals.
+  const websiteCache = new Map<string, string | null>();
   for (const x of deals) {
     const staticOpp = x.external_id ? rolldogOppIdForDeal(x.external_id) : null;
     if (staticOpp || x.rolldog_opportunity_id) continue; // already linked
@@ -214,7 +249,33 @@ export async function findLinkMatches(tenantSlug: string): Promise<LinkMatch[]> 
     } else if (cands.length > 1) {
       out.push({ ...base, status: "review", candidates: cands });
     } else {
-      out.push({ ...base, status: "none" });
+      // Nothing matched by name. This is the ONLY branch the website check
+      // runs in, so it is strictly additive: a deal the name rule already
+      // matched never reaches here and cannot regress.
+      //
+      // It exists because a deal is keyed to the customer's trading domain and
+      // a Rolldog opportunity is filed under the legal entity.
+      // transportnstore.com is "TNS Cargo Service LLC"; shippingmycar.com is
+      // "Cartainer Ocean Line, Inc". Customs brokers do this constantly, which
+      // is why one rep's book can look broken while everyone else's links.
+      //
+      // Same bar as the name path, because writing captured data to the wrong
+      // customer's opportunity is unrecoverable: same rep, recent only, exact
+      // domain equality, and exactly one candidate or it goes to review.
+      const domain = dealDomain(x.external_id);
+      const recent = domain ? repOpps[rep].filter((o) => isRecent(o.createdAt) && o.accountId) : [];
+      const byDomain: OppSummary[] = [];
+      for (const o of recent) {
+        const acct = await accountWebsite(o.accountId as string, websiteCache);
+        if (acct && websiteDomain(acct) === domain) byDomain.push(o);
+      }
+      if (byDomain.length === 1) {
+        out.push({ ...base, status: "confirmed", opp: byDomain[0], note: `matched on website ${domain}` });
+      } else if (byDomain.length > 1) {
+        out.push({ ...base, status: "review", candidates: byDomain, note: `${byDomain.length} accounts carry ${domain}` });
+      } else {
+        out.push({ ...base, status: "none" });
+      }
     }
   }
 
