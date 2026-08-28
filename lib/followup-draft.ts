@@ -53,7 +53,13 @@ export type FollowUpDraftInput = {
    */
   customerEmails?: string[];
   account: string;
-  summary: PostCallSummary;
+  /**
+   * OPTIONAL. Absent on a general recap, which carries no qualification
+   * summary. The draft is written from the transcript, so this is supporting
+   * detail rather than the source, and its absence costs a timezone hint and a
+   * next-step line rather than the email.
+   */
+  summary?: PostCallSummary;
   /** Attendees on the call, so the draft addresses real people. */
   attendees?: string;
   /**
@@ -671,8 +677,8 @@ function buildUserMessage(
       ? `WRITING TO (greet these people and nobody else): ${input.recipients}`
       : "",
     input.callDate ? `CALL DATE: ${input.callDate}` : "",
-    s.customerTimezone
-      ? `CUSTOMER TIMEZONE (they said so on the call): ${s.customerTimezone}. Propose the time in this zone.`
+    s?.customerTimezone
+      ? `CUSTOMER TIMEZONE (they said so on the call): ${s?.customerTimezone}. Propose the time in this zone.`
       : `CUSTOMER TIMEZONE: not stated on the call. Use the rep's zone and label it explicitly.`,
     hasThread
       ? `THIS IS A REPLY on an existing thread. Do not re-introduce yourself and do not restate context they already have.`
@@ -682,7 +688,7 @@ function buildUserMessage(
       : `THERE IS NO EXISTING THREAD. Write a fresh email and include a subject.`,
     ``,
     `WHAT WAS SAID ON THE CALL:`,
-    s.recap,
+    s?.recap ?? "",
     ``,
     // The opening the reps asked for. Stated before the ask, because the point
     // is to give the customer a foundation to reply from rather than a cold
@@ -699,14 +705,14 @@ function buildUserMessage(
           .join("\n")
       : "",
     ``,
-    s.nextStepCommitment
-      ? `THE COMMITMENT ALREADY AGREED (build the dated ask around this, do not invent a different one):\n${s.nextStepCommitment}\nCAUTION: this line is a summary of the rep's intent, not a list of what goes in this email. If it names a proposal, pricing or an estimate, those are what the MEETING is for. Rule 9 overrides this wording.`
+    s?.nextStepCommitment
+      ? `THE COMMITMENT ALREADY AGREED (build the dated ask around this, do not invent a different one):\n${s?.nextStepCommitment}\nCAUTION: this line is a summary of the rep's intent, not a list of what goes in this email. If it names a proposal, pricing or an estimate, those are what the MEETING is for. Rule 9 overrides this wording.`
       : `NO COMMITMENT WAS AGREED ON THE CALL. The ask should secure one.`,
     // Ranked deliberately. A date on the calendar outranks a document or a
     // signature, because the rep's own words are that a booked date is a
     // commitment while an action item is only an intention. This is the ask
     // most likely to be missed, so it is stated first and unambiguously.
-    s.shouldBookNextMeeting
+    s?.shouldBookNextMeeting
       ? `\nNOTHING IS ON THE CALENDAR and this deal should have a date. Propose ONE specific date and time as the ask, even if the immediate step is asynchronous. This outranks asking for a document or a signature; fold those in around it rather than leading with them.`
       : "",
     // Times come from the rep's real calendar. Inventing one produced a draft
@@ -718,7 +724,7 @@ function buildUserMessage(
       : slots.length > 0
         ? `\nPROPOSE ONE OF THESE EXACT TIMES, copied verbatim. They are confirmed free on the rep's calendar:\n${slots.map((s) => `- ${s.label}`).join("\n")}\nUse the FIRST one unless the transcript gives a reason to prefer another. Never invent a different date or time.`
         : `\nNO CONFIRMED FREE SLOTS ARE AVAILABLE. Do NOT invent a specific time. Ask them to propose one, or offer a named week ("early next week").`,
-    s.followUpMeetingExpected && s.noFollowupBooked
+    s?.followUpMeetingExpected && s?.noFollowupBooked
       ? `\nA next meeting was agreed on the call and could be booked right now.`
       : "",
     // The recap's NDA signal is deliberately an over-reminder for the REP: it
@@ -737,9 +743,9 @@ function buildUserMessage(
     // transcript and say so directly. That keeps the original protection (do
     // not raise an NDA on a deal genuinely past demo) while no longer relying
     // on stage as a proxy for something the agreed steps state outright.
-    s.nda?.demoIsNext &&
-    !s.nda.ndaInPlace &&
-    (isPreDemoStage(s.stageKey) || agreedMentionsUpcomingDemo(input.agreed))
+    s?.nda?.demoIsNext &&
+    !s?.nda?.ndaInPlace &&
+    (isPreDemoStage(s?.stageKey) || agreedMentionsUpcomingDemo(input.agreed))
       ? `\nA demo is still ahead and no NDA is signed. Magaya requires one first, so make the proposed date contingent on it rather than raising the NDA as a separate request.`
       : "",
     open ? `\nQUALIFICATION GAPS STILL OPEN (work at most ONE in as a question, never list them):\n${open}` : "",
@@ -1054,7 +1060,13 @@ export async function autoDraftFollowUpForCall(args: {
    * he would delete.
    */
   transcript?: string | null;
-  summary: PostCallSummary;
+  /**
+   * OPTIONAL. Absent on a general recap, which carries no qualification
+   * summary. The draft is written from the transcript, so this is supporting
+   * detail rather than the source, and its absence costs a timezone hint and a
+   * next-step line rather than the email.
+   */
+  summary?: PostCallSummary;
   /** Verified commitments from the narrative pass. See FollowUpDraftInput. */
   agreed?: { weOwe: string[]; customerOwes: string[] };
   attendees?: string;
