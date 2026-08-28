@@ -102,6 +102,77 @@ function excerpt(body: string): { text: string; truncated: boolean } {
   return { text, truncated };
 }
 
+/**
+ * The card on its own, with no page wrapper.
+ *
+ * Used two ways: as the whole of the standalone draft-ready email, and prepended
+ * to the top of the recap so the rep gets ONE email after a call instead of two.
+ *
+ * Two emails a minute apart about the same call is the version that existed
+ * first, and it was wrong on volume alone. Measured over 17 days: a rep gets a
+ * median of 4 DealRipe emails a day and Ariel Rodriguez had a 13-email day on
+ * 2026-08-13. Adding a second post-call email would have made that 18.
+ */
+export function renderDraftCardBlock(input: DraftReadyInput): { html: string; text: string } {
+  const to = input.to.filter(Boolean).join(", ");
+  const ex = excerpt(input.body);
+
+  const excerptHtml = ex.text
+    .split("\n")
+    .map((l) => `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${NAVY};">${esc(l)}</div>`)
+    .join("");
+
+  const button = input.webLink
+    ? `<a href="${esc(input.webLink)}" style="display:inline-block;background:${NAVY};color:#FFFFFF;font-family:${SANS};font-size:15px;font-weight:600;line-height:20px;padding:13px 26px;border-radius:7px;text-decoration:none;">Open draft</a>
+       <div style="font-family:${SANS};font-size:12.5px;line-height:19px;color:${INK};margin-top:9px;">This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.</div>`
+    : `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};">We could not get a direct link for this one. It is in your mailbox under the subject above. Nothing has been sent.</div>`;
+
+  const html = `<div style="font-family:${SANS};font-size:12px;letter-spacing:0.7px;text-transform:uppercase;color:${GREEN};font-weight:700;">Follow up on this meeting</div>
+
+    <div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
+      <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${NAVY};font-weight:700;">Subject: ${esc(input.draftSubject)}</div>
+      ${
+        to
+          ? `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};margin-top:4px;">To ${esc(to)}</div>`
+          : ""
+      }
+      ${
+        (input.unaddressed ?? []).length > 0
+          ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;">Also spoke, not on the invite and no address on file: ${esc((input.unaddressed ?? []).join(", "))}. Add them yourself if they should get this.</div>`
+          : ""
+      }
+      <div style="height:1px;background:${BORDER};margin:12px 0;"></div>
+      ${excerptHtml}
+      ${
+        ex.truncated
+          ? `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${INK};margin-top:2px;">...</div>`
+          : ""
+      }
+    </div>
+
+    <div style="margin-top:18px;">${button}</div>`;
+
+  const text = [
+    `FOLLOW UP ON THIS MEETING`,
+    ``,
+    `Subject: ${input.draftSubject}`,
+    to ? `To: ${to}` : null,
+    (input.unaddressed ?? []).length > 0
+      ? `Also spoke, not on the invite and no address on file: ${(input.unaddressed ?? []).join(", ")}. Add them yourself if they should get this.`
+      : null,
+    ``,
+    ex.text,
+    ex.truncated ? `...` : null,
+    ``,
+    input.webLink ? `Open draft: ${input.webLink}` : `It is in your mailbox under that subject.`,
+    `This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.`,
+  ]
+    .filter((l) => l !== null)
+    .join("\n");
+
+  return { html, text };
+}
+
 export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
   const to = input.to.filter(Boolean).join(", ");
   const subject = `Draft ready: ${input.account}`;

@@ -36,6 +36,7 @@
 
 import type { ExtractionMap } from "./briefing-magaya";
 import { sendPostCallSummary } from "./post-call-notify";
+import type { PostCallSummary } from "./post-call-summary";
 import { withModelContext } from "./model-run";
 import { supabaseAdmin } from "./supabase";
 import type { MeetingType } from "./meeting-classify";
@@ -301,6 +302,83 @@ export async function runRecapSync(
       // measured at ~14,000 tokens and 75s for the narrative and ~14,000 and
       // 57s for the demo strategy. Untagged they were the largest
       // unattributable line in the bill.
+      // THE FOLLOW-UP DRAFT, WRITTEN BEFORE THE RECAP IS SENT so its card can
+      // ride at the top of the recap instead of arriving as a second email a
+      // minute later.
+      //
+      // Measured over 17 days: a rep gets a median of 4 DealRipe emails a day
+      // and Ariel Rodriguez had a 13-email day on 2026-08-13. A separate
+      // draft-ready email would have made that 18, and it would have landed in
+      // the same folder as the recap, since Ariel files DealRipe mail by rule.
+      // More volume, no more reach.
+      //
+      // The bookkeeping stays HERE and only the card goes back: the state
+      // column, the counters and the archive row are recap-sync's business and
+      // none of them belong in the notifier. The notifier calls this after it
+      // has already rendered the recap, so anything that goes wrong below costs
+      // the card and never the recap.
+      const makeDraft = async (ctx: {
+        summary?: PostCallSummary;
+        agreed?: { weOwe: string[]; customerOwes: string[] };
+      }): Promise<{ html: string; text: string } | null> => {
+        const { autoDraftFollowUpForCall } = await import("./followup-draft");
+        const callRow = await db
+          .from("calls")
+          .select("participants, scheduled_start, call_date, title, deals!inner(account, rep_email)")
+          .eq("id", row.id)
+          .maybeSingle();
+        const d = callRow.data as unknown as {
+          participants: unknown;
+          scheduled_start: string | null;
+          call_date: string | null;
+          title: string | null;
+          deals: { account: string; rep_email: string | null };
+        } | null;
+        if (!d) return null;
+
+        const draft = await autoDraftFollowUpForCall({
+          tenantId: row.tenant_id,
+          callId: row.id,
+          dealId: row.deal_id,
+          account: d.deals.account,
+          repEmail: d.deals.rep_email,
+          meetingType: row.meeting_type,
+          // So a proposal call gets a terms email and a discovery call gets a recap.
+          callSubtype: row.call_subtype ?? null,
+          // The source the email is written from. Everything else is checked detail.
+          transcript,
+          summary: ctx.summary,
+          agreed: ctx.agreed,
+          callDate: d.scheduled_start ?? d.call_date,
+          participants: d.participants,
+          meetingTitle: d.title,
+        });
+
+        // RECORD THE OUTCOME, always.
+        //
+        // followup_draft_state existed and nothing ever wrote it, so every call
+        // in the database read 'not_attempted' including the ones that
+        // demonstrably got a draft. A rep looking at "never sent" had no way to
+        // learn whether we held deliberately, failed, or could not read the
+        // mailbox, and those are three different answers.
+        if (draft.created) {
+          counts.drafted += 1;
+          await db
+            .from("calls")
+            .update({ followup_draft_state: "drafted", followup_draft_reason: null })
+            .eq("id", row.id);
+          return draft.card ?? null;
+        }
+        const { classifyDraftOutcome } = await import("./ingest-failure-class");
+        const cls = classifyDraftOutcome(draft.reason ?? "no reason given");
+        await db
+          .from("calls")
+          .update({ followup_draft_state: cls.state, followup_draft_reason: cls.reason })
+          .eq("id", row.id);
+        console.warn(`[recap-sync] draft ${cls.state} for ${row.id}: ${cls.reason}`);
+        return null;
+      };
+
       const notify = await withModelContext(
         { tenantId: row.tenant_id, dealId: row.deal_id, callId: row.id },
         () =>
@@ -315,6 +393,7 @@ export async function runRecapSync(
             // today rather than where it stood on the call, and history can
             // cite a later conversation than the one being recapped.
             callAt: row.scheduled_start,
+            makeDraft,
           }),
       );
       if (notify.sent) counts.recapped += 1;
@@ -341,64 +420,6 @@ export async function runRecapSync(
       // line, not the email.
       if (notify.sent) {
         try {
-          const { autoDraftFollowUpForCall } = await import("./followup-draft");
-          const callRow = await db
-            .from("calls")
-            .select("participants, scheduled_start, call_date, deals!inner(account, rep_email)")
-            .eq("id", row.id)
-            .maybeSingle();
-          const d = callRow.data as unknown as {
-            participants: unknown;
-            scheduled_start: string | null;
-            call_date: string | null;
-            deals: { account: string; rep_email: string | null };
-          } | null;
-          if (d) {
-            const draft = await autoDraftFollowUpForCall({
-              tenantId: row.tenant_id,
-              callId: row.id,
-              dealId: row.deal_id,
-              account: d.deals.account,
-              repEmail: d.deals.rep_email,
-              meetingType: row.meeting_type,
-              // So a proposal call gets a terms email and a discovery call gets a recap.
-              callSubtype: row.call_subtype ?? null,
-              // The source the email is written from. Everything else is checked detail.
-              transcript,
-              summary: notify.summary,
-              agreed: notify.agreed,
-              callDate: d.scheduled_start ?? d.call_date,
-              participants: d.participants,
-            });
-            // RECORD THE OUTCOME, always.
-            //
-            // followup_draft_state existed and nothing ever wrote it, so every
-            // call in the database reads 'not_attempted' including the ones
-            // that demonstrably got a draft. The coverage view therefore falls
-            // back to sent_messages, which can say sent or not sent and can
-            // never say why. A rep looking at "never sent" on Kronos has no way
-            // to learn whether we held deliberately, failed, or could not read
-            // the mailbox, and those are three different answers.
-            //
-            // classifyDraftOutcome already knows the difference between held,
-            // failed and unavailable. It was written for this and was not
-            // reachable from here.
-            if (draft.created) {
-              counts.drafted += 1;
-              await db
-                .from("calls")
-                .update({ followup_draft_state: "drafted", followup_draft_reason: null })
-                .eq("id", row.id);
-            } else {
-              const { classifyDraftOutcome } = await import("./ingest-failure-class");
-              const d = classifyDraftOutcome(draft.reason ?? "no reason given");
-              await db
-                .from("calls")
-                .update({ followup_draft_state: d.state, followup_draft_reason: d.reason })
-                .eq("id", row.id);
-              console.warn(`[recap-sync] draft ${d.state} for ${row.id}: ${d.reason}`);
-            }
-          }
           // The Salesforce call activity and the agreed next step, which carry
           // the recap body and therefore belong with the recap rather than with
           // the field write-back in transcript-sync. Own try: a Salesforce

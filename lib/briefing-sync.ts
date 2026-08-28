@@ -21,6 +21,8 @@ import { MailerConfigError, sendEmail } from "./mailer";
 import { listUpcomingMeetings, type NormalizedMeeting } from "./microsoft-graph";
 import type { Json } from "./database.types";
 import { attendeeLineFromMeeting, briefingRoster } from "./attendees";
+import { cleanMeetingTitle } from "./salesforce-activity";
+import { formatMeetingWhen } from "./followup-draft";
 import { buildCoachingContext, coachingLinesForBriefing } from "./coaching";
 import { buildAttendeeContext } from "./attendee-context";
 import {
@@ -531,6 +533,10 @@ async function processEvent(
     account: ctx.account,
     stageKey: ctx.effectiveStageKey,
     standingLabel: standingLabel(context),
+    // Which meeting, and when. A rep with five calls today gets five briefings
+    // and the account name alone did not tell them apart in the inbox.
+    meetingTitle: ev.subject ? cleanMeetingTitle(ev.subject) : null,
+    meetingWhen: formatMeetingWhen(new Date(startMs).toISOString()),
     attendees,
     // Straight from Salesforce to the page, never through the model. See
     // DealContext.bdrFields.

@@ -72,6 +72,22 @@ async function main(): Promise<void> {
   const stageKey = ctx.effectiveStageKey;
 
   const attendees = deal.contacts.length > 0 ? attendeesFrom(deal) : undefined;
+
+  // The NEXT meeting on this deal, so the preview header matches what the cron
+  // renders. Formatted with the production helper, never re-derived here.
+  const { cleanMeetingTitle } = await import("../lib/salesforce-activity");
+  const { formatMeetingWhen } = await import("../lib/followup-draft");
+  const nextCall = await db
+    .from("calls")
+    .select("title, scheduled_start")
+    .eq("deal_id", dealRow.data.id)
+    .order("scheduled_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const meetingTitle = nextCall.data?.title ? cleanMeetingTitle(String(nextCall.data.title)) : null;
+  const meetingWhen = nextCall.data?.scheduled_start
+    ? formatMeetingWhen(String(nextCall.data.scheduled_start))
+    : null;
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
     attendees: attendees ?? `the ${deal.account} team`,
@@ -84,6 +100,8 @@ async function main(): Promise<void> {
     attendees,
     minutesUntil: 30,
     bdrFields: ctx.bdrFields,
+    meetingTitle,
+    meetingWhen,
   });
 
   console.log("\n============ SUBJECT ============");

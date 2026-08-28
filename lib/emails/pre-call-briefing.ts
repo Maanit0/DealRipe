@@ -84,6 +84,10 @@ export type BriefingEmailContext = {
    * stage, which is correct for ordinary new business.
    */
   standingLabel?: string | null;
+  /** The calendar subject, when it says something the account name does not. */
+  meetingTitle?: string | null;
+  /** "AUGUST 28 2026 . 01:00 PM CT", formatted for Central before it gets here. */
+  meetingWhen?: string | null;
   /**
    * The BDR's Sales Development fields, exactly as Salesforce holds them.
    *
@@ -546,7 +550,25 @@ export function renderPreCallBriefingEmail(
               past. The stage and the kind of call are chips, and the people
               are rows. */ ""}
         ${card(
-          `<div style="font-family:${SANS};font-size:22px;font-weight:700;line-height:28px;color:${NAVY};margin:0 0 10px 0;">${escapeHtml(ctx.account)}</div>
+          // THE MEETING AND WHEN IT IS, above the chips.
+          //
+          // The header carried the account and two chips and never said which
+          // meeting or what time. A rep with five calls in a day gets five of
+          // these and the only thing separating them in the inbox was the
+          // account name. The recap and the draft card both name the meeting and
+          // the time; this is the artifact that arrives BEFORE the call, where
+          // knowing which one it is matters most.
+          `<div style="font-family:${SANS};font-size:22px;font-weight:700;line-height:28px;color:${NAVY};margin:0 0 2px 0;">${escapeHtml(ctx.account)}</div>
+           ${
+             ctx.meetingTitle
+               ? `<div style="font-family:${SANS};font-size:14.5px;line-height:21px;color:${INK};margin:0 0 2px 0;">${escapeHtml(ctx.meetingTitle)}</div>`
+               : ""
+           }
+           ${
+             ctx.meetingWhen
+               ? `<div style="font-family:${SANS};font-size:12.5px;letter-spacing:0.6px;color:${INK};font-weight:600;margin:0 0 10px 0;">${escapeHtml(ctx.meetingWhen)}</div>`
+               : `<div style="height:8px;"></div>`
+           }
            <div style="margin:0 0 2px 0;line-height:26px;">${[
              callTypeLabel ? chip(callTypeLabel, { strong: true }) : "",
              chip(stageLabel),
@@ -583,6 +605,8 @@ function renderText(
 ): string {
   const lines: string[] = [];
   lines.push(`Briefing for next call - ${ctx.account}`);
+  if (ctx.meetingTitle) lines.push(ctx.meetingTitle);
+  if (ctx.meetingWhen) lines.push(ctx.meetingWhen);
   lines.push([callTypeLabel, stageLabel].filter(Boolean).join(" - "));
   const roster = (ctx.roster ?? []).filter((r) => r.side === "customer");
   if (roster.length) {

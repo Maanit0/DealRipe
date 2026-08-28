@@ -1142,17 +1142,21 @@ async function unaddressedSpeakers(tenantId: string, dealId: string, callId: str
   }
 }
 
+/** Not an error. The rep is simply not enrolled for the card yet. */
+class SkipDraftCard extends Error {}
+
 /**
- * Whether this rep gets the "draft ready" email.
+ * Whether this rep gets the follow-up card on top of their recap.
  *
  * DRAFT_READY_REPS is a comma-separated list of mailboxes, or "*" for everyone.
  * Unset means nobody, so the feature ships dark and is turned on per person.
  *
- * Per rep rather than global on purpose. Ariel Rodriguez asked for this email by
- * name and knows it is coming; the other five reps do not, and an unannounced
- * new artifact after every call is exactly how a rep learns to filter DealRipe
- * out. Same shape as every other blast-radius gate here: SALESFORCE_PILOT_ACCOUNT_IDS,
- * GRAPH_MAIL_ALLOWED_MAILBOXES, PILOT_OPPORTUNITY_IDS. Fail closed.
+ * Per rep rather than global on purpose. Ariel Rodriguez asked for this by name
+ * and knows it is coming; the other five reps do not, and a recap that suddenly
+ * grows a new section at the top is still a change to something they read every
+ * day. Same shape as every other blast-radius gate here:
+ * SALESFORCE_PILOT_ACCOUNT_IDS, GRAPH_MAIL_ALLOWED_MAILBOXES,
+ * PILOT_OPPORTUNITY_IDS. Fail closed.
  */
 export function draftReadyEnabledFor(mailbox: string): boolean {
   const raw = (process.env.DRAFT_READY_REPS ?? "").trim();
@@ -1202,7 +1206,7 @@ export function formatMeetingWhen(iso: string): string | null {
  * Never throws. The caller fires it without awaiting, and a notification that
  * fails must not mark a written draft as not written.
  */
-async function notifyDraftReady(args: {
+async function buildDraftCard(args: {
   tenantId: string;
   dealId: string;
   callId: string;
@@ -1214,13 +1218,10 @@ async function notifyDraftReady(args: {
   webLink: string | null;
   internetMessageId: string | null;
   meetingWhen: string | null;
-}): Promise<void> {
-  if (!draftReadyEnabledFor(args.mailbox)) return;
-
+  meetingTitle: string | null;
+}): Promise<{ html: string; text: string } | null> {
   const { readMessageStateByInternetId } = await import("./graph-mail");
-  const { renderDraftReadyEmail } = await import("./emails/draft-ready");
-  const { sendEmail } = await import("./mailer");
-  const { recordSentMessage } = await import("./sent-messages");
+  const { renderDraftCardBlock } = await import("./emails/draft-ready");
 
   // What Outlook ACTUALLY called it. Falls back to ours only when the read
   // fails, and the fallback is the weaker answer: on a reply it is wrong.
@@ -1234,27 +1235,15 @@ async function notifyDraftReady(args: {
     if (state.status === "draft" || state.status === "sent") draftSubject = state.subject;
   }
 
-  const email = renderDraftReadyEmail({
+  return renderDraftCardBlock({
     account: args.account,
+    meetingTitle: args.meetingTitle,
     meetingWhen: args.meetingWhen,
     to: args.to,
     draftSubject,
     body: args.body,
     unaddressed: await unaddressedSpeakers(args.tenantId, args.dealId, args.callId),
     webLink: args.webLink,
-  });
-
-  const res = await sendEmail({ to: [args.mailbox], subject: email.subject, html: email.html, text: email.text });
-  await recordSentMessage({
-    tenantId: args.tenantId,
-    dealId: args.dealId,
-    callId: args.callId,
-    kind: "draft_ready",
-    toEmail: args.mailbox,
-    subject: email.subject,
-    html: email.html,
-    text: email.text,
-    providerId: res.id || null,
   });
 }
 
@@ -1297,6 +1286,8 @@ export async function autoDraftFollowUpForCall(args: {
   meetingType: string | null;
   /** calls.call_subtype, written by transcript-sync minutes before this runs. */
   callSubtype?: string | null;
+  /** The calendar subject, for the card header. */
+  meetingTitle?: string | null;
   /**
    * The call, verbatim. THE SOURCE the email is written from.
    *
@@ -1333,7 +1324,7 @@ export async function autoDraftFollowUpForCall(args: {
    * first attempt.
    */
   isRetry?: boolean;
-}): Promise<{ created: boolean; reason?: string }> {
+}): Promise<{ created: boolean; reason?: string; card?: { html: string; text: string } | null }> {
   const { supabaseAdmin } = await import("./supabase");
   const { allowedMailboxes } = await import("./graph-mail");
   const { recordSentMessage } = await import("./sent-messages");
@@ -1493,36 +1484,43 @@ export async function autoDraftFollowUpForCall(args: {
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
 
-  // TELL THE REP IT EXISTS, with a link straight into it.
+  // THE CARD FOR THE TOP OF THE RECAP, built here and returned rather than
+  // emailed separately.
   //
-  // Everything below this line is best effort and must never turn a written
-  // draft into a failure: the draft is the product, this is a pointer to it.
+  // It was its own email first, arriving a minute after the recap about the same
+  // call. Measured over 17 days a rep gets a median of 4 DealRipe emails a day,
+  // and Ariel Rodriguez had a 13-email day; a second post-call email makes that
+  // 18, and it lands in the same folder the recap does because he files DealRipe
+  // mail by rule. More volume, no more reach.
   //
-  // The subject is READ BACK from the mailbox rather than taken from
-  // res.draft.subject. On a reply Graph replaces ours with the thread's, so the
-  // draft Ariel Rodriguez spent twenty minutes hunting was called "RE: Magaya /
-  // Grupo Orvia (Cost/Budget)" while every record we held said "Following up on
-  // our call". Printing our version in the notification would send him looking
-  // for a subject that does not exist, which is the exact bug this email is
-  // meant to end.
-  void notifyDraftReady({
-    tenantId: args.tenantId,
-    dealId: args.dealId,
-    callId: args.callId,
-    mailbox,
-    account: draftAccountName ?? args.account,
-    to: res.draft.to,
-    generatedSubject: res.draft.subject,
-    body: res.draft.body,
-    webLink: res.webLink ?? null,
-    internetMessageId: res.draftId ?? null,
-    // Central, because Magaya works Central and a rep reading "1:00 PM" wants
-    // their own clock. See lib/graph-time.ts for why this is never left to the
-    // reader's locale.
-    meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,
-  }).catch((err: unknown) => {
-    console.warn(`[followup-draft] draft-ready notice failed for ${args.account}: ${err instanceof Error ? err.message : err}`);
-  });
+  // Best effort. A card that cannot be built must never turn a written draft
+  // into a failure: the draft is the product and this is a pointer to it.
+  let card: { html: string; text: string } | null = null;
+  try {
+    // Still gated per rep. Folding the card into the recap makes it far less
+    // intrusive than a second email, but it is still a visible change to an
+    // artifact six people already read every day, and Ariel is the only one who
+    // asked for it. Unset means nobody.
+    if (!draftReadyEnabledFor(mailbox)) throw new SkipDraftCard();
+    card = await buildDraftCard({
+      tenantId: args.tenantId,
+      dealId: args.dealId,
+      callId: args.callId,
+      mailbox,
+      account: draftAccountName ?? args.account,
+      meetingTitle: args.meetingTitle ?? null,
+      to: res.draft.to,
+      generatedSubject: res.draft.subject,
+      body: res.draft.body,
+      webLink: res.webLink ?? null,
+      internetMessageId: res.draftId ?? null,
+      meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,
+    });
+  } catch (err: unknown) {
+    if (!(err instanceof SkipDraftCard)) {
+      console.warn(`[followup-draft] draft card failed for ${args.account}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   // Archive it. This is both the audit trail and the idempotency marker, so it
   // is recorded even though nothing was emailed.
@@ -1549,7 +1547,7 @@ export async function autoDraftFollowUpForCall(args: {
     // later, so adoption could only be inferred from time and recipient.
     providerId: res.draftId ?? null,
   });
-  return { created: true };
+  return { created: true, card };
 }
 
 /**

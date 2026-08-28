@@ -91,6 +91,23 @@ export async function sendPostCallSummary(args: {
    *  emailed for this call. Manual recovery scripts set this; the automatic
    *  pipeline never does, so a re-ingest can't double-send. */
   force?: boolean;
+  /**
+   * Write the follow-up draft, and hand back the card to sit at the top of this
+   * recap.
+   *
+   * A HOOK rather than a call, so recap-sync keeps ownership of the draft: the
+   * state column, the retry accounting and the sent_messages archive all live
+   * there and none of it belongs in the notifier. This only needs the card.
+   *
+   * Called AFTER the recap has been built and rendered, so a draft that throws
+   * cannot cost the rep their recap. Returning null is normal and means no draft
+   * was written: an internal meeting, a rep with no mailbox, a call with no
+   * customer to write to.
+   */
+  makeDraft?: (ctx: {
+    summary?: PostCallSummary;
+    agreed?: { weOwe: string[]; customerOwes: string[] };
+  }) => Promise<{ html: string; text: string } | null>;
 }): Promise<NotifyResult> {
   const db = supabaseAdmin();
   const dealRow = await db
@@ -220,6 +237,29 @@ export async function sendPostCallSummary(args: {
     }
   }
 
+  // THE FOLLOW-UP DRAFT, FOLDED INTO THIS RECAP RATHER THAN SENT SEPARATELY.
+  //
+  // It used to be its own email, one minute after this one, about the same call.
+  // Measured over 17 days: a rep gets a median of 4 DealRipe emails a day and
+  // Ariel Rodriguez had a 13-email day on 2026-08-13; a second post-call email
+  // would have made that 18. Two emails a minute apart is how a rep starts
+  // filtering the whole channel.
+  //
+  // Everything here is contained. The recap is already rendered by this point,
+  // so a draft that throws, times out or returns nothing leaves the recap
+  // exactly as it was. That ordering is deliberate and is the reason the hook
+  // sits here rather than before the render.
+  if (email && args.makeDraft) {
+    try {
+      const card = await args.makeDraft({ summary: qualSummary, agreed });
+      if (card) email = prependDraftCard(email, card);
+    } catch (err) {
+      console.warn(
+        `[post-call] draft card skipped, recap unaffected: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // Both passes produced nothing. Say so rather than sending an empty shell:
   // no recap beats a recap that asserts a call had no content.
   if (!email) {
@@ -298,6 +338,39 @@ function escapeHtmlBasic(s: string): string {
  * Pure: no writes, no sends. Returns null when neither pass produced anything,
  * which the caller reports rather than papering over.
  */
+/**
+ * Put the draft card at the very top of the recap body.
+ *
+ * Inserted after the opening <body> tag rather than rebuilt into each recap
+ * renderer. There are four of them (qualification, readout-only, general
+ * fallback, and the legacy summary email) and threading a card parameter through
+ * all four would put the same block in four places to drift apart. The <body>
+ * tag is a seam every one of them shares.
+ *
+ * At the TOP because the draft is the thing the rep acts on. The recap is what
+ * they read; the draft is what they send.
+ */
+function prependDraftCard<T extends { html: string; text: string }>(
+  email: T,
+  card: { html: string; text: string },
+): T {
+  const shell = `<div style="max-width:640px;margin:0 auto;padding:18px 16px 0 16px;"><div style="background:#FFFFFF;border:1px solid #E7EBF0;border-radius:10px;padding:20px 22px;">${card.html}</div></div>`;
+  const html = email.html.replace(/(<body[^>]*>)/i, (m) => `${m}${shell}`);
+  // If there was no <body> to match, the card would be silently dropped. Append
+  // rather than lose it, and say so in the log: a card that vanishes because a
+  // renderer changed its shell is exactly the kind of quiet loss this codebase
+  // keeps paying for.
+  const injected = html !== email.html;
+  if (!injected) {
+    console.warn("[post-call] recap html had no <body> tag, draft card appended at the end instead");
+  }
+  return {
+    ...email,
+    html: injected ? html : `${shell}${email.html}`,
+    text: `${card.text}\n\n${"-".repeat(40)}\n\n${email.text}`,
+  };
+}
+
 export function renderRecapEmail(built: RecapBuild): ReturnType<typeof renderPostCallSummaryEmail> | null {
   if (built.kind === "general") {
     // The readout is the artifact. renderGeneralRecapEmail is the fallback
