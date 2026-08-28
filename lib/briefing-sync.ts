@@ -532,6 +532,9 @@ async function processEvent(
     stageKey: ctx.effectiveStageKey,
     standingLabel: standingLabel(context),
     attendees,
+    // Straight from Salesforce to the page, never through the model. See
+    // DealContext.bdrFields.
+    bdrFields: ctx.bdrFields,
     // The same invite the prompt was given, as rows rather than a sentence, so
     // the rep sees who accepted with their title and where they sit on the
     // decision. briefingRoster falls back to the deal's contacts exactly where

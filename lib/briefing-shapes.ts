@@ -31,7 +31,6 @@
  */
 
 export type BlockName =
-  | "bdrHandoff"
   | "bookThis"
   | "coachThis"
   | "inTheRoom"
@@ -133,7 +132,7 @@ const DEFAULT_SHAPE: BriefingShape = {
   // no captured history of our own is a first conversation whatever the resolver
   // could prove. The block renders nothing when there are no notes, so the cost
   // of being wrong is zero and the cost of omitting it is Juan's call.
-  blocks: ["bookThis", "coachThis", "bdrHandoff", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+  blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
   questionBudget: 3,
   // 700 -> 860 with the handoff, and the extra 60 over discovery's 800 is
   // HEADROOM RATHER THAN PERMISSION.
@@ -208,7 +207,7 @@ const SHAPES: Record<string, BriefingShape> = {
     // himself when asked whether he wanted it on demo and proposal calls too,
     // and said no. By then the customer has told US, and the intake note is
     // history.
-    blocks: ["bookThis", "coachThis", "bdrHandoff", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
+    blocks: ["bookThis", "coachThis", "inTheRoom", "openItems", "sinceLastContact", "theNumbers", "questions", "doNotDo"],
     questionBudget: 3,
     // 700 -> 800 for the handoff block. It is the one raise on this shape that
     // buys the rep something they cannot get anywhere else on a first call:
@@ -291,8 +290,7 @@ export function shapeForCallType(callType: string | null | undefined): BriefingS
  * which parts to skip, is how the current schema became a template.
  */
 const BLOCK_CONTRACT: Record<BlockName, string> = {
-  bdrHandoff: `"bdrHandoff": { "lines": [ { "label": string, "point": string } ], "asOf": string | null } | null   // WHAT THE BDR ALREADY LEARNED, taken ONLY from the "Recorded by the BDR before this call" block and from nowhere else. Null when that block is absent or says the Sales Development section is empty. NEVER infer it, never carry a point over from our own calls, and never write it from the framework. THIS BLOCK IS A HANDOFF AND ITS JOB IS COVERAGE: the rep is reading it because Salesforce is not open in front of them and the BDR is not on the call, so a fact that was recorded and does not appear here is a fact they have lost. THERE IS NO LINE LIMIT: emit one line per distinct thing the BDR recorded, most consequential first, grouping closely related fields onto one line. The only reason to leave something out is that it carries no information, never that you have written enough lines already. In particular you MUST carry, whenever the block records them: (a) what hurts today, (b) what they said they need, (c) what they run today, (d) any date they named, and (e) THE QUALIFICATION POSITION, meaning budget confirmed or not, executive sponsorship, and whether a compelling event was recorded. (e) is the single thing most often asked for and it is the easiest to lose, because it is short and unglamorous next to the narrative fields: losing it is a failure of this block, not a saving. Only omit a field that genuinely carries nothing ("N/A", "No" to a question nobody asked). "label" is two or three words naming what the line is ABOUT ("What hurts", "What they run today", "Why now", "Budget and sponsor", "Go-live"). "point" is ONE sentence in the CUSTOMER's own words where the field holds them, quoted, and in plain words where it does not. Keep their phrasing: it is the only unmediated thing on the page. Do NOT restate a Magaya field name and do not write "Budget Confirmed: true"; write what it means for this call. "asOf" is the date the BDR recorded it if the block gives one, else null.`,
-  inTheRoom: `"inTheRoom": [ { "person": string, "note": string } ]   // The people who decide what happens in this room. No fixed limit, but this is not an attendee list: someone who has never appeared on a captured call and carries nothing to say about them belongs here only if their presence is itself the news. "person" is the NAME ONLY, exactly as it appears in the attendee list: their job title is already printed beside it and repeating it wastes the line. "note" is up to 30 words and carries what THEY care about, in their own words where we have them: their pain, what they pushed on, what they are waiting for. "CIO and signatory" is a directory entry. "Said go live as soon as possible this year, and the approval path lives with him" is useful.`,
+  inTheRoom: `"inTheRoom": [ { "person": string, "points": [string] } ]   // The people who decide what happens in this room. No fixed limit on people, but this is not an attendee list: someone who has never appeared on a captured call and carries nothing to say about them belongs here only if their presence is itself the news. "person" is the NAME ONLY, exactly as it appears in the attendee list, because their job title is already printed beside it. "points" is 1 to 4 SEPARATE bullets about THAT person, each a complete sentence and each a DIFFERENT kind of thing: what they said hurts, in their own words where we have them; what they pushed back on; what they are waiting for; what they own in the decision. Do not pack several facts into one bullet and do not split one fact across two. "CIO and signatory" is a directory entry and belongs in none of them. "Said go live as soon as possible this year" and "The approval path lives with him" are two bullets because they are two facts. A person we know nothing about gets ONE bullet saying what to find out about them.`,
   openItems: `"openItems": { "us": [string], "them": [string] }   // Every item still outstanding on each side, not a sample of them. No fixed limit: an unclosed commitment that got trimmed to fit is the exact thing this block exists to prevent. Each line names the item, when it was agreed, and its STATUS in plain words: "sent Aug 21", "still not sent", "agreed Aug 13 for Thursday, never booked". A rep needs to know which ones are outstanding at a glance, so never leave the status off. Empty array when a side owes nothing.`,
   sinceLastContact: `"sinceLastContact": string   // ONE or TWO sentences, no more. What we last said, what they last said, how long ago. Summarise the CONTENT, never the subject line.`,
   theNumbers: `"theNumbers": [ { "label": string, "value": string, "note": string | null } ]   // Every figure we actually hold that bears on this call: what we quoted, what they pay today, user or seat counts, volumes, contract terms. No fixed limit, because a number the rep needs and does not have is worse than a longer list; drop a figure only when it bears on nothing. Empty array if we hold none. NEVER a bare number. "label" says what the figure IS and WHOSE it is, in two to four words: "What we quoted, monthly", "Their CargoWise spend today", "Users in scope". A rep who reads "$34,400 per month" without knowing which side of the table it sits on will say it out loud and be wrong. "value" is the figure alone. "note" is where it came from and when, one short clause, for example "quoted August 14, Debra said it is within her range", or null when we do not know.`,
@@ -303,6 +301,39 @@ const BLOCK_CONTRACT: Record<BlockName, string> = {
   bookThis: `"bookThis": { "what": string, "when": string, "say": string } | null   // The next meeting to get ON THE CALENDAR before this call ends. "what" is the meeting (a proposal walk-through, a technical session with their IT lead). "when" is a concrete near-term window after today. "say" is the ACTUAL SENTENCE the rep says to book it, written to be read aloud, naming the meeting and proposing a specific time. Null only when a booked meeting is genuinely not the right outcome, which is rare.`,
   doNotDo: `"doNotDo": string   // one line. The thing that would waste this call or damage it.`,
 };
+
+/**
+ * Drop "where it stands" lines that belong to another block on the page.
+ *
+ * ENFORCED, NOT INSTRUCTED, and only after instructing failed three times. The
+ * prompt names the blocks that own each subject and lists the forbidden labels
+ * verbatim; the Orvia briefing answered "What we owe" with "What we owe them",
+ * three lines under an Open items block that already listed all three items with
+ * their dates. A model asked not to say something says it under a new name,
+ * because the fact is genuinely relevant and it has been given a block with no
+ * other source to fill from.
+ *
+ * So the instruction stays, since it shapes what gets written, and this catches
+ * what survives it. Matching is on the LABEL only: the label is the model's own
+ * statement of what a line is about, which makes it the honest thing to test,
+ * and testing the sentence would start dropping true lines for sharing a word.
+ */
+const LABEL_OWNED_ELSEWHERE: Array<{ block: BlockName; pattern: RegExp }> = [
+  { block: "openItems", pattern: /\b(we|they|us|them)\s+owe|owed|outstanding|not\s+(yet\s+)?(sent|delivered|returned)|waiting\s+on|questionnaire|still\s+open\b/i },
+  { block: "bookThis", pattern: /\bnot\s+booked|nothing\s+(is\s+)?on\s+the\s+calendar|no\s+(next\s+)?meeting\b/i },
+  { block: "theNumbers", pattern: /^(the\s+)?(money|numbers|pricing|price|amount|revenue|users?)$/i },
+];
+
+export function stripOwnedLines<T extends { label?: string | null }>(
+  lines: ReadonlyArray<T>,
+  shape: BriefingShape,
+): T[] {
+  return lines.filter((l) => {
+    const label = String(l?.label ?? "").trim();
+    if (!label) return true;
+    return !LABEL_OWNED_ELSEWHERE.some((r) => shape.blocks.includes(r.block) && r.pattern.test(label));
+  });
+}
 
 export function contractFor(shape: BriefingShape): string {
   // WHERE IT STANDS AND THE HANDOFF COMPETE FOR THE SAME FACTS.
@@ -318,9 +349,38 @@ export function contractFor(shape: BriefingShape): string {
   // Told to the model as a division of labour rather than a prohibition. "Do
   // not repeat" makes a model drop the fact from both blocks; naming what each
   // block is FOR keeps it in the right one.
-  const handoffSplit = shape.blocks.includes("bdrHandoff")
-    ? ` THIS SHAPE ALSO CARRIES "bdrHandoff", AND THE TWO BLOCKS MUST NOT OVERLAP. The handoff already carries their pain, their requirements, their current software, their go-live date and their budget or sponsorship position. So "whereItStands" MAY NOT CONTAIN A LINE ABOUT ANY OF THOSE. It is banned from restating them in other words, from summarising them, and from labelling them differently ("Core pain", "Scope", "What they need" and "Go-live target" are all forbidden here when the handoff exists). It covers ONLY what is true about the DEAL and not about the customer: whether we have ever spoken to them, what we owe and when, what has not been verified, what is missing that we would need, and what the timeline demands of US. If that leaves fewer than 3 lines, RETURN FEWER LINES. Two true lines the handoff did not already say beat five that restate it.`
-    : "";
+  // WHERE IT STANDS RESTATES THE REST OF THE PAGE UNLESS IT IS STOPPED.
+  //
+  // It is the only block with no single source, so it fills itself from whatever
+  // else is available, and everything else on the page is available. The
+  // Cargosystems briefing printed "What we owe" three lines below an Open Items
+  // block that already listed all three things we owe, put James Wilson in it
+  // when he already had his own entry in the room, and restated the Auckland
+  // visit that "Book this" was about. Every line was true and the reader had
+  // read all of it already.
+  //
+  // Named as a division of labour rather than a ban, because "do not repeat"
+  // makes a model drop the fact from both places. Its job is the CONSEQUENCE:
+  // what the facts elsewhere on the page add up to for this call.
+  const owned: string[] = [];
+  // Naming the forbidden LABELS is what makes these stick. The same instruction
+  // written as a general prohibition was followed for the BDR block, where the
+  // labels were listed, and ignored for open items, where they were not: the
+  // Orvia briefing still carried a "Questionnaire and pricing" line three lines
+  // under an Open items block that already listed both.
+  if (shape.blocks.includes("openItems"))
+    owned.push(
+      'what either side owes, promised, sent or has not delivered, including anything we committed to prepare or send for this call (Open items has all of it, with dates). Lines labelled like "What we owe", "Outstanding", "Questionnaire and pricing", "Not yet sent" or "Waiting on them" are forbidden here',
+    );
+  if (shape.blocks.includes("inTheRoom")) owned.push("who is on the call and what they each care about (On the call has it)");
+  if (shape.blocks.includes("sinceLastContact")) owned.push("what was last said by either side (Since last contact has it)");
+  if (shape.blocks.includes("theNumbers")) owned.push("figures, users, volumes and amounts (The numbers has it)");
+  if (shape.blocks.includes("bookThis")) owned.push("the meeting we want booked (Book this has it)");
+  const noRestate = ` THE PAGE ALSO CARRIES A BLOCK, RENDERED STRAIGHT FROM SALESFORCE, HOLDING EVERYTHING THE BDR RECORDED: their pain, their requirements, the software they run, their go-live date, their budget and sponsorship position, their size. The rep reads it directly and you are not writing it. "whereItStands" MAY NOT CONTAIN A LINE ABOUT ANY OF THAT, in other words, summarised, or under a different label ("Core pain", "Scope", "What they need", "Go-live target" are all forbidden).${
+    owned.length > 0
+      ? ` It equally may not restate ${owned.join("; ")}.`
+      : ""
+  } What is left is its actual job, and it is the only block that can do it: what all of that ADDS UP TO. How long this has been sitting, what has still never been verified, what is missing that we would need, what the timeline now demands of US, what this call has to change. If that is two lines, RETURN TWO LINES. Two lines the rest of the page has not already said are worth more than six that repeat it.`;
   const core = [
     `  "callObjective": string,`,
     // LABELLED LINES, NEVER A PARAGRAPH.
@@ -329,7 +389,7 @@ export function contractFor(shape: BriefingShape): string {
     // and a rep scanning for the money finds it only by reading the timeline
     // first. The facts were never joined by anything except being true, so they
     // are separated here and each one is told what it is about.
-    `  "whereItStands": [ { "label": string, "point": string } ],   // Ordered most consequential first, as many lines as there are consequential things and no more. No fixed limit, and equally no quota: do not pad to reach a length. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.${handoffSplit}`,
+    `  "whereItStands": [ { "label": string, "point": string } ],   // Ordered most consequential first, as many lines as there are consequential things and no more. No fixed limit, and equally no quota: do not pad to reach a length. "point" is ONE complete sentence, said the way you would say it to a colleague. "label" is two or three words naming what the line is ABOUT, for example "The money", "Timeline", "Where the NDA got to", "Not captured". Never repeat a label.${noRestate}`,
     `  "nextStepCommitment": string,`,
     `  "whatsAtRisk": string,`,
     `  "signalFlag": string | null`,

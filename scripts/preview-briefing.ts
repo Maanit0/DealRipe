@@ -83,6 +83,7 @@ async function main(): Promise<void> {
     stageKey,
     attendees,
     minutesUntil: 30,
+    bdrFields: ctx.bdrFields,
   });
 
   console.log("\n============ SUBJECT ============");

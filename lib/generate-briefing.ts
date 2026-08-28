@@ -79,7 +79,15 @@ export type MagayaBriefing = {
    * not have yet.
    */
   bdrHandoff?: { lines: Array<{ label: string; point: string }>; asOf?: string | null } | null;
-  inTheRoom?: Array<{ person: string; note: string }> | null;
+  /**
+   * Per-person bullets, not a paragraph.
+   *
+   * `note` is the older single-string shape and is still accepted, because a
+   * model handed a changed contract occasionally returns the previous one and a
+   * briefing that silently loses the whole room over a schema change is a much
+   * worse failure than a briefing with one bullet in it.
+   */
+  inTheRoom?: Array<{ person: string; points?: string[] | null; note?: string | null }> | null;
   openItems?: { us: string[]; them: string[] } | null;
   sinceLastContact?: string | null;
   theNumbers?: Array<string | DealNumber> | null;

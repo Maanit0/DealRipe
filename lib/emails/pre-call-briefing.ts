@@ -11,7 +11,7 @@
 
 import type { MagayaBriefing } from "../generate-briefing";
 import { dealNumbers, standPoints } from "../briefing-blocks";
-import { shapeForCallType } from "../briefing-shapes";
+import { shapeForCallType, stripOwnedLines } from "../briefing-shapes";
 import { normalizeDashes } from "../recap-lint";
 import type { BriefingAttendee } from "../attendees";
 
@@ -84,6 +84,15 @@ export type BriefingEmailContext = {
    * stage, which is correct for ordinary new business.
    */
   standingLabel?: string | null;
+  /**
+   * The BDR's Sales Development fields, exactly as Salesforce holds them.
+   *
+   * Rendered directly, never through the model. See DealContext.bdrFields for
+   * why. When this is present it REPLACES the model's bdrHandoff block.
+   */
+  bdrFields?: ReadonlyArray<{ label: string; value: string }>;
+  /** When the account was last touched, for the attribution line. */
+  bdrAsOf?: string | null;
 };
 
 function escapeHtml(s: string): string {
@@ -202,8 +211,17 @@ export function renderPreCallBriefingEmail(
   // printed once. A person the model wrote about who is not on the invite still
   // appears, because the invite is not the only way someone ends up on a call.
   const rosterEntries = (ctx.roster ?? []).filter((r) => r.side === "customer");
+  // Accepts both shapes. `points` is the contract; `note` is what the model
+  // returned before it changed, and dropping the room over a schema mismatch is
+  // worse than rendering one bullet.
+  const pointsOf = (r: { points?: string[] | null; note?: string | null }): string[] => {
+    const list = (r.points ?? []).map((p) => String(p ?? "").trim()).filter(Boolean);
+    if (list.length > 0) return list;
+    const single = String(r.note ?? "").trim();
+    return single ? [single] : [];
+  };
   const notes = new Map(
-    (briefing.inTheRoom ?? []).map((r) => [String(r.person ?? "").trim().toLowerCase(), String(r.note ?? "").trim()]),
+    (briefing.inTheRoom ?? []).map((r) => [String(r.person ?? "").trim().toLowerCase(), pointsOf(r)]),
   );
   // A person is their name OR their address. Salesforce supplies the spelled
   // name, the invite supplies only the mailbox, and the model writes whichever
@@ -221,11 +239,11 @@ export function renderPreCallBriefingEmail(
     return out.filter(Boolean);
   };
 
-  const noteFor = (person: { name: string; email?: string | null }): string => {
+  const noteFor = (person: { name: string; email?: string | null }): string[] => {
     const keys = keysFor(person);
     for (const k of keys) {
       const direct = notes.get(k);
-      if (direct) return direct;
+      if (direct && direct.length > 0) return direct;
     }
     const key = keys[0];
     // The model writes the name it was given, which is usually but not always
@@ -233,13 +251,13 @@ export function renderPreCallBriefingEmail(
     // never to a positional one: the third row matching the third note is how a
     // briefing tells a rep that the CIO is the one worried about warehousing.
     for (const [person, note] of notes) {
-      if (!person || !note) continue;
+      if (!person || note.length === 0) continue;
       if (person.includes(key) || key.includes(person)) return note;
       const [a] = person.split(/\s+/);
       const [b] = key.split(/\s+/);
       if (a && b && a === b && a.length >= 3) return note;
     }
-    return "";
+    return [];
   };
   const namedInRoster = new Set(rosterEntries.flatMap(keysFor));
   const orphanNotes = (briefing.inTheRoom ?? []).filter((r) => {
@@ -249,13 +267,25 @@ export function renderPreCallBriefingEmail(
     return ![...namedInRoster].some((n) => n.includes(key) || key.includes(n));
   });
 
-  const personRow = (name: string, title: string | null, relationship: string | null, note: string) =>
-    `<tr><td style="padding:0 0 ${note ? "11px" : "8px"} 0;">
+  // One bullet per fact about the person, indented under their name. A rep
+  // scanning the room for "who is worried about what" reads down a bullet list;
+  // in a run-on line the second fact about someone is effectively invisible.
+  const personRow = (name: string, title: string | null, relationship: string | null, points: string[]) =>
+    `<tr><td style="padding:0 0 ${points.length > 0 ? "12px" : "8px"} 0;">
       <div style="font-family:${SANS};font-size:14.5px;line-height:21px;color:${NAVY};font-weight:700;">${escapeHtml(name)}${
         relationship ? relationshipPill(relationship) : ""
       }</div>
       ${title ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${SLATE};margin-top:1px;">${escapeHtml(title)}</div>` : ""}
-      ${note ? `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};margin-top:4px;">${escapeHtml(note)}</div>` : ""}
+      ${
+        points.length > 0
+          ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:5px;">${points
+              .map(
+                (pt) =>
+                  `<tr><td style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};padding:0 0 4px 0;">&bull;&nbsp; ${escapeHtml(pt)}</td></tr>`,
+              )
+              .join("")}</table>`
+          : ""
+      }
     </td></tr>`;
 
   const colleagues = (ctx.roster ?? []).filter((r) => r.side === "colleague").map((r) => r.name);
@@ -267,7 +297,7 @@ export function renderPreCallBriefingEmail(
     rosterEntries.length || orphanNotes.length
       ? `${sub("On the call")}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${[
           ...rosterEntries.map((r) => personRow(r.name, r.title, r.relationship, noteFor(r))),
-          ...orphanNotes.map((r) => personRow(String(r.person), null, null, String(r.note ?? ""))),
+          ...orphanNotes.map((r) => personRow(String(r.person), null, null, pointsOf(r))),
         ].join("")}</table>${colleagues.length ? asideLine(`Also from Magaya: ${colleagues.join(", ")}`) : ""}${
           mailboxes.length ? asideLine(`Also copied, shared inboxes rather than people: ${mailboxes.join(", ")}`) : ""
         }`
@@ -313,7 +343,9 @@ export function renderPreCallBriefingEmail(
   // Same sentences it always carried. As a paragraph it was the block most
   // likely to hold the thing that changes how the call opens and the block most
   // likely to be skimmed, because nothing joined its facts except being true.
-  const stand = standPoints(briefing.whereItStands);
+  // Lines whose subject belongs to another block on this page are dropped here
+  // rather than argued with in the prompt. See stripOwnedLines.
+  const stand = stripOwnedLines(standPoints(briefing.whereItStands), shapeForCallType(ctx.callType));
   const standBlock = stand.length
     ? `${sub("Where it stands")}${bullets(
         stand.map((p) => (p.label ? `<b>${esc(p.label)}</b><br><span style="color:${INK};">${esc(p.point)}</span>` : esc(p.point))),
@@ -391,21 +423,76 @@ export function renderPreCallBriefingEmail(
   // field we are quoting. Same reasoning as the dash in the Salesforce Task
   // title, which is the rep's own calendar subject. Substitution is lossless,
   // so it happens silently and nothing is suppressed over it.
-  const handoff = briefing.bdrHandoff;
-  const handoffLines = (handoff?.lines ?? [])
-    .filter((l) => String(l?.point ?? "").trim())
-    .map((l) => ({ label: normalizeDashes(String(l.label ?? "")), point: normalizeDashes(String(l.point)) }));
-  const handoffBlock = handoffLines.length
-    ? `${sub("From the BDR, before this call")}${bullets(
-        handoffLines.map((l) =>
-          l.label
-            ? `<b>${esc(l.label)}</b><br><span style="color:${INK};">${esc(l.point)}</span>`
-            : esc(l.point),
-        ),
-      )}<div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-top:6px;">${esc(
-        handoff?.asOf
-          ? `Recorded in Salesforce ${handoff.asOf}. Not confirmed by the customer to us.`
-          : "Recorded in Salesforce by the BDR. Not confirmed by the customer to us.",
+  // RENDERED FROM SALESFORCE, NOT WRITTEN BY THE MODEL.
+  //
+  // Juan Lopez, 2026-08-28: "the exact content in Salesforce on those BDR fields
+  // should be in the briefing. Nothing like DealRipe interprets or changes, just
+  // formatted well." The previous version asked the model to relay the fields
+  // and it compressed them, which is what a model does with fourteen inputs and
+  // a page to write: it dropped Compelling Events, Budget Confirmed and
+  // Executive Sponsorship, the exact pre-qualification data he had asked for.
+  //
+  // Instructing against that is weaker than removing the possibility. These are
+  // the customer's and the BDR's own words, copied, so nothing can be dropped,
+  // softened or invented on the way to the page. The model still RECEIVES the
+  // same fields through crmContext, where it uses them to aim the questions.
+  //
+  // Dashes are normalised and nothing else is. A BDR typed these into
+  // Salesforce, so regenerating the briefing could never fix a dash in them;
+  // substitution is exact and lossless. Same case as the Salesforce Task title.
+  const bdrRows = (ctx.bdrFields ?? [])
+    .map((f) => ({ label: normalizeDashes(String(f.label ?? "").trim()), value: normalizeDashes(String(f.value ?? "").trim()) }))
+    .filter((f) => f.label && f.value);
+
+  // A long text area holds several distinct facts separated by blank lines or by
+  // our own "[DealRipe . <date> call]" write-backs. One wall of text is the
+  // format Juan was reading around, so it is split on those seams into its own
+  // sub-bullets. Split only: no summarising, no reordering, no rewording, and
+  // any text that does not split stays exactly as it is.
+  const splitLong = (value: string): string[] => {
+    if (value.length < 180) return [value];
+    const parts = value
+      .split(/\n\s*\n|(?=\[DealRipe)/g)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    return parts.length > 1 ? parts : [value];
+  };
+
+  const bdrBlock = bdrRows.length
+    ? `${sub("From the BDR, before this call")}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${bdrRows
+        .map((f) => {
+          const parts = splitLong(f.value);
+          // A short value sits on the SAME LINE as its label.
+          //
+          // Twelve of the seventeen fields on a full account are one word, and
+          // stacking each over its own label turned the block into a column of
+          // "Yes" as tall as the paragraphs that carry the actual pain. Nothing
+          // is dropped or shortened, which is the instruction; the wrapping is
+          // just laid out the way Salesforce lays it out, which is also the
+          // layout the rep already knows from the record itself.
+          if (parts.length === 1 && parts[0].length <= 42) {
+            return `<tr><td style="padding:0 0 5px 0;font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};">
+      <span style="color:${NAVY};font-weight:700;">${esc(f.label)}</span>&nbsp; ${esc(parts[0])}
+    </td></tr>`;
+          }
+          const body =
+            parts.length > 1
+              ? parts
+                  .map(
+                    (pt) =>
+                      `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};margin-top:3px;">&bull;&nbsp; ${esc(pt)}</div>`,
+                  )
+                  .join("")
+              : `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};margin-top:2px;">${esc(parts[0])}</div>`;
+          return `<tr><td style="padding:0 0 9px 0;">
+      <div style="font-family:${SANS};font-size:13px;line-height:19px;color:${NAVY};font-weight:700;">${esc(f.label)}</div>
+      ${body}
+    </td></tr>`;
+        })
+        .join("")}</table><div style="font-family:${SANS};font-size:13px;line-height:20px;color:${MUTED};margin-top:7px;">${esc(
+        ctx.bdrAsOf
+          ? `Copied from the Sales Development section in Salesforce, last updated ${ctx.bdrAsOf}. Not confirmed by the customer to us.`
+          : "Copied from the Sales Development section in Salesforce. Not confirmed by the customer to us.",
       )}</div>`
     : "";
 
@@ -428,7 +515,7 @@ export function renderPreCallBriefingEmail(
       coachBlock,
     ]),
     say: stack([showThisBlock, questionsBlock, forkBlock, doNotBlock]),
-    know: stack([handoffBlock, openItemsBlock, sinceBlock, standBlock, numbersBlock]),
+    know: stack([bdrBlock, openItemsBlock, sinceBlock, standBlock, numbersBlock]),
   };
   const order = shapeForCallType(ctx.callType).cardOrder ?? ["act", "say", "know"];
 
@@ -536,13 +623,17 @@ function renderText(
   }
   secList(
     "FROM THE BDR, BEFORE THIS CALL",
-    (briefing.bdrHandoff?.lines ?? [])
-      .filter((l) => String(l?.point ?? "").trim())
-      .map((l) => normalizeDashes(`${l.label ? `${l.label}: ` : ""}${l.point}`)),
+    (ctx.bdrFields ?? [])
+      .filter((f) => String(f.value ?? "").trim())
+      .map((f) => normalizeDashes(`${f.label}: ${f.value}`)),
   );
   secList(
     "WHAT THEY CARE ABOUT",
-    briefing.inTheRoom?.map((r) => `${r.person}: ${r.note}`),
+    briefing.inTheRoom?.flatMap((r) => {
+      const pts = (r.points ?? []).map((p) => String(p ?? "").trim()).filter(Boolean);
+      const list = pts.length > 0 ? pts : [String(r.note ?? "").trim()].filter(Boolean);
+      return list.length > 0 ? [`${r.person}:`, ...list.map((p) => `  - ${p}`)] : [];
+    }),
   );
   secList("OPEN ITEMS", [
     ...(briefing.openItems?.us ?? []).map((t) => `We owe: ${t}`),

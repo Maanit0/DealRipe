@@ -126,6 +126,24 @@ export type DealContext = {
    */
   crmContext: string | null;
   /**
+   * The BDR's Sales Development fields, EXACTLY as Salesforce holds them.
+   *
+   * Carried alongside crmContext rather than instead of it, because the two have
+   * different jobs. crmContext is prose for the MODEL, which uses it to aim the
+   * questions. This is the same data as structured pairs for the PAGE, rendered
+   * straight to the rep with no model in the path.
+   *
+   * That split is deliberate and it is Juan's instruction: "the exact content in
+   * Salesforce on those BDR fields should be in the briefing. Nothing like
+   * DealRipe interprets or changes, just formatted well." A model asked to relay
+   * fourteen fields will compress them, and when it does the short unglamorous
+   * ones go first: the version before this dropped Compelling Events, Budget
+   * Confirmed and Executive Sponsorship, which is exactly the pre-qualification
+   * data he asked for. Rendering removes the possibility rather than instructing
+   * against it.
+   */
+  bdrFields: Array<{ label: string; value: string }>;
+  /**
    * Why crmContext is what it is.
    *
    * "absent" and "unavailable" both produce a null crmContext and a thinner
@@ -443,6 +461,7 @@ export async function getDealContext(
       : "";
 
   let crmContext: string | null = null;
+  let bdrFields: DealContext["bdrFields"] = [];
   let crmContacts: DealContext["crmContacts"] = [];
   // Why we skipped, not just that we did. One bucket for every skip reason made
   // a consumer-mail deal report "we have our own calls", which sent me looking
@@ -487,7 +506,10 @@ export async function getDealContext(
   if (linkedAccountId) {
     try {
       const sf = await loadAccountContext(linkedAccountId);
-      if (sf) crmContacts = sf.contacts;
+      if (sf) {
+        crmContacts = sf.contacts;
+        bdrFields = sf.fields;
+      }
       const rendered = sf ? accountContextLines(sf) : "";
       if (rendered) {
         crmContext = rendered + bdrNotesAgeNote + supersededNote;
@@ -523,7 +545,10 @@ export async function getDealContext(
       case "resolved_by_name": {
         try {
           const sf = await loadAccountContext(resolution.accountId);
-          if (sf) crmContacts = sf.contacts;
+          if (sf) {
+            crmContacts = sf.contacts;
+            bdrFields = sf.fields;
+          }
           const rendered = sf ? accountContextLines(sf) : "";
           if (rendered) {
             // Name matches are labelled in the prompt itself. A rep reading
@@ -612,6 +637,7 @@ export async function getDealContext(
     openItems,
     emailStatus,
     crmContext,
+    bdrFields,
     crmContextStatus,
     stageGates,
     stageGatesStatus,

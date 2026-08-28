@@ -53,7 +53,27 @@ const WANTED_LABELS: ReadonlyArray<string> = [
   "Knows Magaya/ Is A Referral",
   "ACE/AES Filer Code",
   "Special Handling Instructions",
+  // Added 2026-08-28 from Juan's own screenshot of the Sales Development
+  // section. Every one of these was populated on the account he was looking at
+  // and none of them was being read, so the briefing could not have shown them
+  // however well it was written. Worth saying plainly: this list was assembled
+  // by hand, and a field nobody put on it is invisible rather than empty.
+  "Date of Software Acquisition",
+  "Magaya lead - NA/ SA / Europe?",
+  "Acelynk - Existing Filer Code?",
+  "Lead Does Not Require Integrations",
+  "Multi-host",
 ];
+
+/**
+ * The account's Sales Rep, as Magaya records it.
+ *
+ * Kept OUT of WANTED_LABELS on purpose: it is not something to read back to the
+ * rep in their own briefing, it is a routing fact. Juan's screenshot showed
+ * "Sales Rep: Juan Lopez" on the account, which is the answer to who owns a deal
+ * for the 73 live deals that have no Rolldog opportunity to ask.
+ */
+export const SALES_REP_LABEL = "Sales Rep";
 
 export type SalesforceAccountContext = {
   accountId: string;
