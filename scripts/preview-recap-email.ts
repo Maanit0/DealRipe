@@ -23,6 +23,11 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { mkdirSync, writeFileSync } from "node:fs";
+
+import { renderDraftCardBlock } from "../lib/emails/draft-ready";
+import { readMessageStateByInternetId } from "../lib/graph-mail";
+import { formatMeetingWhen } from "../lib/followup-draft";
+import { prependDraftCard } from "../lib/post-call-notify";
 import { join } from "node:path";
 
 import type { ExtractionMap } from "../lib/briefing-magaya";
@@ -145,13 +150,24 @@ async function main(): Promise<void> {
     meetingType: (call.data.meeting_type as MeetingType | null) ?? undefined,
   });
 
-  const email = renderRecapEmail(built);
+  let email = renderRecapEmail(built);
   if (!email) {
     // The same answer production gives: nothing to send, and why.
     console.error(
       `\nNo email would be sent. Neither the readout nor the fallback recap produced anything for this ${built.meetingType} call.`,
     );
     process.exit(1);
+  }
+
+  // THE FOLLOW-UP CARD, injected exactly the way production injects it.
+  //
+  // Built from the real draft already sitting in the rep's mailbox rather than
+  // by writing a new one, so this preview stays read-only. Skipped with
+  // --no-card, which is how you see the recap without it for comparison.
+  if (!process.argv.includes("--no-card")) {
+    const card = await previewDraftCard(deal.data.id as string, call.data.id as string);
+    if (card) email = prependDraftCard(email, card);
+    else console.log(`\n(no stored draft for this call, so the recap is shown without the follow-up card)`);
   }
 
   mkdirSync(OUT_DIR, { recursive: true });
@@ -183,3 +199,54 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
+
+
+/**
+ * The follow-up card for a call, from the draft that already exists.
+ *
+ * Reads the real message out of the rep's mailbox by the internetMessageId
+ * stored on the sent_messages row, so the subject shown is the one the mail
+ * client actually gave it and not the one we generated. Writes nothing: no
+ * draft is created and no mail is sent.
+ */
+async function previewDraftCard(
+  dealId: string,
+  callId: string,
+): Promise<{ html: string; text: string } | null> {
+  const { supabaseAdmin } = await import("../lib/supabase");
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("sent_messages")
+    .select("to_email, subject, body_text, provider_id, call_id")
+    .eq("kind", "followup_draft")
+    .eq("deal_id", dealId)
+    .not("provider_id", "is", null)
+    .order("sent_at", { ascending: false })
+    .limit(4);
+  const row = (data ?? []).find((r) => r.call_id === callId) ?? (data ?? [])[0];
+  if (!row) return null;
+
+  const mailbox = String(row.to_email ?? "");
+  const state = await readMessageStateByInternetId({
+    tenantIdOrDomain: "magaya.com",
+    mailbox,
+    internetMessageId: String(row.provider_id),
+  });
+  const subject =
+    state.status === "draft" || state.status === "sent" ? state.subject : String(row.subject ?? "");
+
+  const { data: deal } = await db.from("deals").select("account").eq("id", dealId).maybeSingle();
+  const { data: call } = await db.from("calls").select("title, scheduled_start").eq("id", callId).maybeSingle();
+
+  return renderDraftCardBlock({
+    account: String(deal?.account ?? ""),
+    meetingTitle: (call?.title as string | null) ?? null,
+    meetingWhen: call?.scheduled_start ? formatMeetingWhen(String(call.scheduled_start)) : null,
+    to: [],
+    draftSubject: subject,
+    body: String(row.body_text ?? ""),
+    // Graph returns the real webLink only at creation time and we do not store
+    // it, so the preview shows the button with a stand-in href.
+    webLink: "https://outlook.office.com/mail/drafts/",
+  });
+}

@@ -350,7 +350,7 @@ function escapeHtmlBasic(s: string): string {
  * At the TOP because the draft is the thing the rep acts on. The recap is what
  * they read; the draft is what they send.
  */
-function prependDraftCard<T extends { html: string; text: string }>(
+export function prependDraftCard<T extends { html: string; text: string }>(
   email: T,
   card: { html: string; text: string },
 ): T {
