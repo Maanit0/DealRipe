@@ -26,6 +26,7 @@
 
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
+import { collateralPromptBlock } from "./magaya-collateral";
 import { applyMagayaTerms, MAGAYA_GLOSSARY } from "./magaya-terms";
 import { repName } from "./display-names";
 import { listMeetingsBetween } from "./microsoft-graph";
@@ -668,6 +669,8 @@ The user message names the kind of call. The rules above hold for all of them, b
 - PROPOSAL or NEGOTIATION: they are evaluating terms and are waiting on YOU. The email carries the substance being decided on, not a recap of the meeting. State what changed, item by item, in the order the customer raised them, and be concrete about numbers, dates and what is included. Length rule 3 is relaxed here and only here: a terms email is as long as the terms. Still one ask, and it is for the decision or the next step toward it.
 - FOLLOW_UP: the conversation is already running. Be short, pick up exactly where it left off, and do not re-introduce anything.
 - EXISTING CUSTOMER: they already buy from you. Never write as though you are selling in for the first time, never ask what is driving them to look at a new solution.
+
+${collateralPromptBlock()}
 
 Return JSON only:
 {"subject": string, "body": string, "attachmentsToAdd": string[]}

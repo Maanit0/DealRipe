@@ -1,0 +1,92 @@
+/**
+ * The collateral Juan Lopez sends after a call, and which bundle goes with what.
+ *
+ * Built from the two emails he supplied on 2026-08-28 as worked examples, both
+ * sent 2026-08-20, both to customers he had met that morning. He described the
+ * split himself: he manages two solutions, "95% of the time it's the same data
+ * sheet", and he is happy to handle the remainder by hand. So this exists to get
+ * the common case right and to ABSTAIN on anything it cannot place, never to
+ * guess between them.
+ *
+ * Guessing is the expensive failure. A rep who finds the wrong datasheet in
+ * their draft has to notice it, remove it, and find the right one, which is
+ * slower than an empty draft and teaches them to check every line of every
+ * draft afterwards. An empty attachment list costs Juan the ten seconds he
+ * spends today.
+ *
+ * THE LINKS GO IN THE BODY, THE DATASHEET GOES IN attachmentsToAdd. A YouTube
+ * URL is text and can be written into the email; a PDF is a file we do not have
+ * and cannot attach through Graph, so the draft names it and the rep attaches
+ * it. That distinction is already how attachmentsToAdd works and this does not
+ * change it.
+ */
+
+export type CollateralBundle = {
+  key: string;
+  /** How a rep would name it out loud. */
+  label: string;
+  /** What the call has to be about for this bundle to be right. */
+  whenToSend: string;
+  /** Written into the email body, in the order Juan writes them. */
+  links: Array<{ title: string; url: string }>;
+  /** Named in attachmentsToAdd for the rep to attach before sending. */
+  attachments: string[];
+};
+
+export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
+  {
+    key: "rate_management",
+    label: "Rate management",
+    whenToSend:
+      "the customer's interest is RATE MANAGEMENT: quoting, client rate sheets, tariffs, buy and sell rates, margin on a quote, or producing rates in a particular format for their own customers",
+    links: [{ title: "Rate management video tour", url: "https://www.youtube.com/watch?v=_WWi6Z5IoKU" }],
+    attachments: ["Rate management datasheet"],
+  },
+  {
+    key: "supply_chain_ops",
+    label: "Supply chain and forwarding operations",
+    whenToSend:
+      "the customer's interest is FORWARDING AND SUPPLY CHAIN OPERATIONS: shipments, import or export workflow, customs and documentation, warehousing, tracking, or running the business end to end. This is the common case",
+    links: [
+      { title: "Supply Chain Tour", url: "https://www.youtube.com/watch?v=j_McdWaugso" },
+      {
+        title: "Export Operations",
+        url: "https://www.youtube.com/watch?v=QqqUO-GEHKw&list=PLsPRY0qd--QdCnOJdyggs3MGvHZvDszSt",
+      },
+      {
+        title: "Import Operations",
+        url: "https://www.youtube.com/watch?v=FEY6Sl6g_Vo&list=PLsPRY0qd--QeBhs05epBgNkOkofaQ8NA5",
+      },
+    ],
+    attachments: ["Magaya datasheet", "Product overview"],
+  },
+];
+
+/**
+ * The bundles, described for the model.
+ *
+ * Deliberately describes WHEN each applies rather than listing keywords. A
+ * keyword rule on "rate" fires on "at any rate" and on a customer describing
+ * their shipping rates while asking about warehousing, and Juan's two examples
+ * are separated by what the customer wanted, not by a word.
+ */
+export function collateralPromptBlock(): string {
+  const bundles = COLLATERAL.map(
+    (b) =>
+      `- "${b.key}" (${b.label}): send when ${b.whenToSend}.\n  Links: ${b.links
+        .map((l) => `${l.title} ${l.url}`)
+        .join(" | ")}\n  Attach: ${b.attachments.join(", ")}`,
+  ).join("\n");
+
+  return `COLLATERAL THE REP SENDS AFTER A CALL
+
+${bundles}
+
+RULES FOR COLLATERAL, and the default is to send none:
+- Include a bundle ONLY if the rep committed on this call to send materials, a video, a datasheet or an overview, OR the customer asked for something to review. If neither happened, send nothing: an unrequested datasheet is the marketing email these drafts exist to avoid.
+- Pick ONE bundle. If the call genuinely covered both, pick the one the customer spent the most time on and say nothing about the other.
+- If you cannot tell which one fits, INCLUDE NO LINKS AND NO ATTACHMENTS. The rep attaches the right one in ten seconds; the wrong one costs them longer than an empty draft and teaches them to check every draft afterwards.
+- Write the links into the body EXACTLY as given, each on its own line with its title, the way the rep already writes them. Never invent a URL, never shorten one, never describe a video that has no link here.
+- Name the attachments in attachmentsToAdd, never in the body as "please find attached": nothing is attached when the rep opens the draft.
+- An MNDA is NOT in this list and is not yours to promise. The rep sends it through AdobeSign by hand, and saying it has been sent when it has not is a false statement to a customer.`;
+}

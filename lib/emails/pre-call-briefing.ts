@@ -172,6 +172,37 @@ function relationshipPill(relationship: string): string {
   return `<span style="display:inline-block;font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:${strong.fg};background:${strong.bg};border:1px solid ${strong.br};border-radius:6px;padding:2px 7px;margin-left:7px;white-space:nowrap;">${escapeHtml(relationship)}</span>`;
 }
 
+/**
+ * Remove OUR OWN write-backs from a Salesforce field before showing it to a rep.
+ *
+ * salesforce-writeback appends what a call established to these fields, stamped
+ * "[DealRipe . Aug 28 call]". Reading that back into the briefing and labelling
+ * it "From the BDR" is circular twice over: it is not the BDR, and the rep has
+ * already read the full version in the recap for that call.
+ *
+ * It is also TRUNCATED, which is what made this visible. Business Issues is a
+ * 500 character field in Magaya's schema and the BDR had already used about 300
+ * of them, so our sentence is cut to fit and ends in an ellipsis. Showing a rep
+ * half of a sentence we wrote, under a heading claiming someone else wrote it,
+ * is the worst version of every part of that.
+ *
+ * The truncation itself is correct and stays: the field is 500 characters
+ * because Magaya made it 500 characters, and MAX_CONTRIBUTION exists because a
+ * paragraph in a field reps use as a one-liner overflows it for everyone. The
+ * fix is not to write more, it is to stop reading our own writing back.
+ *
+ * A field that is ENTIRELY our own write-back becomes empty and drops out of
+ * the block, which is correct: there is no BDR content in it.
+ */
+function stripOwnWriteBacks(value: string): string {
+  return value
+    .split(/\n\s*\n|(?=\[DealRipe)/g)
+    .map((part) => part.trim())
+    .filter((part) => part && !part.startsWith("[DealRipe"))
+    .join("\n\n")
+    .trim();
+}
+
 export function renderPreCallBriefingEmail(
   briefing: MagayaBriefing,
   ctx: BriefingEmailContext,
@@ -459,7 +490,10 @@ export function renderPreCallBriefingEmail(
   // briefings Juan had specifically said should not carry it.
   const wantsBdr = shapeForCallType(ctx.callType).bdrRecord === true;
   const bdrRows = (wantsBdr ? ctx.bdrFields ?? [] : [])
-    .map((f) => ({ label: normalizeDashes(String(f.label ?? "").trim()), value: normalizeDashes(String(f.value ?? "").trim()) }))
+    .map((f) => ({
+      label: normalizeDashes(String(f.label ?? "").trim()),
+      value: normalizeDashes(stripOwnWriteBacks(String(f.value ?? "").trim())),
+    }))
     .filter((f) => f.label && f.value);
 
   // A long text area holds several distinct facts separated by blank lines or by
@@ -662,7 +696,8 @@ function renderText(
   secList(
     "FROM THE BDR, BEFORE THIS CALL",
     (shapeForCallType(ctx.callType).bdrRecord === true ? ctx.bdrFields ?? [] : [])
-      .filter((f) => String(f.value ?? "").trim())
+      .map((f) => ({ label: f.label, value: stripOwnWriteBacks(String(f.value ?? "").trim()) }))
+      .filter((f) => f.value)
       .map((f) => normalizeDashes(`${f.label}: ${f.value}`)),
   );
   secList(
