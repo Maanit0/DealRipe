@@ -171,6 +171,48 @@ async function extractionAsOf(tenantId: string, dealId: string, asOf: string): P
   ) as unknown as ExtractionMap;
 }
 
+/**
+ * The next meeting on this deal that is already on the calendar.
+ *
+ * Read from calls rather than inferred from the transcript, because the
+ * transcript is exactly what gets this wrong: a call that spends twenty minutes
+ * arranging a demo reads as a deal that needs a demo booked, whether or not the
+ * rep then booked it. calendar-sync has the answer and nothing was asking.
+ *
+ * Returns null on any failure, which lets the task generator behave as it did
+ * before: a read that fails must not suppress a real action. The asymmetry is
+ * deliberate, since the cost of a missing "book a meeting" task is a rep
+ * booking one anyway, and the cost of a false one is a rep learning that
+ * DealRipe does not check before it tells them what to do.
+ */
+async function nextBookedMeeting(
+  tenantId: string,
+  dealId: string,
+  callAt: string | null,
+): Promise<{ when: string; title: string | null } | null> {
+  try {
+    const { supabaseAdmin } = await import("./supabase");
+    const { formatMeetingTime } = await import("./graph-time");
+    const after = callAt ?? new Date().toISOString();
+    const { data, error } = await supabaseAdmin()
+      .from("calls")
+      .select("scheduled_start, title, outcome")
+      .eq("tenant_id", tenantId)
+      .eq("deal_id", dealId)
+      .gt("scheduled_start", after)
+      .order("scheduled_start", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.scheduled_start) return null;
+    return {
+      when: formatMeetingTime(String(data.scheduled_start)),
+      title: (data.title as string | null) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
   // Classify the meeting. DealRipe auto-joins every invited meeting, so not
   // every call is a new-opportunity sales call. A customer or internal meeting
@@ -425,6 +467,7 @@ export async function buildRecap(input: BuildRecapInput): Promise<RecapBuild> {
       transcript: input.transcript,
       stageKey,
       nextStepHint: summary.nextStepCommitment ?? summary.suggestedNextStep,
+      bookedMeeting: await nextBookedMeeting(input.tenantId, input.dealId, input.callAt ?? null),
     }).catch(() => []);
   }
 

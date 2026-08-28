@@ -47,6 +47,20 @@ export async function generateTasksFromCall(args: {
   transcript: string;
   stageKey: string;
   nextStepHint?: string | null;
+  /**
+   * A meeting already on the calendar AFTER this call, if there is one.
+   *
+   * Ariel Rodriguez, 2026-08-28: "I have a meeting already... but he's telling
+   * me that I have not done that." The generator only ever saw the transcript,
+   * so a call that spends twenty minutes discussing a demo produces "book the
+   * demo" whether or not the demo is already booked. On the Orvia recap it told
+   * him to book a follow-up while the recap two cards above recorded the Monday
+   * 4:30 meeting he had booked on the call.
+   *
+   * Telling a rep to do something they have already done is the fastest way to
+   * lose them, because it proves the thing was not read before it was written.
+   */
+  bookedMeeting?: { when: string; title: string | null } | null;
 }): Promise<GeneratedTask[]> {
   if (!process.env.ANTHROPIC_API_KEY || args.transcript.trim().length < 50) return [];
 
@@ -60,7 +74,7 @@ Rules:
 - title: an imperative action, at most about 12 words (e.g. "Email Ely the product videos and datasheet", "Book the follow-up demo").
 - detail: ONE sentence on what and why, grounded in what was actually discussed.
 - If the call agreed a clear next step, that is the first, highest-priority task.
-- Add a task to book the next meeting if one is implied but was not scheduled.
+- Add a task to book the next meeting ONLY if none is already on the calendar. When a BOOKED MEETING is given below, a meeting exists: do not tell the rep to book, schedule, set up or get time on the calendar for it, and do not generate a "book_meeting" task at all. Something the rep has already done is not an action.
 - Add a task to close the single most important open gap (budget owner, decision process, NDA before demo) if relevant.
 - dueInDays: sensible urgency (high 1-2, medium 3-5, low 6-10).
 - If nothing meaningful is warranted, return [].`;
@@ -69,6 +83,9 @@ Rules:
     `ACCOUNT: ${args.account}`,
     `STAGE: ${args.stageKey}`,
     args.nextStepHint ? `AGREED NEXT STEP (hint): ${args.nextStepHint}` : "",
+    args.bookedMeeting
+      ? `BOOKED MEETING (already on the calendar, do NOT ask the rep to book one): ${args.bookedMeeting.when}${args.bookedMeeting.title ? `, "${args.bookedMeeting.title}"` : ""}`
+      : `BOOKED MEETING: none on the calendar after this call.`,
     ``,
     `TRANSCRIPT:`,
     args.transcript.slice(0, MAX_CHARS),
@@ -93,6 +110,16 @@ Rules:
     if (!Array.isArray(arr)) return [];
     const out: GeneratedTask[] = [];
     for (const raw of arr.slice(0, 3)) {
+      // ENFORCED, not just instructed. The rule above is followed most of the
+      // time and "most" is not good enough for an artifact whose credibility
+      // dies the first time it tells a rep to do something they have done.
+      if (args.bookedMeeting) {
+        const o0 = raw as Record<string, unknown>;
+        const t = String(o0.title ?? "").toLowerCase();
+        if (o0.actionType === "book_meeting" || /\b(book|schedule|set up|get .* on the calendar)\b/.test(t)) {
+          continue;
+        }
+      }
       const o = raw as Record<string, unknown>;
       if (typeof o.title !== "string" || !o.title.trim()) continue;
       const actionType = (TYPES.has(o.actionType as TaskActionType) ? o.actionType : "other") as TaskActionType;

@@ -141,6 +141,11 @@ export async function classifyCallSubtype(args: {
 - demo: a product demonstration or presentation is the main activity.
 - proposal: pricing, a proposal/quote, terms, or negotiation is the main activity.
 - follow_up: a follow-up or check-in on an already-progressing opportunity (recap, next steps, waiting on the customer), not primarily discovery, demo, or proposal.
+
+WHAT THE SELLER SAYS THE CALL IS OUTRANKS WHAT IT SOUNDS LIKE. Sellers routinely state the purpose out loud near the start, and that statement is worth more than your impression of the rest. If the seller says they are NOT doing a demo today, it is not a demo, however much product capability gets discussed afterwards: answering "can it do X" is discovery, and a rep who has said "no demo today" and then explained features has run a discovery call.
+
+TRANSCRIPTS ARE NOT ALWAYS IN ENGLISH. Magaya sells across Latin America and whole calls run in Spanish. Classify on meaning, not on English keywords: "no voy a hacer ningun demo hoy" is the seller ruling a demo out.
+
 Pick the label that best fits what the call was mostly about.`;
   try {
     const resp = await runModel({
@@ -150,11 +155,25 @@ Pick the label that best fits what the call was mostly about.`;
       system,
       messages: [{ role: "user", content: `Transcript:\n\n${args.transcript.slice(0, MAX_CHARS)}` }],
     });
-    const text = resp.message.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
-    if (text.includes("demo")) return "demo";
+    const text = resp.message.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim().toLowerCase();
+    // EXACT MATCH FIRST. The substring test was the whole rule, and it reads a
+    // reply of "not a demo, this is discovery" as "demo" because it looks for
+    // "demo" anywhere and checks it before anything else. maxTokens is 10 and
+    // the prompt asks for one word, so that reply is rare rather than
+    // impossible, and the failure is silent and permanent once written.
+    const exact = text.replace(/[^a-z_]/g, "");
+    if (exact === "demo") return "demo";
+    if (exact === "proposal") return "proposal";
+    if (exact === "follow_up" || exact === "followup") return "follow_up";
+    if (exact === "discovery") return "discovery";
+    // Fall back to substring, in the order that puts the LEAST committal label
+    // last, and check discovery before demo so a hedged answer does not promote
+    // the call a stage.
+    if (text.includes("discovery")) return "discovery";
     if (text.includes("proposal")) return "proposal";
     if (text.includes("follow")) return "follow_up";
-    return "discovery";
+    if (text.includes("demo")) return "demo";
+    return null;
   } catch (err) {
     // NULL, not "discovery".
     //

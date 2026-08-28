@@ -435,5 +435,12 @@ export function renderRecapEmail(
     narrative: built.narrative,
     demoStrategy: built.demoStrategy,
     crmStageKey: built.crmStageKey,
+    // The header was accepting these and nothing was handing them over, so the
+    // recap printed the account and went straight into the sections while the
+    // briefing showed the meeting and the time. A parameter added at one end of
+    // a call and not the other fails silently and looks like the feature was
+    // never built.
+    meetingTitle: meeting?.meetingTitle ?? null,
+    meetingWhen: meeting?.meetingWhen ?? null,
   });
 }
