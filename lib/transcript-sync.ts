@@ -210,7 +210,46 @@ export async function runTranscriptSync(
   // Third pass: recover follow-up drafts that failed for a transient reason.
   await retryFailedDrafts();
 
+  // Hand off to recap-sync rather than making the call wait for its next tick.
+  //
+  // Both crons run every five minutes, so a transcript stored at :06 sat until
+  // :11 before the recap even started, and the follow-up draft is the step
+  // after that. Measured over 110 captured calls, a transcript lands a median
+  // of 36 minutes after the meeting starts, which is about six minutes after a
+  // half-hour call ends. The poll wait was adding another two and a half on top
+  // of a delay we do not control, for nothing.
+  //
+  // Fire and forget, deliberately. recap-sync takes up to 3m 27s and this
+  // function has a 240 second budget; awaiting it is the exact shape of the
+  // 2026-08-13 failure that killed three of Ariel's drafts. The request only
+  // has to be RECEIVED, after which that invocation runs on its own clock with
+  // its own ceiling.
+  //
+  // Safe to double-fire: recap-sync claims each row before working it and skips
+  // what it cannot claim, so an overlap with the scheduled run costs nothing.
+  await pingRecapSync(counts.extracted);
+
   return counts;
+}
+
+/** Best effort. A failed ping costs latency, never the sync that just ran. */
+async function pingRecapSync(extracted: number): Promise<void> {
+  if (extracted < 1) return;
+  const base = (process.env.DEALRIPE_APP_URL ?? "").replace(/\/$/, "");
+  const secret = process.env.CRON_SECRET;
+  if (!base || !secret) return;
+  try {
+    await fetch(`${base}/api/cron/recap-sync`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}` },
+      // We are not waiting for the recap. Aborting after the request is sent is
+      // the intent, not a failure, which is why the catch below is silent.
+      signal: AbortSignal.timeout(2500),
+    });
+  } catch {
+    // Expected on the timeout path.
+  }
+  console.log(`[transcript-sync] pinged recap-sync after ${extracted} extraction(s)`);
 }
 
 /**
