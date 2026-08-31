@@ -78,6 +78,18 @@ export type DraftReadyInput = {
    * will read it as the draft dropping people.
    */
   unaddressed?: string[];
+  /**
+   * Files the rep has to attach before sending.
+   *
+   * NAMED, NOT ATTACHED, and the card has to be honest about which. We do not
+   * hold Juan's datasheet PDFs and Graph is never asked to attach anything, so
+   * the draft goes into his mailbox with the links in the body and no file on
+   * it. Until this line existed the only record of what was missing was
+   * DealRipe's own archive row, which he never sees: he would have opened a
+   * draft that reads as complete and sent it without the datasheet he promised
+   * on the call.
+   */
+  attachmentsToAdd?: string[];
   /** Opens the draft in the rep's mail client. */
   webLink?: string | null;
 };
@@ -143,6 +155,11 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
           ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;">Also spoke, not on the invite and no address on file: ${esc((input.unaddressed ?? []).join(", "))}. Add them yourself if they should get this.</div>`
           : ""
       }
+      ${
+        (input.attachmentsToAdd ?? []).length > 0
+          ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;"><b>Attach before sending:</b> ${esc((input.attachmentsToAdd ?? []).join(", "))}. Nothing is attached yet.</div>`
+          : ""
+      }
       <div style="height:1px;background:${BORDER};margin:12px 0;"></div>
       ${excerptHtml}
       ${
@@ -157,6 +174,9 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
   const text = [
     `Subject: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
+    (input.attachmentsToAdd ?? []).length > 0
+      ? `Attach before sending: ${(input.attachmentsToAdd ?? []).join(", ")}. Nothing is attached yet.`
+      : null,
     (input.unaddressed ?? []).length > 0
       ? `Also spoke, not on the invite and no address on file: ${(input.unaddressed ?? []).join(", ")}. Add them yourself if they should get this.`
       : null,

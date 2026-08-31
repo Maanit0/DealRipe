@@ -1223,6 +1223,7 @@ async function buildDraftCard(args: {
   internetMessageId: string | null;
   meetingWhen: string | null;
   meetingTitle: string | null;
+  attachmentsToAdd: string[];
 }): Promise<{ html: string; text: string } | null> {
   const { readMessageStateByInternetId } = await import("./graph-mail");
   const { renderDraftCardBlock } = await import("./emails/draft-ready");
@@ -1246,6 +1247,7 @@ async function buildDraftCard(args: {
     to: args.to,
     draftSubject,
     body: args.body,
+    attachmentsToAdd: args.attachmentsToAdd,
     unaddressed: await unaddressedSpeakers(args.tenantId, args.dealId, args.callId),
     webLink: args.webLink,
   });
@@ -1516,6 +1518,7 @@ export async function autoDraftFollowUpForCall(args: {
       to: res.draft.to,
       generatedSubject: res.draft.subject,
       body: res.draft.body,
+      attachmentsToAdd: res.draft.attachmentsToAdd ?? [],
       webLink: res.webLink ?? null,
       internetMessageId: res.draftId ?? null,
       meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,

@@ -27,6 +27,14 @@ export type SendEmailArgs = {
   text: string;
   replyTo?: string;
   bcc?: string | string[];
+  /**
+   * Files to attach, base64 encoded.
+   *
+   * Added for the Monday pipeline review, which Mark asked for as a PDF
+   * alongside the digest. The report was only ever inline HTML, and an inline
+   * table 26 pages long is not something a CRO forwards or files.
+   */
+  attachments?: Array<{ filename: string; content: string }>;
 };
 
 export type SendEmailResult = { id: string };
@@ -68,6 +76,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
     text: args.text,
     ...(args.replyTo ? { reply_to: args.replyTo } : {}),
     ...(args.bcc ? { bcc: Array.isArray(args.bcc) ? args.bcc : [args.bcc] } : {}),
+    ...(args.attachments?.length ? { attachments: args.attachments } : {}),
   });
   if (res.error) {
     throw new Error(`Resend send failed: ${res.error.message}`);
