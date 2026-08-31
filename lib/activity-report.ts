@@ -1106,61 +1106,66 @@ export async function buildActivityReport(args: {
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
 <title>DealRipe pipeline review, week of ${when}</title>
 <style>
-  :root{--ink:#0F172A;--body:#1E293B;--sub:#3F4A5A;--line:#E2E8F0;--soft:#F1F5F9;
-        --bad:#B42318;--amber:#B54708;--warn:#A16207;--ok:#027A48}
+  /* NO CSS CUSTOM PROPERTIES ANYWHERE IN THIS FILE.
+     Gmail does not support them. Every colour here was var(--bad), var(--ink)
+     and so on, which resolve to nothing in Gmail, so Mark's email arrived
+     entirely colourless while the PDF looked right: Chrome supports them and
+     the PDF is rendered by Chrome. Designing in a browser and delivering to an
+     inbox is the same trap the grid layout fell into.
+     Literal hex only. If you add a colour, write the hex. */
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;background:#fff;color:var(--ink);
+  body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;background:#fff;color:#0F172A;
        padding:34px 30px;font-size:11pt;line-height:1.55;-webkit-font-smoothing:antialiased}
   .wrap{max-width:1240px;margin:0 auto}
 
-  .brand{font-size:10.5pt;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--ok)}
+  .brand{font-size:10.5pt;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#027A48}
   h1{font-size:27pt;font-weight:700;letter-spacing:-.02em;margin-top:8px;line-height:1.1}
-  .when{font-size:12.5pt;color:var(--sub);margin-top:6px}
-  .method{font-size:10pt;color:var(--sub);margin-top:10px;max-width:640px}
+  .when{font-size:12.5pt;color:#3F4A5A;margin-top:6px}
+  .method{font-size:10pt;color:#3F4A5A;margin-top:10px;max-width:640px}
 
   /* TABLES, NOT GRID. Gmail and Outlook do not support CSS grid: the five
      metric cells stacked into a ragged column in the inbox while looking correct
      in Chrome, which is the whole hazard of designing an email in a browser.
      Every multi-column block here is a real table now. */
-  .strip{width:100%;border-collapse:collapse;border-top:2px solid var(--ink);
-         border-bottom:1px solid var(--line);margin:26px 0 32px}
-  .strip td{padding:18px 20px 16px;border-right:1px solid var(--line);width:20%;vertical-align:top}
-  .cell{padding:18px 20px 16px;border-right:1px solid var(--line)}
+  .strip{width:100%;border-collapse:collapse;border-top:2px solid #0F172A;
+         border-bottom:1px solid #E2E8F0;margin:26px 0 32px}
+  .strip td{padding:18px 20px 16px;border-right:1px solid #E2E8F0;width:20%;vertical-align:top}
+  .cell{padding:18px 20px 16px;border-right:1px solid #E2E8F0}
   .cell:last-child,.strip td:last-child{border-right:0}
-  .ck{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
+  .ck{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3F4A5A}
   .cv{font-size:24pt;font-weight:750;letter-spacing:-.025em;margin-top:7px;line-height:1}
-  .cv.bad{color:var(--bad)} .cv.ok{color:var(--ok)} .cv.warn{color:var(--warn)} .cv.amber{color:var(--amber)}
-  .cs{font-size:9.5pt;color:var(--sub);margin-top:6px}
+  .cv.bad{color:#B42318} .cv.ok{color:#027A48} .cv.warn{color:#A16207} .cv.amber{color:#B54708}
+  .cs{font-size:9.5pt;color:#3F4A5A;margin-top:6px}
 
   h2{font-size:15pt;font-weight:700;letter-spacing:-.01em}
   .kn{margin-bottom:34px}
   .kn h2{margin-bottom:14px}
   .kn table{width:100%;border-collapse:collapse}
-  .krow td{padding:14px 0;border-top:1px solid var(--soft);vertical-align:top}
+  .krow td{padding:14px 0;border-top:1px solid #F1F5F9;vertical-align:top}
   .krow td.kd{width:24px}
-  .krow:last-child{border-bottom:1px solid var(--soft)}
+  .krow:last-child{border-bottom:1px solid #F1F5F9}
   .khead{font-size:12.5pt;font-weight:650;line-height:1.4}
-  .kwhy{font-size:10.5pt;color:var(--sub);margin-top:4px;line-height:1.5}
+  .kwhy{font-size:10.5pt;color:#3F4A5A;margin-top:4px;line-height:1.5}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-top:7px}
-  .dot.bad{background:var(--bad)} .dot.amber{background:var(--amber)} .dot.warn{background:var(--warn)} .dot.ok{background:var(--ok)}
+  .dot.bad{background:#B42318} .dot.amber{background:#B54708} .dot.warn{background:#A16207} .dot.ok{background:#027A48}
 
   .integ{width:100%;border-collapse:separate;border-spacing:20px 0;margin:0 -20px 38px}
   .integ td{width:50%;vertical-align:top}
-  .ibox{border:1px solid var(--line);border-radius:8px;padding:18px 22px}
+  .ibox{border:1px solid #E2E8F0;border-radius:8px;padding:18px 22px}
   .ibox.q{border-color:#FDA29B}
-  .il{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
+  .il{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3F4A5A}
   .iv{font-size:21pt;font-weight:750;letter-spacing:-.02em;margin-top:7px}
-  .iv.bad{color:var(--bad)}
-  .is{font-size:10pt;color:var(--sub);margin-top:7px;line-height:1.5}
+  .iv.bad{color:#B42318}
+  .is{font-size:10pt;color:#3F4A5A;margin-top:7px;line-height:1.5}
 
   .sec{margin-bottom:34px}
-  .sechd{border-bottom:2px solid var(--ink);padding-bottom:9px;break-after:avoid}
+  .sechd{border-bottom:2px solid #0F172A;padding-bottom:9px;break-after:avoid}
   .sechd h2{display:inline} .sechd .count{display:inline;margin-left:12px}
-  .sec.red .sechd{border-color:var(--bad)} .sec.amber .sechd{border-color:var(--amber)}
-  .sec.green .sechd{border-color:var(--ok)} .sec.grey .sechd{border-color:#98A2B3}
-  .count{font-size:10.5pt;color:var(--sub);font-weight:600}
-  .secsub{font-size:10pt;color:var(--sub);margin:9px 0 2px;max-width:820px}
-  .empty{font-size:10.5pt;color:var(--sub);font-style:italic;padding:12px 0}
+  .sec.red .sechd{border-color:#B42318} .sec.amber .sechd{border-color:#B54708}
+  .sec.green .sechd{border-color:#027A48} .sec.grey .sechd{border-color:#98A2B3}
+  .count{font-size:10.5pt;color:#3F4A5A;font-weight:600}
+  .secsub{font-size:10pt;color:#3F4A5A;margin:9px 0 2px;max-width:820px}
+  .empty{font-size:10.5pt;color:#3F4A5A;font-style:italic;padding:12px 0}
 
   /* COLUMN ISOLATION. The status pill carried white-space:nowrap inside a 10%
      column, so in the PDF "Never engaged" and "Active, not moving" ran straight
@@ -1169,33 +1174,33 @@ export async function buildActivityReport(args: {
      status column is wide enough to hold its longest label, and the pill is
      allowed to wrap rather than overflow. */
   table{width:100%;border-collapse:collapse;margin-top:6px;table-layout:fixed}
-  th{font-size:10pt;font-weight:700;letter-spacing:.01em;color:var(--ink);text-align:left;
-     padding:14px 14px 11px 0;border-bottom:1.5px solid var(--ink)}
+  th{font-size:10pt;font-weight:700;letter-spacing:.01em;color:#0F172A;text-align:left;
+     padding:14px 14px 11px 0;border-bottom:1.5px solid #0F172A}
   th.c1{width:16%} th.c2{width:12%} th.c3{width:24%} th.c4{width:12%} th.c5{width:24%} th.c6{width:12%}
-  td{padding:15px 14px 15px 0;font-size:10.5pt;vertical-align:top;color:var(--body);
-     border-bottom:1px solid var(--soft);border-right:1px solid var(--soft);
+  td{padding:15px 14px 15px 0;font-size:10.5pt;vertical-align:top;color:#1E293B;
+     border-bottom:1px solid #F1F5F9;border-right:1px solid #F1F5F9;
      overflow-wrap:break-word;word-break:normal;hyphens:auto;min-width:0;overflow:hidden}
   td.st,td.ns{padding-right:16px}
   td:last-child{border-right:0}
   tr{break-inside:avoid}
-  .acct b{font-size:12pt;font-weight:700;color:var(--ink);display:block;line-height:1.35}
-  .acct i,i.sub{display:block;font-style:normal;font-size:9.5pt;color:var(--sub);margin-top:6px;font-weight:400;line-height:1.55}
-  .chg{color:var(--ink)}
-  .read{color:var(--body)}
-  .act b{font-weight:700;color:var(--ink);font-size:10.5pt;display:block;line-height:1.4} .act b.hard{color:var(--bad)}
+  .acct b{font-size:12pt;font-weight:700;color:#0F172A;display:block;line-height:1.35}
+  .acct i,i.sub{display:block;font-style:normal;font-size:9.5pt;color:#3F4A5A;margin-top:6px;font-weight:400;line-height:1.55}
+  .chg{color:#0F172A}
+  .read{color:#1E293B}
+  .act b{font-weight:700;color:#0F172A;font-size:10.5pt;display:block;line-height:1.4} .act b.hard{color:#B42318}
   /* A pill wraps INSIDE itself before it ever leaves the cell. nowrap was the
      direct cause of the status text crossing into What changed in the PDF. */
   .pill{display:inline-flex;align-items:flex-start;gap:6px;font-size:9.5pt;font-weight:700;
-        max-width:100%;padding:4px 10px 4px 8px;border-radius:12px;border:1px solid var(--line);
+        max-width:100%;padding:4px 10px 4px 8px;border-radius:12px;border:1px solid #E2E8F0;
         background:#fff;line-height:1.35;overflow-wrap:break-word;text-align:left}
   .pill i{flex:0 0 auto;margin-top:5px}
   .none{color:#98A2B3;font-size:10.5pt}
   .pill i{width:7px;height:7px;border-radius:50%;background:#98A2B3;display:inline-block}
-  .pill.ok{color:var(--ok);border-color:#A6F4C5} .pill.ok i{background:var(--ok)}
-  .pill.warn{color:var(--warn);border-color:#FEDF89} .pill.warn i{background:var(--warn)}
-  .pill.amber{color:var(--amber);border-color:#FEC84B} .pill.amber i{background:var(--amber)}
-  .pill.bad{color:var(--bad);border-color:#FDA29B} .pill.bad i{background:var(--bad)}
-  .foot{font-size:9pt;color:var(--sub);margin-top:30px;line-height:1.7;border-top:1px solid var(--line);padding-top:14px}
+  .pill.ok{color:#027A48;border-color:#A6F4C5} .pill.ok i{background:#027A48}
+  .pill.warn{color:#A16207;border-color:#FEDF89} .pill.warn i{background:#A16207}
+  .pill.amber{color:#B54708;border-color:#FEC84B} .pill.amber i{background:#B54708}
+  .pill.bad{color:#B42318;border-color:#FDA29B} .pill.bad i{background:#B42318}
+  .foot{font-size:9pt;color:#3F4A5A;margin-top:30px;line-height:1.7;border-top:1px solid #E2E8F0;padding-top:14px}
   /* PRINT IS THE DELIVERABLE. Mark gets this as a PDF every Monday, so the page
      box is declared rather than inherited from whatever Chrome's default happens
      to be, and nothing here shrinks type to win a page break: more pages is the
