@@ -264,7 +264,24 @@ const PURPOSE: Array<[RegExp, string]> = [
   [/\b(technical|integration|api)\b/i, "Technical session"],
   [/\b(follow.?up|check.?in|touch.?base|catch.?up)\b/i, "Follow-up"],
   [/\b(review)\b/i, "Review"],
+  // Presentations and "software <company>" invites are how Magaya books a first
+  // product session, and the title carries the company rather than the purpose.
+  [/\b(presentation|present)\b/i, "Product demo"],
+  [/\bsoftware\b/i, "Product demo"],
+  [/\b(site visit|in.?person|office visit)\b/i, "Site visit"],
+  [/\b(nda|mnda)\b/i, "NDA review"],
+  [/\b(contract|signature|signing)\b/i, "Contract review"],
 ];
+
+/**
+ * Titles that are only a company or a person.
+ *
+ * "Caderco", "Polyonics, Inc", "Ati agencia de", "Call ecs australia" tell the
+ * rep nothing they cannot read off the deal name two columns to the left, and
+ * they were filling a narrow badge with a company name in place of a purpose.
+ * "Meeting" is a worse label and a better one: it says the only honest thing.
+ */
+const COMPANYISH = /^(call|meeting|reunion|sesion|session)?\s*[A-Z][\w'.,&-]*(\s+(inc|llc|ltd|sa|s\.a|corp|co|group|de|del|la|el|logistics|cargo|customs|international)\b.*)?$/i;
 
 function shortMeeting(title: string | null): string {
   let t = (title ?? "").trim();
@@ -280,11 +297,20 @@ function shortMeeting(title: string | null): string {
 
   for (const [re, label] of PURPOSE) if (re.test(t)) return label;
 
-  // No recognised kind. Three words at most, sentence case, so a company name
-  // cannot occupy four lines of a narrow badge.
-  const words = t.split(/\s+/).filter(Boolean).slice(0, 3);
+  // No recognised kind. If what is left is just a company or a person, say
+  // "Meeting": the deal name is already on the row and repeating it in a badge
+  // costs four lines and tells the rep nothing.
+  // A COMPANY NAME IS NOT A PURPOSE. Nothing above matched a sales-meeting kind,
+  // so whatever is left is the customer, the rep, or a place: "Ati agencia de",
+  // "Call ecs australia", "Polyonics, Inc". Matching company-name SHAPES was
+  // tried and is a losing game across four languages. Testing for the absence of
+  // a purpose word is the reliable direction, and "Meeting" is the honest label
+  // when we do not know: the deal name is already two columns to the left.
+  const words = t.split(/\s+/).filter(Boolean);
   if (words.length === 0) return "";
-  const short = words.join(" ");
+  const PURPOSEFUL = /\b(demo|discovery|intro|proposal|pricing|review|training|session|kickoff|onboarding|technical|visit|nda|contract|follow|check|scoping|walkthrough|questions|update|sync)\b/i;
+  if (!PURPOSEFUL.test(t)) return "Meeting";
+  const short = words.slice(0, 3).join(" ");
   return short.charAt(0).toUpperCase() + short.slice(1).toLowerCase();
 }
 
@@ -514,13 +540,29 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
   t = t.replace(/,?\s*(and\s+)?with\s+(a\s+)?close(\s+date)?\s+(of\s+)?[A-Z][a-z]{2}\.?\s*\d{1,2}(,?\s*\d{4})?/g, "");
   t = t.replace(/,?\s*(and\s+)?with\s+(a\s+)?close(\s+date)?\s+\d{1,2}\s+days?\s+out/gi, "");
 
+  // A READ THAT DENIES A BOOKED MEETING. The read is written when the evidence
+  // changes and the calendar moves afterwards, so Beyond Pegasus carried
+  // "Booked, Aug 31, Demo" beside "No demo booked yet", and Kronosww said the
+  // Aug 31 demo was still on the books next to a next step of None. The
+  // calendar is computed at render and wins.
+  if (r.deal.nextMeetingBooked) {
+    t = t.replace(/\s*[,;]?\s*(and\s+)?(no|nothing)\s+(demo|meeting|session|call|next step)\s+(is\s+)?(booked|scheduled|on the calendar)( yet)?/gi, "");
+    t = t.replace(/\s*[,;]?\s*(and\s+)?(no|nothing)\s+(is\s+)?(booked|scheduled)( yet)?/gi, "");
+  }
+
   // A silence count in prose next to a silence pill that computes its own.
   // The PRECEDING punctuation is consumed too. Without it, "sent since Aug 12;
   // no reply in 14 days" became "sent since Aug 12;, no reply since": the clause
   // went, the semicolon stayed, and a stray ";," shipped in three rows of a CRO's
   // report. Removing a clause means removing the join that attached it.
   if (r.activity.quietDays !== null) {
-    t = t.replace(/\s*[,;]?\s*(and\s+)?no\s+repl(y|ies)\s+in\s+\d+\s+days?/gi, ", no reply since");
+    // "no CUSTOMER reply in 13 days" was slipping past a pattern that expected
+    // "no reply" adjacent. IFF printed a 17d silent pill beside a read saying
+    // 13 days, which is the contradiction this rule exists to remove.
+    t = t.replace(
+      /\s*[,;]?\s*(and\s+)?no\s+(\w+\s+)?repl(y|ies)\s+(in|for)\s+\d+\s+days?/gi,
+      ", no reply since",
+    );
   }
 
   // A TRAILING ELLIPSIS FROM A READ WRITTEN BEFORE THE CLIP WAS FIXED.
@@ -543,6 +585,12 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
   // could have produced: doubled marks, a mark with a space before it, a
   // dangling one at the end.
   return t
+    // LEADING punctuation too. Every rule above removes a clause from wherever it
+    // sits, and when the clause was the START of the sentence the join it left
+    // behind lands at the front: IFF read ", no reply since; Commit looks
+    // aggressive". A sentence that opens with a comma is the same defect as one
+    // that closes with a semicolon, and both come from the same edits.
+    .replace(/^[\s,;:]+/, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/([,;:])\s*([,;:])+/g, "$1")
@@ -551,6 +599,9 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
     .replace(/[,;:\s]+$/, "")
     .trim()
     .replace(/([^.!?])$/, "$1.")
+    // Sentence case, because a clause promoted to the front of the sentence
+    // keeps the lower case it had in the middle of one.
+    .replace(/^([a-z])/, (m) => m.toUpperCase())
     || null;
 }
 
@@ -620,9 +671,11 @@ function coherentStatus(r: Row): StatusKey {
   // MOVING ON NOTHING. If the only support for Moving was a change, and the
   // read itself says nothing was confirmed, the deal is not moving. This is the
   // same class as the unverified-meeting fix and catches what survives it.
-  const readSaysNothing = /\b(no (confirmed|verified)|nothing (confirmed|captured)|could not be verified|no conversation|not been verified)\b/i.test(
-    r.read ?? "",
-  );
+  const readSaysNothing =
+    !String(r.read ?? "").trim() ||
+    /\b(no (confirmed|verified)|nothing (confirmed|captured)|could not be verified|no conversation|not been verified|zero (replies|back)|no repl)/i.test(
+      r.read ?? "",
+    );
   if (status === "moving" && cs !== "booked" && readSaysNothing) {
     status = r.engaged ? "active" : "never";
   }
@@ -654,6 +707,23 @@ function coherentRow(r: Row, now: number): RowView {
   return { status, ns, action, read: sane(dropRestatedFacts(r.read, r)) };
 }
 
+/**
+ * What to say when there is no read, without contradicting the rest of the row.
+ *
+ * "Nothing captured on this deal yet" was printed beside a booked first meeting,
+ * which reads as the report not having looked at its own next-step column. There
+ * IS something captured in that case: a meeting the customer accepted.
+ */
+function emptyRead(r: Row): string {
+  if (r.deal.nextMeetingBooked) {
+    return r.engaged
+      ? "Next meeting is booked; no new buying signal since."
+      : "First meeting is booked; no customer engagement captured yet.";
+  }
+  if (r.engaged) return "No new customer activity captured.";
+  return "Nothing captured on this deal yet.";
+}
+
 function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
   const { status, ns, action, read } = coherentRow(r, now);
   const silentDays = r.activity.quietDays;
@@ -671,7 +741,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
     <td class="chg">${changed ? esc(changed) : `<span class="none">No change</span>`}</td>
     <td class="ns">${pill(ns.label, ns.tone)}${ns.detail ? `<i class="sub">${esc(ns.detail)}</i>` : ""}</td>
     <td class="read">${
-      read ? esc(read) : `<i class="sub">Nothing captured on this deal yet.</i>`
+      read ? esc(read) : `<i class="sub">${esc(emptyRead(r))}</i>`
     }</td>
     <td class="act">${action ? `<b class="${action.hard ? "hard" : ""}">${esc(action.text)}</b>` : `<i class="sub">No action</i>`}</td>
   </tr>`;
@@ -987,7 +1057,16 @@ export async function buildActivityReport(args: {
               ? `no-showed and has not rebooked`
               : r.deal.closeDate && Date.parse(r.deal.closeDate) - now < 14 * 86_400_000
                 ? `closes soon and is not ready`
-                : `needs a look`;
+                // NEVER "needs a look". It is the sentence a report writes when
+                // it has not worked out what is wrong, and it costs a CRO the
+                // one line he reads to decide whether to open the row. Every
+                // branch below names the actual problem, and the last resort
+                // states the specific gap rather than asking him to find it.
+                : commitmentState(r) === "none"
+                  ? `no next step booked`
+                  : r.deal.flags.some((f) => f.kind === "dark_buyer")
+                    ? `no economic buyer on any call`
+                    : `${band} with nothing booked and no reply`;
       // Sales shorthand, not fragments. "overdue, 13d" reads as a stray field;
       // "13d overdue" is how a person says it.
       const facts: string[] = [];
