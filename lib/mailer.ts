@@ -35,6 +35,16 @@ export type SendEmailArgs = {
    * table 26 pages long is not something a CRO forwards or files.
    */
   attachments?: Array<{ filename: string; content: string }>;
+  /**
+   * ISO instant to send at, instead of now. Resend holds it and delivers then.
+   *
+   * Added so the Monday pipeline review can be prepared the night before and
+   * land at a sensible hour. It is NOT a substitute for the cron: the cron sends
+   * without anyone awake, this just moves one prepared send. Resend caps how far
+   * ahead it will hold a message, so a date weeks out is rejected by them rather
+   * than silently dropped.
+   */
+  scheduledAt?: string;
 };
 
 export type SendEmailResult = { id: string };
@@ -77,6 +87,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
     ...(args.replyTo ? { reply_to: args.replyTo } : {}),
     ...(args.bcc ? { bcc: Array.isArray(args.bcc) ? args.bcc : [args.bcc] } : {}),
     ...(args.attachments?.length ? { attachments: args.attachments } : {}),
+    ...(args.scheduledAt ? { scheduledAt: args.scheduledAt } : {}),
   });
   if (res.error) {
     throw new Error(`Resend send failed: ${res.error.message}`);

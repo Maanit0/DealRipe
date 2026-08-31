@@ -12,6 +12,7 @@
  *
  *   npx tsx scripts/test-send-report.ts --to you@example.com
  *   npx tsx scripts/test-send-report.ts --to mark@... --bcc you@... --live
+ *   npx tsx scripts/test-send-report.ts --to mark@... --bcc you@... --live --at 06:05
  */
 
 import { config } from "dotenv";
@@ -63,12 +64,39 @@ async function main(): Promise<void> {
 
   const bcc = list(arg("--bcc"));
   const live = process.argv.includes("--live");
+
+  // --at 06:05 schedules for the NEXT occurrence of that Central time, so the
+  // report can be built tonight and land in the morning. Central because that is
+  // where Magaya works and where the digest is timed; see lib/graph-time.ts for
+  // why no time here is ever left to the sender's own locale.
+  const at = arg("--at");
+  let scheduledAt: string | undefined;
+  if (at) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(at.trim());
+    if (!m) {
+      console.error(`\n  --at must look like 06:05 (Central). Got "${at}".\n`);
+      process.exit(1);
+    }
+    const [, hh, mm] = m;
+    // Build the instant by asking what UTC offset Central is on right now, so
+    // this stays correct across the November DST change rather than assuming -5.
+    const probe = new Date();
+    const offsetMin =
+      (Date.parse(`${probe.toLocaleString("sv-SE", { timeZone: "America/Chicago" })}Z`) - probe.setMilliseconds(0)) /
+      60000;
+    const target = new Date();
+    target.setUTCHours(Number(hh) - offsetMin / 60, Number(mm), 0, 0);
+    if (target.getTime() <= Date.now()) target.setUTCDate(target.getUTCDate() + 1);
+    scheduledAt = target.toISOString();
+    console.log(`  Scheduled for ${target.toLocaleString("en-US", { timeZone: "America/Chicago" })} Central.`);
+  }
   const res = await sendEmail({
     to: [to],
     ...(bcc.length > 0 ? { bcc } : {}),
     // --live drops the [TEST] prefix. Off by default so a rehearsal send can
     // never be mistaken for the real Monday report by whoever receives it.
     subject: live ? report.subject : `[TEST] ${report.subject}`,
+    ...(scheduledAt ? { scheduledAt } : {}),
     html: report.html,
     text: `${report.subject}. ${report.counts.silent} gone silent, ${report.counts.moving} moving. The PDF is attached.`,
     attachments: [{ filename: "DealRipe-pipeline-review.pdf", content: pdf.toString("base64") }],
