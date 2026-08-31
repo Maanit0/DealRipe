@@ -31,6 +31,16 @@ export type CollateralBundle = {
   links: Array<{ title: string; url: string }>;
   /** Named in attachmentsToAdd for the rep to attach before sending. */
   attachments: string[];
+  /**
+   * The real files, in assets/collateral, attached to the draft.
+   *
+   * Recovered from Juan's own sent mail rather than asked for, so these are the
+   * exact PDFs his customers already receive and not a copy that has drifted.
+   * His own sending is what decided which bundle is which: Magaya Supply Chain
+   * Data Sheet 23 times against Magaya Rates Solution Sheet once, which is the
+   * 95/5 split he described.
+   */
+  files: string[];
 };
 
 export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
@@ -41,6 +51,7 @@ export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
       "the customer's interest is RATE MANAGEMENT: quoting, client rate sheets, tariffs, buy and sell rates, margin on a quote, or producing rates in a particular format for their own customers",
     links: [{ title: "Rate management video tour", url: "https://www.youtube.com/watch?v=_WWi6Z5IoKU" }],
     attachments: ["Rate management datasheet"],
+    files: ["Magaya-Rates-Solution-Sheet-02192024-1-.pdf"],
   },
   {
     key: "supply_chain_ops",
@@ -59,6 +70,7 @@ export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
       },
     ],
     attachments: ["Magaya datasheet", "Product overview"],
+    files: ["Magaya-Supply-Chain-Data-Sheet.pdf"],
   },
 ];
 
@@ -89,4 +101,18 @@ RULES FOR COLLATERAL, and the default is to send none:
 - Write the links into the body EXACTLY as given, each on its own line with its title, the way the rep already writes them. Never invent a URL, never shorten one, never describe a video that has no link here.
 - Name the attachments in attachmentsToAdd, never in the body as "please find attached": nothing is attached when the rep opens the draft.
 - An MNDA is NOT in this list and is not yours to promise. The rep sends it through AdobeSign by hand, and saying it has been sent when it has not is a false statement to a customer.`;
+}
+
+
+/** The bundle whose named attachments the model asked for, or null. */
+export function bundleForNamedAttachments(named: ReadonlyArray<string>): CollateralBundle | null {
+  const hay = named.join(" ").toLowerCase();
+  if (!hay.trim()) return null;
+  // Rate first: "rate management datasheet" contains "datasheet" and would match
+  // the supply chain bundle on the looser word.
+  if (/\brate/.test(hay)) return COLLATERAL.find((b) => b.key === "rate_management") ?? null;
+  if (/data ?sheet|datasheet|overview|supply chain/.test(hay)) {
+    return COLLATERAL.find((b) => b.key === "supply_chain_ops") ?? null;
+  }
+  return null;
 }

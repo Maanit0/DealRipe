@@ -90,6 +90,8 @@ export type DraftReadyInput = {
    * on the call.
    */
   attachmentsToAdd?: string[];
+  /** Files already ON the draft. The rep does nothing about these. */
+  attachedFiles?: string[];
   /** Opens the draft in the rep's mail client. */
   webLink?: string | null;
 };
@@ -156,6 +158,11 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
           : ""
       }
       ${
+        (input.attachedFiles ?? []).length > 0
+          ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;"><b>Attached:</b> ${esc((input.attachedFiles ?? []).join(", "))}</div>`
+          : ""
+      }
+      ${
         (input.attachmentsToAdd ?? []).length > 0
           ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;"><b>Attach before sending:</b> ${esc((input.attachmentsToAdd ?? []).join(", "))}. Nothing is attached yet.</div>`
           : ""
@@ -174,6 +181,7 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
   const text = [
     `Subject: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
+    (input.attachedFiles ?? []).length > 0 ? `Attached: ${(input.attachedFiles ?? []).join(", ")}` : null,
     (input.attachmentsToAdd ?? []).length > 0
       ? `Attach before sending: ${(input.attachmentsToAdd ?? []).join(", ")}. Nothing is attached yet.`
       : null,

@@ -26,7 +26,7 @@
 
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
-import { collateralPromptBlock } from "./magaya-collateral";
+import { bundleForNamedAttachments, collateralPromptBlock } from "./magaya-collateral";
 import { applyMagayaTerms, MAGAYA_GLOSSARY } from "./magaya-terms";
 import { repName } from "./display-names";
 import { listMeetingsBetween } from "./microsoft-graph";
@@ -1020,6 +1020,14 @@ export async function createFollowUpDraft(
   draft: FollowUpDraft | null;
   webLink?: string | null;
   /**
+   * Graph's own message id, valid only while the message is still a draft.
+   *
+   * Kept separate from draftId, which is the RFC 5322 id that survives the send.
+   * Attaching a file addresses the draft where it is right now, so it needs
+   * this one; recognising the message later needs the other.
+   */
+  graphId?: string | null;
+  /**
    * The draft's RFC 5322 Message-ID, which SURVIVES being sent.
    *
    * Returned so the caller can persist it. Without it there is no way to join a
@@ -1051,7 +1059,7 @@ export async function createFollowUpDraft(
   if (!draft.replyToMessageId) {
     try {
       const res = await fresh();
-      return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId };
+      return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId, graphId: res.id };
     } catch (e) {
       return { created: false, draft, reason: e instanceof Error ? e.message : String(e) };
     }
@@ -1079,7 +1087,7 @@ export async function createFollowUpDraft(
       // which is right when we could not establish who the customer was.
       toRecipients: draft.to,
     });
-    return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId };
+    return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId, graphId: res.id };
   } catch (replyErr) {
     const msg = replyErr instanceof Error ? replyErr.message : String(replyErr);
     console.warn(
@@ -1087,7 +1095,7 @@ export async function createFollowUpDraft(
     );
     try {
       const res = await fresh();
-      return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId };
+      return { created: true, draft, webLink: res.webLink, draftId: res.internetMessageId, graphId: res.id };
     } catch (e) {
       return {
         created: false,
@@ -1224,6 +1232,7 @@ async function buildDraftCard(args: {
   meetingWhen: string | null;
   meetingTitle: string | null;
   attachmentsToAdd: string[];
+  attachedFiles: string[];
 }): Promise<{ html: string; text: string } | null> {
   const { readMessageStateByInternetId } = await import("./graph-mail");
   const { renderDraftCardBlock } = await import("./emails/draft-ready");
@@ -1248,6 +1257,7 @@ async function buildDraftCard(args: {
     draftSubject,
     body: args.body,
     attachmentsToAdd: args.attachmentsToAdd,
+    attachedFiles: args.attachedFiles,
     unaddressed: await unaddressedSpeakers(args.tenantId, args.dealId, args.callId),
     webLink: args.webLink,
   });
@@ -1490,6 +1500,45 @@ export async function autoDraftFollowUpForCall(args: {
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
 
+  // ATTACH THE FILE THE REP PROMISED, so the draft opens with it on.
+  //
+  // Naming the datasheet in the card was the honest half-measure while we had no
+  // file. Both PDFs now sit in assets/collateral, recovered from Juan's own sent
+  // mail, so the draft carries the exact file his customers already receive.
+  //
+  // Best effort, and deliberately so: the draft is written and in the mailbox by
+  // this point, and a failed attachment must not undo it. It downgrades to the
+  // card's "attach before sending" line, which is exactly where this was
+  // yesterday. Whether it succeeded decides what that line says, so the rep is
+  // never told a file is attached when it is not.
+  const attached: string[] = [];
+  const bundle = bundleForNamedAttachments(res.draft.attachmentsToAdd ?? []);
+  if (bundle && res.draftId) {
+    const { attachFileToDraft } = await import("./graph-mail");
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    for (const file of bundle.files) {
+      try {
+        const bytes = await readFile(join(process.cwd(), "assets", "collateral", file));
+        await attachFileToDraft({
+          tenantIdOrDomain: GRAPH_TENANT,
+          mailbox,
+          draftId: res.graphId ?? "",
+          filename: file,
+          contentType: "application/pdf",
+          bytes,
+        });
+        attached.push(file);
+      } catch (err) {
+        console.warn(
+          `[followup-draft] could not attach ${file} for ${args.account}, the rep will be asked to attach it: ${
+            err instanceof Error ? err.message : err
+          }`,
+        );
+      }
+    }
+  }
+
   // THE CARD FOR THE TOP OF THE RECAP, built here and returned rather than
   // emailed separately.
   //
@@ -1518,7 +1567,9 @@ export async function autoDraftFollowUpForCall(args: {
       to: res.draft.to,
       generatedSubject: res.draft.subject,
       body: res.draft.body,
-      attachmentsToAdd: res.draft.attachmentsToAdd ?? [],
+      // Only what the rep still has to do. A file we attached is not a chore.
+      attachmentsToAdd: (res.draft.attachmentsToAdd ?? []).filter(() => attached.length === 0),
+      attachedFiles: attached,
       webLink: res.webLink ?? null,
       internetMessageId: res.draftId ?? null,
       meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,

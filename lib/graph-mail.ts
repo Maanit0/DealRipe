@@ -644,6 +644,96 @@ export async function readAttachment(args: {
   return { name: String(j.name ?? ""), contentType: String(j.contentType ?? ""), contentBytes: String(j.contentBytes) };
 }
 
+/**
+ * Put a real file on a draft, so the rep opens it already attached.
+ *
+ * Juan promises a datasheet on almost every discovery call and then attaches it
+ * by hand. Naming it in the card was the honest half-measure while we had no
+ * file; the PDFs now sit in assets/collateral, pulled from his own sent mail, so
+ * the draft can carry them.
+ *
+ * fileAttachment, not a reference: a link to a file the customer cannot open is
+ * worse than no attachment. Graph caps a simple upload at about 3MB and both
+ * datasheets are well under, so no upload session is needed and none is built,
+ * because an untested code path for a case that does not occur is a liability
+ * rather than coverage. A file over the cap is refused loudly instead.
+ *
+ * Throws on failure. The caller decides what a failed attachment costs, and for
+ * a follow-up draft the answer is nothing: the draft is already written and a
+ * missing file is a line in the card, not a lost email.
+ */
+/**
+ * Delete a DRAFT from a mailbox.
+ *
+ * Narrow on purpose. Nothing here should ever delete a rep's real mail, so this
+ * refuses anything that is not currently a draft: the id is read back first and
+ * a message that has been sent, or that Graph no longer has, is left alone.
+ *
+ * Written because a self-test of the attachment path left a draft in Juan's
+ * mailbox, and debris in a customer's rep's inbox is not something to leave for
+ * them to find.
+ */
+export async function deleteDraft(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  draftId: string;
+}): Promise<"deleted" | "not_a_draft" | "gone"> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const base = `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.draftId)}`;
+
+  const check = await fetch(`${base}?$select=id,isDraft`, { headers: { authorization: `Bearer ${token}` } });
+  if (check.status === 404) return "gone";
+  if (!check.ok) throw new GraphMailError(check.status, `read before delete: ${(await check.text()).slice(0, 200)}`);
+  const j = (await check.json()) as { isDraft?: boolean };
+  if (j.isDraft !== true) return "not_a_draft";
+
+  const res = await fetch(base, { method: "DELETE", headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok && res.status !== 404) {
+    throw new GraphMailError(res.status, `delete draft: ${(await res.text()).slice(0, 200)}`);
+  }
+  return "deleted";
+}
+
+export async function attachFileToDraft(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  /** The Graph message id from createDraft, valid while it is still a draft. */
+  draftId: string;
+  filename: string;
+  contentType: string;
+  /** Raw bytes. Base64 encoding happens here so callers do not each do it. */
+  bytes: Buffer;
+}): Promise<void> {
+  assertMailboxAllowed(args.mailbox);
+  const MAX = 3_000_000;
+  if (args.bytes.length > MAX) {
+    throw new GraphMailError(
+      413,
+      `${args.filename} is ${Math.round(args.bytes.length / 1024)}KB, over the ${MAX / 1_000_000}MB simple-upload limit`,
+    );
+  }
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const res = await fetch(
+    `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.draftId)}/attachments`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: args.filename,
+        contentType: args.contentType,
+        contentBytes: args.bytes.toString("base64"),
+      }),
+    },
+  );
+  if (!res.ok) {
+    throw new GraphMailError(res.status, `attach ${args.filename} to ${args.mailbox}: ${(await res.text()).slice(0, 300)}`);
+  }
+}
+
 export async function createDraft(args: {
   tenantIdOrDomain: string;
   /** The rep's mailbox (userPrincipalName), e.g. jlopez@magaya.com. */
