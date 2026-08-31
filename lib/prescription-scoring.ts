@@ -67,6 +67,30 @@ export const OUTCOME_REFRESH_DAYS = 21;
  * this window an unbooked next meeting is not yet a fact about the rep.
  */
 export const OUTCOME_SETTLE_DAYS = 3;
+/**
+ * How long a commitment's email channel stays OPEN before an empty mailbox is
+ * accepted as a real negative.
+ *
+ * THE EVIDENCE WINDOW HAS TO COVER THE CLAIM WINDOW. A commitment says "Nick
+ * sends the services list by Friday August 28, Magaya sends the revised
+ * proposal by Wednesday September 2". The email pass runs when the call is
+ * scored, minutes to hours after the call, reads the mailbox from the call time
+ * forward, finds nothing because nothing has been sent yet, and stamps
+ * email_checked_at. The stamp is what makes it permanent: the row is excluded
+ * from every later run, so a commitment fulfilled on the due date is recorded
+ * forever as one the rep ignored.
+ *
+ * Medovlog is the case that found this. Its 08-27 commitment scored 'no'; the
+ * deal closed WON on 08-28 with "Completed: You're copied on 'Magaya Quote
+ * Agreement - Medov'" sitting in the deal's own mail. Across the book, 67 of the
+ * 75 email-checked commitments carry a 'no' decided this way.
+ *
+ * Seven days rather than a parsed due date. Commitments name their dates in
+ * prose ("by Friday", "end of next week", "before the board meets") and a parser
+ * that gets one wrong settles a row early, which is the failure being fixed.
+ * A fixed window cannot be wrong about what it covers.
+ */
+export const COMMITMENT_SETTLE_DAYS = 7;
 
 // =====================================================================
 // Transcript, three ways
@@ -500,11 +524,15 @@ async function runEmailPass(args: {
   mail: PostCallMailRead;
   account: string;
   callId: string;
+  /** The call's own timestamp, which is where the evidence window starts. */
+  callAt: string;
   dryRun: boolean;
   counts: ScoringCounts;
   emit: (d: ScoringDecision) => void;
 }): Promise<void> {
-  const { db, rows, mail, account, callId, dryRun, counts, emit } = args;
+  const { db, rows, mail, account, callId, callAt, dryRun, counts, emit } = args;
+  const daysSinceCall = Math.floor((Date.now() - Date.parse(callAt)) / 86_400_000);
+  const settled = Number.isFinite(daysSinceCall) && daysSinceCall >= COMMITMENT_SETTLE_DAYS;
 
   if (mail.status !== "read") {
     // Not checked, and deliberately not stamped.
@@ -545,8 +573,16 @@ async function runEmailPass(args: {
       continue;
     }
     if (result.status === "no_mail") {
-      // The mailbox WAS read and holds nothing to the customer. That is a real
-      // negative, so the marker is stamped: there is nothing to retry.
+      // An empty mailbox is only a real negative once the commitment has had
+      // time to be kept. Inside the settle window it means "not yet", so the
+      // marker is NOT stamped and the row comes back on the next run. Stamping
+      // here is what froze 67 rows at 'no' on evidence that had not happened.
+      if (!settled) {
+        counts.commitmentsNotYetDue += 1;
+        emit({ kind: "email-not-yet-due", callId, account, text: row.text, daysSinceCall });
+        continue;
+      }
+      // Past the window: read, empty, and now old enough to mean it.
       if (!dryRun) {
         await db
           .from("prescribed_actions")
@@ -568,7 +604,12 @@ async function runEmailPass(args: {
                 followed_evidence: `[email] ${result.evidence}`,
                 email_checked_at: new Date().toISOString(),
               }
-            : { email_checked_at: new Date().toISOString() },
+            : // Same rule as the no_mail branch: mail exists but does not
+              // contain the commitment, which inside the settle window is still
+              // "not yet" rather than "never". Leave it open.
+              settled
+              ? { email_checked_at: new Date().toISOString() }
+              : {},
         )
         .eq("id", row.id);
       if (upd.error) {
@@ -608,6 +649,8 @@ export type ScoringDecision =
   | { kind: "email-secured"; callId: string; account: string; text: string; evidence: string }
   /** The mailbox could not be read, so the email channel was not checked. */
   | { kind: "email-unchecked"; callId: string; account: string; rows: number; detail: string }
+  /** Read, empty, and too soon for that to mean anything. Left open. */
+  | { kind: "email-not-yet-due"; callId: string; account: string; text: string; daysSinceCall: number }
   | { kind: "skip"; callId: string; account: string; reason: string }
   | { kind: "error"; callId: string; account: string; message: string };
 
@@ -627,6 +670,8 @@ export type ScoringCounts = {
   commitmentsSecuredByEmail: number;
   /** End commitments whose email channel could not be checked. Retryable. */
   commitmentsEmailUnchecked: number;
+  /** End commitments still inside their settle window, deliberately not decided. */
+  commitmentsNotYetDue: number;
   errors: number;
 };
 
@@ -691,6 +736,7 @@ export async function runPrescriptionScoring(
     quotesDiscarded: 0,
     commitmentsSecuredByEmail: 0,
     commitmentsEmailUnchecked: 0,
+    commitmentsNotYetDue: 0,
     errors: 0,
   };
   const emit = opts.onDecision ?? (() => {});
@@ -955,6 +1001,7 @@ export async function runPrescriptionScoring(
             mail: outcomes.mail,
             account,
             callId,
+            callAt: at,
             dryRun: opts.dryRun === true,
             counts,
             emit,

@@ -82,6 +82,14 @@ async function main(): Promise<void> {
         );
       } else if (d.kind === "outcomes-only") {
         console.log(`  outcomes  ${d.account.padEnd(24)} ${d.detail}`);
+      } else if (d.kind === "email-not-yet-due") {
+        // Printed, not silent. A row left open on purpose looks exactly like a
+        // row that was skipped by accident unless the run says which.
+        console.log(
+          `  not-yet   ${d.account.padEnd(24)} ${d.daysSinceCall}d since call, commitment still open: ${d.text.slice(0, 60)}`,
+        );
+      } else if (d.kind === "email-secured") {
+        console.log(`  by-email  ${d.account.padEnd(24)} ${d.text.slice(0, 60)}`);
       } else if (d.kind === "error") {
         console.log(`  ERROR     ${d.account.padEnd(24)} ${d.message}`);
       }
