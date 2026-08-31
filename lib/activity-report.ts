@@ -515,8 +515,12 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
   t = t.replace(/,?\s*(and\s+)?with\s+(a\s+)?close(\s+date)?\s+\d{1,2}\s+days?\s+out/gi, "");
 
   // A silence count in prose next to a silence pill that computes its own.
+  // The PRECEDING punctuation is consumed too. Without it, "sent since Aug 12;
+  // no reply in 14 days" became "sent since Aug 12;, no reply since": the clause
+  // went, the semicolon stayed, and a stray ";," shipped in three rows of a CRO's
+  // report. Removing a clause means removing the join that attached it.
   if (r.activity.quietDays !== null) {
-    t = t.replace(/,?\s*(and\s+)?no\s+repl(y|ies)\s+in\s+\d+\s+days?/gi, ", no reply since");
+    t = t.replace(/\s*[,;]?\s*(and\s+)?no\s+repl(y|ies)\s+in\s+\d+\s+days?/gi, ", no reply since");
   }
 
   // A TRAILING ELLIPSIS FROM A READ WRITTEN BEFORE THE CLIP WAS FIXED.
@@ -533,11 +537,18 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
     t = (stop > body.length * 0.45 ? body.slice(0, stop) : body).replace(/[,;:\s]+$/, "");
   }
 
+  // PUNCTUATION IS REPAIRED, NOT ASSUMED. Every edit above removes a clause from
+  // the middle of a sentence someone else assembled, and each removal can leave
+  // a join behind. These run last, in order, and collapse anything the edits
+  // could have produced: doubled marks, a mark with a space before it, a
+  // dangling one at the end.
   return t
     .replace(/\s{2,}/g, " ")
-    .replace(/\s+([,.;])/g, "$1")
-    .replace(/[,;\s]+$/, "")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/([,;:])\s*([,;:])+/g, "$1")
     .replace(/,\s*\./g, ".")
+    .replace(/\.{2,}/g, ".")
+    .replace(/[,;:\s]+$/, "")
     .trim()
     .replace(/([^.!?])$/, "$1.")
     || null;
@@ -574,10 +585,77 @@ function dealMeta(r: Row): string {
   return bits.map(esc).join(" &middot; ");
 }
 
-function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
-  const status = statusOf(r);
+/**
+ * Does this row tell one story? If not, repair the field that is wrong.
+ *
+ * THE DEAL IS NEVER DROPPED. A pipeline review that hides a real deal because
+ * DealRipe could not make its own five fields agree is worse than one that shows
+ * a rough row: the deal still exists, the leader still has to run it, and the
+ * only thing hiding it achieves is that nobody looks at it. So every check here
+ * FIXES a field and returns the row.
+ *
+ * Order matters. Status is repaired first because Next step and Action are both
+ * derived from it, so fixing status can dissolve the other two contradictions
+ * without touching them.
+ */
+type RowView = { status: StatusKey; ns: ReturnType<typeof nextStep>; action: ReturnType<typeof actionOf>; read: string | null };
+
+/**
+ * The status after repair. THE ONE that sections and rows both use.
+ *
+ * Kept separate from coherentRow because the report filters deals into sections
+ * before it renders any of them, and if the two disagreed a deal would sit under
+ * a "Gone silent" heading wearing a "Moving" pill. That is a worse contradiction
+ * than the one the repair exists to fix.
+ */
+function coherentStatus(r: Row): StatusKey {
+  let status = statusOf(r);
+  const cs = commitmentState(r);
+
+  // GONE SILENT WITH A MEETING ON THE CALENDAR IS NOT SILENT. Silence means
+  // nothing is coming; a booked meeting is something coming. The customer
+  // accepting an invite IS an interaction, whatever the mailbox says.
+  if (status === "silent" && cs === "booked") status = "moving";
+
+  // MOVING ON NOTHING. If the only support for Moving was a change, and the
+  // read itself says nothing was confirmed, the deal is not moving. This is the
+  // same class as the unverified-meeting fix and catches what survives it.
+  const readSaysNothing = /\b(no (confirmed|verified)|nothing (confirmed|captured)|could not be verified|no conversation|not been verified)\b/i.test(
+    r.read ?? "",
+  );
+  if (status === "moving" && cs !== "booked" && readSaysNothing) {
+    status = r.engaged ? "active" : "never";
+  }
+
+  // NEVER ENGAGED CANNOT HAVE A CUSTOMER COMMITMENT. If the evidence names one,
+  // the engagement flag is the thing that is wrong.
+  if (status === "never" && /\b(agreed to|signed|accepted|confirmed|committed)\b/i.test(`${r.headline ?? ""}`)) {
+    status = cs === "booked" ? "moving" : "active";
+  }
+
+  return status;
+}
+
+function coherentRow(r: Row, now: number): RowView {
+  const status = coherentStatus(r);
+  const cs = commitmentState(r);
   const ns = nextStep(r);
-  const action = actionOf(r, status);
+  let action = actionOf(r, status);
+
+  // ACTION MAY NOT ARGUE WITH NEXT STEP. actionOf already checks this, and this
+  // is the backstop for a status that changed underneath it a moment ago.
+  if (action && cs === "booked" && /never booked|get the next meeting/i.test(action.text)) {
+    action = status === "stalled" ? { text: "Make sure this one holds", hard: false } : null;
+  }
+  if (action && cs === "waiting_customer" && /get the next meeting/i.test(action.text)) {
+    action = { text: "Waiting on customer", hard: false };
+  }
+
+  return { status, ns, action, read: sane(dropRestatedFacts(r.read, r)) };
+}
+
+function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
+  const { status, ns, action, read } = coherentRow(r, now);
   const silentDays = r.activity.quietDays;
   const changed = sane(r.headline);
 
@@ -593,7 +671,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
     <td class="chg">${changed ? esc(changed) : `<span class="none">No change</span>`}</td>
     <td class="ns">${pill(ns.label, ns.tone)}${ns.detail ? `<i class="sub">${esc(ns.detail)}</i>` : ""}</td>
     <td class="read">${
-      sane(dropRestatedFacts(r.read, r)) ? esc(sane(dropRestatedFacts(r.read, r)) as string) : `<i class="sub">Nothing captured on this deal yet.</i>`
+      read ? esc(read) : `<i class="sub">Nothing captured on this deal yet.</i>`
     }</td>
     <td class="act">${action ? `<b class="${action.hard ? "hard" : ""}">${esc(action.text)}</b>` : `<i class="sub">No action</i>`}</td>
   </tr>`;
@@ -716,6 +794,22 @@ export async function buildActivityReport(args: {
     if (d.isRenewal && !d.inRolldog) return false;
     return true;
   });
+
+  // ONBOARDING IS NOT PIPELINE, and it is identifiable from what is on the
+  // calendar rather than from a guess about the account.
+  //
+  // EWI carried three onboarding sessions in seven days, a close date two months
+  // past, and a stage of SQL0, and sat in a pipeline review as though someone
+  // still had to sell it. A deal being implemented has already been won; putting
+  // it in front of a CRO as open pipeline overstates the number and wastes the
+  // one section of the report he reads first.
+  //
+  // Deliberately narrow. It fires on the MEETING TITLE, which the customer and
+  // the rep agreed between them, not on an inference about the account, and it
+  // is reported by name at the end of the run so a wrong exclusion is visible
+  // rather than silent. The rule is never to hide a real deal, so anything this
+  // removes has to be checkable.
+  const POST_SALE = /\b(onboarding|implementation kickoff|kick.?off call|go.?live|training session)\b/i;
   const deals = args.limit ? allDeals.slice(0, args.limit) : allDeals;
   const capped = deals.length < allDeals.length ? allDeals.length : 0;
 
@@ -738,7 +832,7 @@ export async function buildActivityReport(args: {
   const contactByDeal = await contactHistory(tenantId, dealIds);
   const capturedDeals = await capturedCallDeals(tenantId, dealIds);
 
-  const rows: Row[] = deals.map((deal) => ({
+  let rows: Row[] = deals.map((deal) => ({
     deal,
     next: nextByDeal.get(deal.dealId),
     agreedAt: agreedAtByDeal.get(deal.dealId),
@@ -822,7 +916,23 @@ export async function buildActivityReport(args: {
     return c(a) - c(b);
   });
 
-  const of = (k: StatusKey) => rows.filter((r) => statusOf(r) === k);
+  // Applied HERE rather than at the deal query, because the signal is the
+  // meeting title and next-meeting data is only assembled by this point.
+  const postSale = rows.filter((r) => {
+    const titles = [r.next?.title ?? "", r.headline ?? ""].join(" ");
+    return POST_SALE.test(titles);
+  });
+  if (postSale.length > 0) {
+    console.log(
+      `[activity-report] excluded ${postSale.length} post-sale record(s) from the pipeline review: ${postSale
+        .map((r) => `${r.deal.account} ("${(r.next?.title ?? r.headline ?? "").slice(0, 48)}")`)
+        .join("; ")}`,
+    );
+  }
+  const excluded = new Set(postSale.map((r) => r.deal.dealId));
+  rows = rows.filter((r) => !excluded.has(r.deal.dealId));
+
+  const of = (k: StatusKey) => rows.filter((r) => coherentStatus(r) === k);
   const silent = of("silent").sort(bySilence);
   const stalled = of("stalled").sort(byOverdue);
   const notMoving = of("active").sort(byClose);
@@ -838,7 +948,7 @@ export async function buildActivityReport(args: {
   // customer is actively buying is not a forecast risk, which is why buying
   // behaviour decides and field completeness does not.
   const atRisk = forecasted.filter((r) => {
-    const st = statusOf(r);
+    const st = coherentStatus(r);
     if (st === "silent" || st === "stalled" || st === "never") return true;
     // A deal that is MOVING is not at risk because a field is blank. Integrity
     // Customs had the proposal accepted, the signature agreed and a named
@@ -860,7 +970,7 @@ export async function buildActivityReport(args: {
     .sort(byValue)
     .slice(0, 5)
     .map((r) => {
-      const st = statusOf(r);
+      const st = coherentStatus(r);
       const ns = nextStep(r);
       const money = money1(r.deal.dealSizeAnnual);
       const band = r.deal.forecastCategory ?? "";
@@ -1082,7 +1192,7 @@ export async function buildActivityReport(args: {
     "They are talking to us, but the deal has not advanced and nothing is booked. Highest value first.",
     notMoving, now, "amber")}
   ${section("Moving",
-    "Customer activity created real forward motion, or a valid next meeting is on the calendar. These do not need forecast-call time. Highest value first.",
+    "Customer activity created real forward motion, or a valid next step is on the calendar. Highest value first. Some still deserve a question: an aggressive close date or a missing signer does not stop a deal moving.",
     moving, now, "green")}
   ${neverEngagedSection(never, now)}
   ${unknown.length > 0 ? section("Unable to verify", "The calendar or mailbox could not be read, so nothing is claimed about these.", unknown, now, "grey") : ""}
