@@ -295,7 +295,44 @@ function defaultAuditHook(entry: CrmAccessAuditEntry): void {
   // can await completion. The catch handler resolves the promise to
   // void after logging, so Promise.allSettled in flushAuditWrites is
   // safe.
-  const p = writeCrmAccessLogToSupabase(entry).catch((err) => {
+
+/**
+ * One audit write, retried on a transport failure with a short backoff.
+ *
+ * Only transport errors are worth retrying: a rejected insert will be rejected
+ * again, and hammering it turns one logged failure into four.
+ */
+async function writeWithRetry(entry: Parameters<typeof writeCrmAccessLogToSupabase>[0]): Promise<void> {
+  const delays = [120, 400, 1200];
+  for (let i = 0; ; i++) {
+    try {
+      await writeCrmAccessLogToSupabase(entry);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const transport = /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|network/i.test(msg);
+      if (!transport || i >= delays.length) throw err;
+      await new Promise((r) => setTimeout(r, delays[i]));
+    }
+  }
+}
+
+  // RETRIED, because the failure that actually happens is a burst.
+  //
+  // These are fire-and-forget and a report run issues about sixty at once, so a
+  // laptop opening sixty sockets to Supabase gets "TypeError: fetch failed" on
+  // most of them: observed 0 failures on one run and 60 on the next, minutes
+  // apart, same code. That is a connection limit, not a rejected write, and it
+  // is exactly the kind of failure a retry clears.
+  //
+  // It matters more here than the fire-and-forget suggests. crm_access_log is
+  // how anyone proves the scope wrapper was on the path: zero refused reads over
+  // a run is the evidence, and evidence with sixty rows missing proves nothing.
+  //
+  // Still fail-open after the retries. An audit write must never take down a
+  // read that was itself allowed, and the loud log is what makes a silent gap
+  // impossible.
+  const p = writeWithRetry(entry).catch((err) => {
     console.error(
       `[crm-scope] audit write failed for ${entry.system} ${entry.operation} ${entry.opportunityId}:`,
       err instanceof Error ? err.message : err,
