@@ -12,6 +12,7 @@ config({ path: ".env.local" });
 
 import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { buildActivityReport } from "../lib/activity-report";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
@@ -32,6 +33,30 @@ function arg(name: string): string | undefined {
   mkdirSync(".previews", { recursive: true });
   const out = ".previews/monday-activity.html";
   writeFileSync(out, report.html, "utf8");
+
+  // THE PDF IS THE DELIVERABLE, so it is produced here rather than by someone
+  // remembering to hit Cmd-P. Mark receives this as a PDF every Monday, and a
+  // report that only looks right in a browser is not the artifact he gets.
+  // Headless Chrome, the same engine the manual print used, so what is checked
+  // is what ships.
+  const pdf = resolve(".previews/monday-activity.pdf");
+  await new Promise<void>((done) => {
+    execFile(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      [
+        "--headless",
+        "--disable-gpu",
+        "--no-pdf-header-footer",
+        `--print-to-pdf=${pdf}`,
+        `file://${resolve(out)}`,
+      ],
+      (err) => {
+        if (err) console.error(`  PDF generation failed: ${err.message}`);
+        else console.log(`  wrote ${pdf}`);
+        done();
+      },
+    );
+  });
   console.log(`\n  subject: ${report.subject}`);
   console.log(
     `  ${report.counts.total} deals: ${report.counts.moving} moving, ${report.counts.notMoving} active not moving, ${report.counts.stalled} stalled, ${report.counts.silent} gone silent, ${report.counts.never} never engaged`,

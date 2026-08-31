@@ -328,20 +328,35 @@ export async function writeDealRead(ev: DealEvidence): Promise<DealReadResult> {
     // The headline is split off rather than left in the paragraph: the table
     // cell and the read below it are two different reading jobs, and a cell
     // holding a whole paragraph is what sent this round in circles.
+    // ONE SENTENCE, ENDED PROPERLY, NEVER CUT MID-CLAUSE.
+    //
+    // This used to hard-stop at a word count and append an ellipsis, which put
+    // "deal pace is slow for a...", "Brad and Maya sign-off, and..." and "close
+    // by Oct 1 is..." into a report a CRO reads. A trailing ellipsis in a
+    // leader's summary is worse than a shorter sentence: it says the system had
+    // more to tell them and stopped, and there is no way to get the rest.
+    //
+    // So: take the first sentence whole. Only when it runs past the hard bound
+    // does it get cut, and then at the last comma before the bound so the line
+    // still ends on a complete clause, with no ellipsis at all.
     const clip = (v: string, words: number): string => {
-      const first = v.split(/(?<=[.!?])\s+/)[0] ?? v;
-      const w = first.trim().split(/\s+/);
-      return w.length <= words ? first.trim() : `${w.slice(0, words).join(" ")}...`;
+      const first = (v.split(/(?<=[.!?])\s+/)[0] ?? v).trim();
+      const w = first.split(/\s+/);
+      if (w.length <= words) return first;
+      const cut = w.slice(0, words).join(" ");
+      const lastComma = cut.lastIndexOf(",");
+      const kept = lastComma > cut.length * 0.5 ? cut.slice(0, lastComma) : cut;
+      return kept.replace(/[,;:\s]+$/, "") + ".";
     };
     const hm = /^CHANGED:\s*(.+?)\s*$/im.exec(raw);
     const rm = /^READ:\s*(.+?)\s*$/im.exec(raw);
     const rawHead = hm?.[1]?.trim() ?? "";
-    const headline = rawHead && !/^no meaningful change\.?$/i.test(rawHead) ? clip(rawHead, 20) : null;
+    const headline = rawHead && !/^no meaningful change\.?$/i.test(rawHead) ? clip(rawHead, 24) : null;
     // Length is ENFORCED, not asked for. The prompt said "at most 14 words"
     // through three revisions and the model kept returning 58-word retellings,
     // because length is the first instruction a model trades away when it has
     // material. The rule that must hold is held in code.
-    const text = clip((rm?.[1] ?? "").trim(), 16);
+    const text = clip((rm?.[1] ?? "").trim(), 26);
     if (!text) return { status: "unavailable", error: "model returned no READ line" };
     return { status: "written", text, headline };
   } catch (err) {

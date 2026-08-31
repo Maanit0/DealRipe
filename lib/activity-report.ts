@@ -236,6 +236,36 @@ async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<M
  * a pipe, none of which a leader needs in a table cell, and printing it whole
  * is what pushed the booked pill into the next column.
  */
+/**
+ * A calendar subject reduced to a short PURPOSE, two to four words.
+ *
+ * The Next step cell is roughly a tenth of the page and was being handed raw
+ * invite titles, which wrapped into four and five narrow lines: "COMPLIANCE
+ * DEMO", "Call ECS Australia Melbour", "Grupo Logistico de Carga U". A rep name,
+ * a company name and a date are all already on the row; repeating them inside a
+ * narrow badge is what made the column look broken.
+ *
+ * Keyword first, because the KIND of meeting is the only part worth the space.
+ * Everything else is stripped, and anything that survives without a recognised
+ * kind is cut to three words rather than shown raw.
+ */
+const PURPOSE: Array<[RegExp, string]> = [
+  [/\b(pricing|price|cost|budget|quote)\b/i, "Pricing review"],
+  [/\b(proposal|sow|contract|terms)\b/i, "Proposal review"],
+  [/\brate management\b/i, "Rate Management demo"],
+  [/\b(abi)\b/i, "ABI demo"],
+  [/\b(wms)\b.*\b(discovery|call)\b|\bdiscovery\b.*\bwms\b/i, "WMS discovery"],
+  [/\bcompliance\b/i, "Compliance demo"],
+  [/\b(kickoff|kick.?off)\b/i, "Kickoff"],
+  [/\bonboarding\b/i, "Onboarding"],
+  [/\b(discovery|intro|introduction)\b/i, "Discovery call"],
+  [/\b(demo|demonstration|walkthrough)\b/i, "Demo"],
+  [/\b(training)\b/i, "Training"],
+  [/\b(technical|integration|api)\b/i, "Technical session"],
+  [/\b(follow.?up|check.?in|touch.?base|catch.?up)\b/i, "Follow-up"],
+  [/\b(review)\b/i, "Review"],
+];
+
 function shortMeeting(title: string | null): string {
   let t = (title ?? "").trim();
   if (!t) return "";
@@ -245,17 +275,17 @@ function shortMeeting(title: string | null): string {
   t = t.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, "");
   t = t.replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, "");
   t = t.replace(/\b(mon|tues?|wed(nes)?|thur?s?|fri|sat(ur)?|sun)(day)?\b/gi, "");
-  t = t.replace(/[<>/]+/g, " ").replace(/[-–—]+/g, " ").replace(/\s{2,}/g, " ").trim();
+  t = t.replace(/[<>/]+/g, " ").replace(/[-\u2013\u2014]+/g, " ").replace(/\s{2,}/g, " ").trim();
   t = t.replace(/^[,.\s]+|[,.\s]+$/g, "");
-  const KIND = /(demo|discovery|proposal|pricing|kickoff|onboarding|review|training|walkthrough|follow.?up|intro|scoping|technical|check.?in)/i;
-  const k = KIND.exec(t);
-  if (k) {
-    // Two or three words around the kind word beats a company name and a date.
-    const words = t.split(/\s+/);
-    const at = words.findIndex((w) => KIND.test(w));
-    return words.slice(Math.max(0, at - 1), at + 2).join(" ").slice(0, 26);
-  }
-  return t.slice(0, 26);
+
+  for (const [re, label] of PURPOSE) if (re.test(t)) return label;
+
+  // No recognised kind. Three words at most, sentence case, so a company name
+  // cannot occupy four lines of a narrow badge.
+  const words = t.split(/\s+/).filter(Boolean).slice(0, 3);
+  if (words.length === 0) return "";
+  const short = words.join(" ");
+  return short.charAt(0).toUpperCase() + short.slice(1).toLowerCase();
 }
 
 const shortDate = (iso: string): string =>
@@ -282,6 +312,23 @@ type StatusKey = keyof typeof STATUS;
  * A calendar event on its own never makes a deal Moving. Febestparts sat in
  * Moving with two missed demos behind it because a future invite existed.
  */
+/**
+ * Whether a line in changedThisWeek is the customer moving, or us failing to see.
+ *
+ * A PAST meeting nobody could verify proves nothing either way and must never
+ * create movement. A no-show is evidence the customer did NOT engage. Both were
+ * counting as progress, which is how a deal with two missed demos behind it and
+ * zero replies came out labelled Moving on a page a CRO reads.
+ */
+const NOT_PROGRESS =
+  /(could not be verified|couldn.t be verified|not be verified|unverified|no.?show|did not join|didn.t join|nobody joined|no one joined|was attempted|attempted|no confirmed|no verified|outcome (is )?unknown|no reply|no response|zero replies|could not get into)/i;
+
+function isProgression(change: string): boolean {
+  const t = String(change ?? "").trim();
+  if (!t) return false;
+  return !NOT_PROGRESS.test(t);
+}
+
 function statusOf(r: Row): StatusKey {
   // NEVER ENGAGED COMES FIRST. A deal cannot go silent if the customer was never
   // there: "gone silent" and "has never come back to us" both imply an earlier
@@ -293,7 +340,12 @@ function statusOf(r: Row): StatusKey {
   const noShow = r.deal.flags.some((f) => f.kind === "no_show");
   const overdue = commitmentState(r) === "overdue";
   if (noShow || overdue) return "stalled";
-  const progressed = (r.changed?.length ?? 0) > 0 || r.deal.nextMeetingBooked;
+  // A CHANGE IS NOT AUTOMATICALLY PROGRESS. changedThisWeek carries anything that
+  // moved on the row, and most of what moved on these rows is DealRipe failing to
+  // get into a meeting. Aquagulf, DHL, Forwardair, Crowley and Theskyplanner all
+  // sat in Moving on the strength of "the meeting could not be verified", which
+  // is a statement about our bot and not about the customer.
+  const progressed = (r.changed ?? []).some(isProgression) || r.deal.nextMeetingBooked;
   return progressed ? "moving" : "active";
 }
 
@@ -355,9 +407,35 @@ const ACTION_BY_FLAG: Record<string, string> = {
   not_in_rolldog: "Get it into Rolldog",
 };
 
+/**
+ * An EXTERNAL blocker: something neither the rep nor the leader can unstick by
+ * booking a meeting.
+ *
+ * Integrity Customs was told to "get the next meeting booked" on a row whose own
+ * evidence said the customer had agreed to sign as soon as CBP paperwork
+ * cleared. A meeting does not clear CBP. The action a leader can actually take
+ * on those deals is to watch the blocker and stop spending forecast-call time on
+ * them, and saying so is more useful than a task nobody should do.
+ */
+const BLOCKER: Array<[RegExp, string]> = [
+  [/\bcbp\b|customs and border/i, "Monitor CBP clearance"],
+  [/\bfmc\b/i, "Monitor FMC licence"],
+  [/\biata\b/i, "Monitor IATA accreditation"],
+  [/\bftz\b|foreign.?trade zone/i, "Monitor FTZ permit"],
+  [/\bfiler code\b/i, "Monitor filer code approval"],
+  [/\blegal review\b|in.?house legal|outside counsel/i, "Track legal review"],
+  [/\bboard\b/i, "Track board approval"],
+  [/\bpermit\b|licen[cs]e/i, "Monitor licence or permit"],
+];
+
+/** A customer who has committed needs papering, not another meeting. */
+const COMMITTED =
+  /\b(agreed to sign|verbally committed|signed the (quote|proposal|contract)|accepted (the )?pricing|quote signed|ready to sign|docusign|adobesign)\b/i;
+
 function actionOf(r: Row, status: StatusKey): { text: string; hard: boolean } | null {
   const top = [...r.deal.flags].sort((a, b) => sev(b.severity) - sev(a.severity))[0];
   const ns = commitmentState(r);
+  const evidence = `${r.headline ?? ""} ${r.read ?? ""}`;
 
   // THE ACTION MUST NOT ARGUE WITH THE ROW.
   //
@@ -371,18 +449,106 @@ function actionOf(r: Row, status: StatusKey): { text: string; hard: boolean } | 
   if (ns === "waiting_customer") return { text: "Waiting on customer", hard: false };
   if (status === "never") return { text: "Confirm this is real", hard: false };
   if (status === "silent") return { text: "Confirm it is still live", hard: true };
+
+  // A COMMITMENT OUTRANKS A MISSING MEETING. Teamfast accepted $520 a month and
+  // agreed to sign by DocuSign, and was told to book a meeting. What that deal
+  // needs is the paperwork out.
+  if (COMMITTED.test(evidence)) return { text: "Get the agreement signed", hard: false };
+
+  // An external blocker outranks everything below it: no meeting moves it.
+  for (const [re, label] of BLOCKER) if (re.test(evidence)) return { text: label, hard: false };
+
   if (ns === "overdue") return { text: "Ask why it was never booked", hard: true };
-  // On a deal that is moving, the gap is the next meeting, not the forecast.
-  // "Challenge the forecast" on a customer who just agreed to sign reads as
-  // the report not having read its own evidence.
   if (status === "moving") {
-    return commitmentState(r) === "none" ? { text: "Get the next meeting booked", hard: false } : null;
+    return ns === "none" ? { text: "Get the next meeting booked", hard: false } : null;
   }
   if (top && ACTION_BY_FLAG[top.kind] && top.severity !== "low") {
     return { text: ACTION_BY_FLAG[top.kind], hard: top.severity === "high" };
   }
-  if (commitmentState(r) === "none") return { text: "Get the next meeting booked", hard: false };
+  if (ns === "none") return { text: "Get the next meeting booked", hard: false };
   return null;
+}
+
+/**
+ * Sentences that do not survive a missing variable.
+ *
+ * "A named competitor is in play twelve days before no close date exists" is a
+ * template that assumed a close date and rendered the absence into the middle of
+ * the clause. A leader reading one sentence like that discounts every other
+ * sentence on the page, so a line that trips this is dropped rather than shipped:
+ * no read at all is recoverable, a nonsensical one is not.
+ */
+const MALFORMED = [
+  /\bbefore no\b/i,
+  /\bbefore (an? )?(unknown|undefined|null)\b/i,
+  /\b(undefined|null|NaN)\b/,
+  /\bdays before no\b/i,
+  /\b(\w+) \1\b/i,
+  /\bin \s*days\b/i,
+  /\bon\s+\.\s*$/i,
+  /\[object Object\]/,
+];
+
+/**
+ * Remove facts from the stored read that the ROW already states, live.
+ *
+ * deal_reads is written when the evidence changes and read back for weeks. The
+ * row's numbers are computed at render time. So the two drift, and they drift in
+ * the most visible way possible: Bee Imagine printed "Commit . SQL5 . Sep 3" in
+ * its metadata and "no reply in 13 days with close Aug 3" in its read, and IFF
+ * US showed a 17d silent pill beside a read saying no reply in 13 days.
+ *
+ * A leader who catches one of those stops trusting the numbers on the whole
+ * page, and they are right to: they cannot tell which of the two is current.
+ *
+ * The row wins, always, because it is computed now. The clause is DELETED rather
+ * than rewritten, since the row already carries the fact a few centimetres to
+ * the left and repeating it was never worth a line.
+ */
+function dropRestatedFacts(read: string | null | undefined, r: Row): string | null {
+  let t = String(read ?? "").trim();
+  if (!t) return null;
+
+  // "with close Aug 3", "with close date Oct 22", "close date is 17 months out"
+  // are all the row's own close-date column, restated and able to go stale.
+  t = t.replace(/,?\s*(and\s+)?with\s+(a\s+)?close(\s+date)?\s+(of\s+)?[A-Z][a-z]{2}\.?\s*\d{1,2}(,?\s*\d{4})?/g, "");
+  t = t.replace(/,?\s*(and\s+)?with\s+(a\s+)?close(\s+date)?\s+\d{1,2}\s+days?\s+out/gi, "");
+
+  // A silence count in prose next to a silence pill that computes its own.
+  if (r.activity.quietDays !== null) {
+    t = t.replace(/,?\s*(and\s+)?no\s+repl(y|ies)\s+in\s+\d+\s+days?/gi, ", no reply since");
+  }
+
+  // A TRAILING ELLIPSIS FROM A READ WRITTEN BEFORE THE CLIP WAS FIXED.
+  //
+  // deal_reads holds rows generated weeks ago, and those keep whatever the
+  // generator did at the time: "deal pace is slow for a...", "Brad and Maya
+  // sign-off, and...". Regenerating the whole table to clear cosmetics would
+  // cost 126 model calls and change paragraphs a leader has already read, so the
+  // tail is repaired here instead: cut back to the last complete clause and end
+  // it. Nothing is invented, a hanging fragment is removed.
+  if (/\.\.\.\s*$/.test(t)) {
+    const body = t.replace(/\s*\.\.\.\s*$/, "");
+    const stop = Math.max(body.lastIndexOf(","), body.lastIndexOf(";"));
+    t = (stop > body.length * 0.45 ? body.slice(0, stop) : body).replace(/[,;:\s]+$/, "");
+  }
+
+  return t
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/[,;\s]+$/, "")
+    .replace(/,\s*\./g, ".")
+    .trim()
+    .replace(/([^.!?])$/, "$1.")
+    || null;
+}
+
+/** Drop a generated line that reads as broken. Returns null when unusable. */
+function sane(text: string | null | undefined): string | null {
+  const t = String(text ?? "").trim();
+  if (!t) return null;
+  if (MALFORMED.some((re) => re.test(t))) return null;
+  return t;
 }
 
 const pill = (label: string, tone: "ok" | "warn" | "amber" | "bad" | "neu") =>
@@ -413,7 +579,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
   const ns = nextStep(r);
   const action = actionOf(r, status);
   const silentDays = r.activity.quietDays;
-  const changed = r.headline;
+  const changed = sane(r.headline);
 
   return `<tr class="main">
     <td class="acct"><b>${esc(r.deal.account)}</b><i>${dealMeta(r)}</i></td>
@@ -427,7 +593,7 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
     <td class="chg">${changed ? esc(changed) : `<span class="none">No change</span>`}</td>
     <td class="ns">${pill(ns.label, ns.tone)}${ns.detail ? `<i class="sub">${esc(ns.detail)}</i>` : ""}</td>
     <td class="read">${
-      r.read ? esc(r.read) : `<i class="sub">Nothing captured on this deal yet.</i>`
+      sane(dropRestatedFacts(r.read, r)) ? esc(sane(dropRestatedFacts(r.read, r)) as string) : `<i class="sub">Nothing captured on this deal yet.</i>`
     }</td>
     <td class="act">${action ? `<b class="${action.hard ? "hard" : ""}">${esc(action.text)}</b>` : `<i class="sub">No action</i>`}</td>
   </tr>`;
@@ -496,6 +662,12 @@ export async function buildActivityReport(args: {
   const allDeals = raw.filter((d) => {
     if (d.archived) return false;
     if (d.stageName && CLOSED.test(d.stageName)) return false;
+    // ALSO THE FORECAST CATEGORY, not just the stage name. TW Customs Brokers
+    // printed "Closed . Jun 25" in a pipeline review, two months after it
+    // closed, because the stage name was clean and the closed-ness lived in the
+    // forecast column. A closed deal in a pipeline inspection is the report
+    // failing at the one thing its title claims.
+    if (d.forecastCategory && CLOSED.test(d.forecastCategory)) return false;
     if (d.isRenewal && !d.inRolldog) return false;
     return true;
   });
@@ -737,13 +909,20 @@ export async function buildActivityReport(args: {
   .secsub{font-size:10pt;color:var(--sub);margin:9px 0 2px;max-width:820px}
   .empty{font-size:10.5pt;color:var(--sub);font-style:italic;padding:12px 0}
 
+  /* COLUMN ISOLATION. The status pill carried white-space:nowrap inside a 10%
+     column, so in the PDF "Never engaged" and "Active, not moving" ran straight
+     across the cell border and interleaved with What changed: "Active, noNo
+     change t moving". Every cell now has its own padding on BOTH sides, the
+     status column is wide enough to hold its longest label, and the pill is
+     allowed to wrap rather than overflow. */
   table{width:100%;border-collapse:collapse;margin-top:6px;table-layout:fixed}
   th{font-size:10pt;font-weight:700;letter-spacing:.01em;color:var(--ink);text-align:left;
-     padding:14px 16px 11px 0;border-bottom:1.5px solid var(--ink)}
-  th.c1{width:17%} th.c2{width:10%} th.c3{width:26%} th.c4{width:11%} th.c5{width:24%} th.c6{width:12%}
-  td{padding:16px 16px 16px 0;font-size:10.5pt;vertical-align:top;color:var(--body);
+     padding:14px 14px 11px 0;border-bottom:1.5px solid var(--ink)}
+  th.c1{width:16%} th.c2{width:12%} th.c3{width:24%} th.c4{width:12%} th.c5{width:24%} th.c6{width:12%}
+  td{padding:15px 14px 15px 0;font-size:10.5pt;vertical-align:top;color:var(--body);
      border-bottom:1px solid var(--soft);border-right:1px solid var(--soft);
-     overflow-wrap:anywhere;word-break:normal;hyphens:auto}
+     overflow-wrap:break-word;word-break:normal;hyphens:auto;min-width:0;overflow:hidden}
+  td.st,td.ns{padding-right:16px}
   td:last-child{border-right:0}
   tr{break-inside:avoid}
   .acct b{font-size:12pt;font-weight:700;color:var(--ink);display:block;line-height:1.35}
@@ -751,8 +930,12 @@ export async function buildActivityReport(args: {
   .chg{color:var(--ink)}
   .read{color:var(--body)}
   .act b{font-weight:700;color:var(--ink);font-size:10.5pt;display:block;line-height:1.4} .act b.hard{color:var(--bad)}
-  .pill{display:inline-flex;align-items:center;gap:6px;font-size:9.5pt;font-weight:700;white-space:nowrap;
-        max-width:100%;padding:4px 11px 4px 8px;border-radius:14px;border:1px solid var(--line);background:#fff}
+  /* A pill wraps INSIDE itself before it ever leaves the cell. nowrap was the
+     direct cause of the status text crossing into What changed in the PDF. */
+  .pill{display:inline-flex;align-items:flex-start;gap:6px;font-size:9.5pt;font-weight:700;
+        max-width:100%;padding:4px 10px 4px 8px;border-radius:12px;border:1px solid var(--line);
+        background:#fff;line-height:1.35;overflow-wrap:break-word;text-align:left}
+  .pill i{flex:0 0 auto;margin-top:5px}
   .none{color:#98A2B3;font-size:10.5pt}
   .pill i{width:7px;height:7px;border-radius:50%;background:#98A2B3;display:inline-block}
   .pill.ok{color:var(--ok);border-color:#A6F4C5} .pill.ok i{background:var(--ok)}
@@ -760,7 +943,41 @@ export async function buildActivityReport(args: {
   .pill.amber{color:var(--amber);border-color:#FEC84B} .pill.amber i{background:var(--amber)}
   .pill.bad{color:var(--bad);border-color:#FDA29B} .pill.bad i{background:var(--bad)}
   .foot{font-size:9pt;color:var(--sub);margin-top:30px;line-height:1.7;border-top:1px solid var(--line);padding-top:14px}
-  @media print{body{padding:0 12px}thead{display:table-header-group}tr{break-inside:avoid}.sechd{break-after:avoid}}
+  /* PRINT IS THE DELIVERABLE. Mark gets this as a PDF every Monday, so the page
+     box is declared rather than inherited from whatever Chrome's default happens
+     to be, and nothing here shrinks type to win a page break: more pages is the
+     correct answer and 20 of them is fine. */
+  @page{size:Letter landscape;margin:12mm 10mm 14mm}
+  @media print{
+    /* WIDTH IS THE WHOLE PROBLEM. Chrome lays the page out at its own default
+       width and then fits it to the page box, so anything that assumes a wider
+       viewport gets clipped at the right edge: the Gone silent figure and the
+       entire Action column were being cut off the page. Everything is pinned to
+       100% of the printable area and nothing is allowed to exceed it. */
+    html,body{width:100%;max-width:100%;overflow-x:hidden}
+    body{padding:0;font-size:10pt}
+    .wrap{max-width:100%;width:100%}
+    table{width:100%;max-width:100%}
+    .strip{width:100%}
+    thead{display:table-header-group}
+    tfoot{display:table-footer-group}
+    /* Rows may not split, but the TABLE must be allowed to flow across pages.
+       break-inside:avoid on the cells was forcing a new page after almost every
+       row and leaving most of each page blank. */
+    tr{break-inside:avoid;page-break-inside:avoid}
+    td,th{break-inside:auto}
+    table,tbody,.sec{break-inside:auto;page-break-inside:auto}
+    .sechd{break-after:avoid;page-break-after:avoid}
+    .secsub{break-after:avoid;page-break-after:avoid}
+    .sec table{break-before:avoid}
+    h1,h2{break-after:avoid}
+    .krow{break-inside:avoid}
+    .strip,.integ,.ibox{break-inside:avoid}
+    .foot{break-inside:avoid}
+    /* A section header alone at the foot of a page is the one break that makes a
+       report look unfinished, so it is pinned to at least its first rows. */
+    .sec thead{break-after:avoid}
+  }
 </style></head><body><div class="wrap">
   <div class="brand">DealRipe</div>
   <h1>Pipeline review</h1>
@@ -801,13 +1018,21 @@ export async function buildActivityReport(args: {
     </div>
   </div>
 
+  ${section("Gone silent",
+    "Previously engaged, then nothing from the customer in 14 days or more and nothing booked. Highest value first.",
+    silent, now, "red", "quiet")}
+  ${section("Stalled",
+    "The customer was engaged and an expected next step broke down: a no-show, or something agreed that never happened. Highest value first.",
+    stalled, now, "amber")}
+  ${section("Active, not moving",
+    "They are talking to us, but the deal has not advanced and nothing is booked. Highest value first.",
+    notMoving, now, "amber")}
+  ${section("Moving",
+    "Customer activity created real forward motion, or a valid next meeting is on the calendar. These do not need forecast-call time. Highest value first.",
+    moving, now, "green")}
   ${section("Never engaged",
-    "DealRipe has never captured a call or a reply from these. A meeting may have been attempted, but nobody has actually engaged yet.",
+    "No customer conversation or reply has been captured yet. A meeting may have been attempted or booked, but nobody has engaged. Highest value first.",
     never, now, "grey")}
-  ${section("Gone silent", "Nothing from the customer in 14 days or more, and nothing booked. Longest silence first.", silent, now, "red", "quiet")}
-  ${section("Stalled", "The customer was engaged and then something broke: a no-show, or an agreed next step that never happened.", stalled, now, "amber")}
-  ${section("Active, not moving", "They are talking to us. Nothing closed and nothing got booked this week.", notMoving, now, "amber")}
-  ${section("Moving", "A gate closed or the next meeting is booked. These do not need forecast-call time.", moving, now, "green")}
   ${unknown.length > 0 ? section("Unable to verify", "The calendar or mailbox could not be read, so nothing is claimed about these.", unknown, now, "grey") : ""}
 
   <p class="foot"><b>Method.</b> Customer activity is based on what DealRipe can see across connected calls, email and calendar. Other interactions, a call to a rep's mobile for example, may not be captured, so treat "gone silent" as the list to ask about. Where a meeting could not be verified it is labelled as such rather than counted as missed. Amounts are annualized from Rolldog and blank where Rolldog has no size, so dollar totals are a floor. "Agreed, not booked" is checked against the rep's own calendar.</p>
