@@ -562,6 +562,88 @@ export async function listDrafts(args: {
   }));
 }
 
+/**
+ * Files attached to messages a rep has already SENT.
+ *
+ * Juan Lopez sends the same two datasheets after almost every call and does not
+ * have the source PDFs to hand; they live in his own sent mail, attached to the
+ * two emails he pointed at as worked examples. Reading them back out is better
+ * than asking anyone to dig them up, and it gets the exact file the customer
+ * actually receives rather than a copy that may have drifted.
+ *
+ * Searched by subject rather than by message id, because ids are per-mailbox and
+ * the examples were identified by what they say, not by an id anybody recorded.
+ */
+export async function findSentAttachments(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  /** Only messages sent on or after this instant. */
+  since: Date;
+  top?: number;
+}): Promise<Array<{ id: string; subject: string; sentAt: string; to: string[]; attachments: Array<{ id: string; name: string; contentType: string; size: number }> }>> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const user = encodeURIComponent(args.mailbox);
+  // ONE FILTER TERM, sorted separately. Combining hasAttachments with a
+  // sentDateTime range and an orderby is rejected as InefficientFilter: Exchange
+  // will not serve that shape however correct the OData is. Filtering on the
+  // date and checking hasAttachments client side is the query it will actually
+  // run, and the sent-items folder is small enough that it costs nothing.
+  const filter = encodeURIComponent(`sentDateTime ge ${args.since.toISOString()}`);
+  const url =
+    `${GRAPH_BASE}/users/${user}/mailFolders/sentitems/messages?$filter=${filter}` +
+    `&$select=id,subject,sentDateTime,toRecipients,hasAttachments&$top=${args.top ?? 60}&$orderby=sentDateTime desc`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new GraphMailError(res.status, `list attachments for ${args.mailbox}: ${(await res.text()).slice(0, 300)}`);
+  const json = (await res.json()) as {
+    value?: Array<{ id: string; subject?: string; sentDateTime?: string; hasAttachments?: boolean; toRecipients?: Array<{ emailAddress?: { address?: string } }> }>;
+  };
+
+  // The MESSAGE id is returned too. readAttachment needs it, and leaving it off
+  // made every read fail with nothing to look up.
+  const out: Array<{ id: string; subject: string; sentAt: string; to: string[]; attachments: Array<{ id: string; name: string; contentType: string; size: number }> }> = [];
+  for (const m of (json.value ?? []).filter((m) => m.hasAttachments)) {
+    const ar = await fetch(
+      `${GRAPH_BASE}/users/${user}/messages/${encodeURIComponent(m.id)}/attachments?$select=id,name,contentType,size`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    if (!ar.ok) continue;
+    const aj = (await ar.json()) as { value?: Array<{ id: string; name?: string; contentType?: string; size?: number }> };
+    out.push({
+      id: String(m.id),
+      subject: String(m.subject ?? ""),
+      sentAt: String(m.sentDateTime ?? ""),
+      to: (m.toRecipients ?? []).map((r) => String(r.emailAddress?.address ?? "")).filter(Boolean),
+      attachments: (aj.value ?? []).map((a) => ({
+        id: String(a.id),
+        name: String(a.name ?? ""),
+        contentType: String(a.contentType ?? ""),
+        size: Number(a.size ?? 0),
+      })),
+    });
+  }
+  return out;
+}
+
+/** One attachment's bytes, base64, as Graph stores them. */
+export async function readAttachment(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  messageId: string;
+  attachmentId: string;
+}): Promise<{ name: string; contentType: string; contentBytes: string } | null> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const url = `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(args.attachmentId)}`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const j = (await res.json()) as { name?: string; contentType?: string; contentBytes?: string };
+  if (!j.contentBytes) return null;
+  return { name: String(j.name ?? ""), contentType: String(j.contentType ?? ""), contentBytes: String(j.contentBytes) };
+}
+
 export async function createDraft(args: {
   tenantIdOrDomain: string;
   /** The rep's mailbox (userPrincipalName), e.g. jlopez@magaya.com. */

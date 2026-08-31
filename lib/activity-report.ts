@@ -624,6 +624,51 @@ function section(
   </section>`;
 }
 
+/**
+ * Never engaged, as a paragraph plus the few that carry money.
+ *
+ * This section was 45 rows over roughly ten of the report's twenty-seven pages,
+ * every one of them saying "Nothing captured on this deal yet" and "Confirm this
+ * is real", for $87.3K of pipeline in total. Ten pages is a third of what a CRO
+ * has to page through on a Monday, spent on an average of $1,900 a row.
+ *
+ * The information is not lost, it is proportioned: the count and the money up
+ * front, then a table of only the ones worth a leader's attention, then the rest
+ * as names. A manager chasing data hygiene has the list; Mark has one paragraph.
+ *
+ * The threshold is a real amount OR a booked meeting, because a $0 record with a
+ * first meeting on the calendar is a deal about to start and belongs in front of
+ * someone, while a $0 record with nothing booked is a row in a CRM.
+ */
+function neverEngagedSection(rows: Row[], now: number): string {
+  const worth = (r: Row) => (r.deal.dealSizeAnnual ?? 0) >= 10_000 || r.deal.nextMeetingBooked;
+  const shown = rows.filter(worth);
+  const rest = rows.filter((r) => !worth(r));
+  const total = rows.reduce((n, r) => n + (r.deal.dealSizeAnnual ?? 0), 0);
+
+  return `<section class="sec grey">
+    <div class="sechd"><h2>Never engaged</h2><div class="count">${rows.length} deal${rows.length === 1 ? "" : "s"}${
+      total > 0 ? ` &middot; ${money1(total)}` : ""
+    }</div></div>
+    <p class="secsub">No customer conversation or reply has ever been captured on these. Shown below: the ${shown.length} carrying real money or a first meeting already on the calendar. The remaining ${rest.length} are listed by name at the end, and are a data hygiene job rather than a forecast one.</p>
+    ${
+      shown.length === 0
+        ? `<p class="empty">None carrying money or a booked meeting.</p>`
+        : `<table><thead><tr>
+            <th class="c1">Deal</th><th class="c2">Status</th><th class="c3">What changed</th>
+            <th class="c4">Next step</th><th class="c5">DealRipe read</th><th class="c6">Action</th>
+          </tr></thead><tbody>${shown.map((r) => rowHtml(r, now, "live")).join("")}</tbody></table>`
+    }
+    ${
+      rest.length === 0
+        ? ""
+        : `<p class="secsub" style="margin-top:16px"><b>Also never engaged, nothing booked, no size in Rolldog:</b> ${rest
+            .map((r) => esc(r.deal.account))
+            .join(", ")}.</p>`
+    }
+  </section>`;
+}
+
 export type ActivityReport = {
   subject: string;
   html: string;
@@ -874,10 +919,15 @@ export async function buildActivityReport(args: {
   .when{font-size:12.5pt;color:var(--sub);margin-top:6px}
   .method{font-size:10pt;color:var(--sub);margin-top:10px;max-width:640px}
 
-  .strip{display:grid;grid-template-columns:repeat(5,1fr);border-top:2px solid var(--ink);
+  /* TABLES, NOT GRID. Gmail and Outlook do not support CSS grid: the five
+     metric cells stacked into a ragged column in the inbox while looking correct
+     in Chrome, which is the whole hazard of designing an email in a browser.
+     Every multi-column block here is a real table now. */
+  .strip{width:100%;border-collapse:collapse;border-top:2px solid var(--ink);
          border-bottom:1px solid var(--line);margin:26px 0 32px}
+  .strip td{padding:18px 20px 16px;border-right:1px solid var(--line);width:20%;vertical-align:top}
   .cell{padding:18px 20px 16px;border-right:1px solid var(--line)}
-  .cell:last-child{border-right:0}
+  .cell:last-child,.strip td:last-child{border-right:0}
   .ck{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
   .cv{font-size:24pt;font-weight:750;letter-spacing:-.025em;margin-top:7px;line-height:1}
   .cv.bad{color:var(--bad)} .cv.ok{color:var(--ok)} .cv.warn{color:var(--warn)} .cv.amber{color:var(--amber)}
@@ -886,14 +936,17 @@ export async function buildActivityReport(args: {
   h2{font-size:15pt;font-weight:700;letter-spacing:-.01em}
   .kn{margin-bottom:34px}
   .kn h2{margin-bottom:14px}
-  .krow{display:grid;grid-template-columns:14px 1fr;gap:14px;padding:14px 0;border-top:1px solid var(--soft);align-items:start}
+  .kn table{width:100%;border-collapse:collapse}
+  .krow td{padding:14px 0;border-top:1px solid var(--soft);vertical-align:top}
+  .krow td.kd{width:24px}
   .krow:last-child{border-bottom:1px solid var(--soft)}
   .khead{font-size:12.5pt;font-weight:650;line-height:1.4}
   .kwhy{font-size:10.5pt;color:var(--sub);margin-top:4px;line-height:1.5}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-top:7px}
   .dot.bad{background:var(--bad)} .dot.amber{background:var(--amber)} .dot.warn{background:var(--warn)} .dot.ok{background:var(--ok)}
 
-  .integ{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:38px}
+  .integ{width:100%;border-collapse:separate;border-spacing:20px 0;margin:0 -20px 38px}
+  .integ td{width:50%;vertical-align:top}
   .ibox{border:1px solid var(--line);border-radius:8px;padding:18px 22px}
   .ibox.q{border-color:#FDA29B}
   .il{font-size:9pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
@@ -902,7 +955,8 @@ export async function buildActivityReport(args: {
   .is{font-size:10pt;color:var(--sub);margin-top:7px;line-height:1.5}
 
   .sec{margin-bottom:34px}
-  .sechd{display:flex;align-items:baseline;gap:14px;border-bottom:2px solid var(--ink);padding-bottom:9px;break-after:avoid}
+  .sechd{border-bottom:2px solid var(--ink);padding-bottom:9px;break-after:avoid}
+  .sechd h2{display:inline} .sechd .count{display:inline;margin-left:12px}
   .sec.red .sechd{border-color:var(--bad)} .sec.amber .sechd{border-color:var(--amber)}
   .sec.green .sechd{border-color:var(--ok)} .sec.grey .sechd{border-color:#98A2B3}
   .count{font-size:10.5pt;color:var(--sub);font-weight:600}
@@ -984,39 +1038,39 @@ export async function buildActivityReport(args: {
   <div class="when">Week of ${esc(when)}${capped ? ` &middot; preview, ${rows.length} of ${capped} deals` : ""}</div>
   <p class="method">Every open deal, from the CRM plus what the customer has actually done across calls, calendar and email.</p>
 
-  <div class="strip">
-    <div class="cell"><div class="ck">Open pipeline</div><div class="cv">${money1(sum(rows))}</div><div class="cs">${rows.length} deals</div></div>
-    <div class="cell"><div class="ck">Commit + Expect</div><div class="cv">${money1(sum(forecasted))}</div><div class="cs">${forecasted.length} deals</div></div>
-    <div class="cell"><div class="ck">Moving</div><div class="cv ok">${moving.length}</div><div class="cs">${money1(sum(moving)) || "no size in Rolldog"}</div></div>
-    <div class="cell"><div class="ck">Stalled</div><div class="cv amber">${stalled.length}</div><div class="cs">${money1(sum(stalled)) || "no size in Rolldog"}</div></div>
-    <div class="cell"><div class="ck">Gone silent</div><div class="cv bad">${silent.length}</div><div class="cs">${money1(sum(silent)) || "no size in Rolldog"}</div></div>
-  </div>
+  <table class="strip" role="presentation" cellpadding="0" cellspacing="0"><tr>
+    <td><div class="ck">Open pipeline</div><div class="cv">${money1(sum(rows))}</div><div class="cs">${rows.length} deals</div></td>
+    <td><div class="ck">Commit + Expect</div><div class="cv">${money1(sum(forecasted))}</div><div class="cs">${forecasted.length} deals</div></td>
+    <td><div class="ck">Moving</div><div class="cv ok">${moving.length}</div><div class="cs">${money1(sum(moving)) || "no size in Rolldog"}</div></td>
+    <td><div class="ck">Stalled</div><div class="cv amber">${stalled.length}</div><div class="cs">${money1(sum(stalled)) || "no size in Rolldog"}</div></td>
+    <td><div class="ck">Gone silent</div><div class="cv bad">${silent.length}</div><div class="cs">${money1(sum(silent)) || "no size in Rolldog"}</div></td>
+  </tr></table>
   <p class="method" style="margin:-18px 0 30px">${notMoving.length} active but not moving &middot; ${never.length} never engaged.</p>
 
   ${
     before.length > 0
-      ? `<div class="kn"><h2>Before the review</h2>${before
+      ? `<div class="kn"><h2>Before the review</h2><table role="presentation" cellpadding="0" cellspacing="0">${before
           .map(
-            (h) => `<div class="krow">${dot(h.tone)}<div><div class="khead">${h.head}</div><div class="kwhy">${esc(h.why)}${
+            (h) => `<tr class="krow"><td class="kd">${dot(h.tone)}</td><td><div class="khead">${h.head}</div><div class="kwhy">${esc(h.why)}${
               h.facts && h.why !== h.facts ? ` &middot; ${esc(h.facts)}` : ""
-            }</div></div></div>`,
+            }</div></td></tr>`,
           )
-          .join("")}</div>`
+          .join("")}</table></div>`
       : ""
   }
 
-  <div class="integ">
-    <div class="ibox q">
+  <table class="integ" role="presentation" cellpadding="0" cellspacing="0"><tr>
+    <td><div class="ibox q">
       <div class="il">Forecast at risk</div>
       <div class="iv bad">${money1(sum(atRisk)) || "no size in Rolldog"}</div>
       <div class="is">${atRisk.length} of ${forecasted.length} Commit and Expect deals have gone quiet, stalled, or carry a serious issue.</div>
-    </div>
-    <div class="ibox">
+    </div></td>
+    <td><div class="ibox">
       <div class="il">Forecast looks clean</div>
       <div class="iv">${money1(sum(clean)) || "no size in Rolldog"}</div>
       <div class="is">${clean.length} deals where nothing in the evidence argues with the rep. Not a prediction that they close.</div>
-    </div>
-  </div>
+    </div></td>
+  </tr></table>
 
   ${section("Gone silent",
     "Previously engaged, then nothing from the customer in 14 days or more and nothing booked. Highest value first.",
@@ -1030,9 +1084,7 @@ export async function buildActivityReport(args: {
   ${section("Moving",
     "Customer activity created real forward motion, or a valid next meeting is on the calendar. These do not need forecast-call time. Highest value first.",
     moving, now, "green")}
-  ${section("Never engaged",
-    "No customer conversation or reply has been captured yet. A meeting may have been attempted or booked, but nobody has engaged. Highest value first.",
-    never, now, "grey")}
+  ${neverEngagedSection(never, now)}
   ${unknown.length > 0 ? section("Unable to verify", "The calendar or mailbox could not be read, so nothing is claimed about these.", unknown, now, "grey") : ""}
 
   <p class="foot"><b>Method.</b> Customer activity is based on what DealRipe can see across connected calls, email and calendar. Other interactions, a call to a rep's mobile for example, may not be captured, so treat "gone silent" as the list to ask about. Where a meeting could not be verified it is labelled as such rather than counted as missed. Amounts are annualized from Rolldog and blank where Rolldog has no size, so dollar totals are a floor. "Agreed, not booked" is checked against the rep's own calendar.</p>
