@@ -575,6 +575,56 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
     .replace(/,?\s*\d+\s+days?\s+(later|on|since)\b/gi, "")
     .replace(/\bnow\s+\w+\s+weeks\s+silent\b/gi, "still silent");
 
+  // A FORWARD-LOOKING CLAIM ABOUT A DATE THAT HAS SINCE PASSED.
+  //
+  // Every stored read on 2026-08-31 was written on 08-26, so each one still
+  // talks about that week's future as though it were ahead: Apex Cargo said
+  // "demo on Aug 27 will determine if close by Oct 1 is", Kronos said "confirm
+  // with Steven before trusting the Aug 31 date" beside a headline claiming the
+  // Aug 31 demo was still on the books. Neither is a contradiction between
+  // fields, which is what it looks like on the page. Both are one sentence that
+  // was true when written and is not now.
+  //
+  // A clause naming a date in the past in the future tense is removed. The
+  // row's own Next step column is computed at render and carries what is
+  // actually booked.
+  {
+    const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
+    const re = new RegExp(
+      `[^.;]*\\b(${MONTHS})[a-z]*\\.?\\s+(\\d{1,2})\\b[^.;]*?\\b(will|is still|still on the books|before trusting|upcoming|tomorrow)\\b[^.;]*`,
+      "gi",
+    );
+    t = t.replace(re, (clause, mon: string) => {
+      const idx = MONTHS.split("|").indexOf(String(mon).slice(0, 3).toLowerCase());
+      const day = Number(/\b(\d{1,2})\b/.exec(clause)?.[1] ?? 0);
+      if (idx < 0 || !day) return clause;
+      const when = new Date(new Date().getFullYear(), idx, day);
+      return when.getTime() < Date.now() - 86_400_000 ? "" : clause;
+    });
+  }
+
+  // A CLAIM THAT SOMETHING IS BOOKED WHEN THE CALENDAR SAYS IT IS NOT.
+  //
+  // The mirror of the rule above, and Kronos is the case: written on Aug 26 it
+  // said "Aug 31 demo still on the books", which was true then. On Aug 31 there
+  // is no meeting on the calendar, so the row asserted a booking beside a Next
+  // step of None. The date filter above will not catch it, because Aug 31 is not
+  // in the past on Aug 31.
+  //
+  // The calendar is computed at render and wins in both directions: it removes
+  // a denial of a real booking, and it removes a claim of one that does not
+  // exist.
+  if (!r.deal.nextMeetingBooked) {
+    t = t.replace(/\s*[,;]?\s*[^.;]*\b(still on the books|is still (booked|scheduled)|remains (booked|scheduled))\b[^.;]*/gi, "");
+    t = t.replace(/\s*[,;]?\s*(before|without)\s+trusting\s+the\s+\w+\.?\s*\d{1,2}\s+date/gi, "");
+  }
+
+  // A STALE COUNT OF OUR OWN FOLLOW-UPS. The row computes chases live and the
+  // header prints it; GHY showed "3 follow-ups" beside prose saying two.
+  if ((r.chases ?? 0) > 0) {
+    t = t.replace(/\s*[,;]?\s*(one|two|three|four|five|six|\d+)\s+follow.?ups?\s+(sent\s+)?(since\s+\w+\.?\s*\d{1,2})?/gi, "");
+  }
+
   // A TRAILING ELLIPSIS FROM A READ WRITTEN BEFORE THE CLIP WAS FIXED.
   //
   // deal_reads holds rows generated weeks ago, and those keep whatever the
@@ -714,7 +764,28 @@ function coherentRow(r: Row, now: number): RowView {
     action = { text: "Waiting on customer", hard: false };
   }
 
-  return { status, ns, action, read: sane(dropRestatedFacts(r.read, r)) };
+  // MOVING HAS TO EXPLAIN ITSELF when the reason is the calendar.
+  //
+  // Dunavant is correctly Moving: a compliance demo is booked for today. Its
+  // read said "Three meetings attempted, none confirmed complete", which is also
+  // true and makes the row look misclassified. A leader reading a Moving pill
+  // above a sentence about nothing being confirmed concludes the status is
+  // wrong, and stops trusting the column.
+  //
+  // Appended only when the read does not already mention the booking, and only
+  // when the booking is the reason: a deal moving on a real customer commitment
+  // needs no explanation because its read already carries one.
+  let read = sane(dropRestatedFacts(r.read, r));
+  if (status === "moving" && cs === "booked" && r.next) {
+    const mentionsIt = /\b(booked|scheduled|on the calendar|next (meeting|session|call)|checkpoint)\b/i.test(read ?? "");
+    if (!mentionsIt) {
+      const what = shortMeeting(r.next.title) || "next session";
+      const line = `${shortDate(r.next.at)} ${what.toLowerCase()} is the next checkpoint.`;
+      read = read ? `${read.replace(/\.$/, "")}; ${line}` : line;
+    }
+  }
+
+  return { status, ns, action, read };
 }
 
 /**
@@ -737,7 +808,12 @@ function emptyRead(r: Row): string {
 function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): string {
   const { status, ns, action, read } = coherentRow(r, now);
   const silentDays = r.activity.quietDays;
-  const changed = sane(r.headline);
+  // WHAT CHANGED GETS THE SAME CLEANING AS THE READ. It is stored in the same
+  // row, written at the same moment, and goes stale the same way: Kronos
+  // carried "Aug 31 demo still on the books" here, not in the read. Its
+  // specificity is preserved, which is the point of the column; only claims the
+  // live calendar contradicts are removed.
+  const changed = sane(dropRestatedFacts(r.headline, r));
 
   return `<tr class="main">
     <td class="acct"><b>${esc(r.deal.account)}</b><i>${dealMeta(r)}</i></td>
