@@ -255,9 +255,33 @@ export async function sendPostCallSummary(args: {
   // so a draft that throws, times out or returns nothing leaves the recap
   // exactly as it was. That ordering is deliberate and is the reason the hook
   // sits here rather than before the render.
-  if (email && args.makeDraft) {
+  if (email) {
     try {
-      const card = await args.makeDraft({ summary: qualSummary, agreed });
+      // THE HOOK IS OPTIONAL AND THE DRAFT IS NOT.
+      //
+      // makeDraft was a parameter every caller had to remember, and three of the
+      // five did not: transcript-sync calls this in two places and
+      // reextract/ingest-manual in one each. Landstar was recapped through
+      // transcript-sync's general path on 2026-08-31 and got no draft at all,
+      // with followup_draft_state left at not_attempted and no reason recorded,
+      // which reads as "we never tried" because we never did.
+      //
+      // A caller may still pass makeDraft to own the bookkeeping, which
+      // recap-sync does. Without one, the draft still runs. Whether a rep gets a
+      // follow-up cannot depend on which code path happened to send the recap.
+      const card = args.makeDraft
+        ? await args.makeDraft({ summary: qualSummary, agreed })
+        : await defaultDraft({
+            tenantId: args.tenantId,
+            dealId: dealRow.data.id,
+            callId: args.callId ?? null,
+            account: dealRow.data.account,
+            repEmail: to,
+            transcript: args.transcript,
+            meetingType: meetingType ?? null,
+            summary: qualSummary,
+            agreed,
+          });
       if (card) email = prependDraftCard(email, card);
     } catch (err) {
       console.warn(
@@ -398,6 +422,77 @@ export function prependDraftCard<T extends { html: string; text: string }>(
     html,
     text: `FOLLOW UP ON THIS MEETING\n\n${card.text}\n\n${"-".repeat(40)}\n\n${email.text}`,
   };
+}
+
+/**
+ * Write the follow-up draft when the caller did not bring its own hook.
+ *
+ * Does the same work recap-sync's makeDraft does, including the state column, so
+ * a draft written through transcript-sync is recorded exactly like one written
+ * through recap-sync. Best effort throughout: the recap is already rendered when
+ * this runs, and nothing here may cost it.
+ */
+async function defaultDraft(a: {
+  tenantId: string;
+  dealId: string;
+  callId: string | null;
+  account: string;
+  repEmail: string;
+  transcript: string;
+  meetingType: string | null;
+  summary?: PostCallSummary;
+  agreed?: { weOwe: string[]; customerOwes: string[] };
+}): Promise<{ html: string; text: string } | null> {
+  if (!a.callId) return null;
+  const { supabaseAdmin } = await import("./supabase");
+  const { autoDraftFollowUpForCall } = await import("./followup-draft");
+  const db = supabaseAdmin();
+
+  const callRow = await db
+    .from("calls")
+    .select("participants, scheduled_start, call_date, title, call_subtype")
+    .eq("id", a.callId)
+    .maybeSingle();
+  const c = callRow.data as unknown as {
+    participants: unknown;
+    scheduled_start: string | null;
+    call_date: string | null;
+    title: string | null;
+    call_subtype: string | null;
+  } | null;
+  if (!c) return null;
+
+  const draft = await autoDraftFollowUpForCall({
+    tenantId: a.tenantId,
+    callId: a.callId,
+    dealId: a.dealId,
+    account: a.account,
+    repEmail: a.repEmail,
+    meetingType: a.meetingType,
+    callSubtype: c.call_subtype,
+    transcript: a.transcript,
+    summary: a.summary,
+    agreed: a.agreed,
+    callDate: c.scheduled_start ?? c.call_date,
+    participants: c.participants,
+    meetingTitle: c.title,
+  });
+
+  if (draft.created) {
+    await db
+      .from("calls")
+      .update({ followup_draft_state: "drafted", followup_draft_reason: null })
+      .eq("id", a.callId);
+    return draft.card ?? null;
+  }
+  const { classifyDraftOutcome } = await import("./ingest-failure-class");
+  const cls = classifyDraftOutcome(draft.reason ?? "no reason given");
+  await db
+    .from("calls")
+    .update({ followup_draft_state: cls.state, followup_draft_reason: cls.reason })
+    .eq("id", a.callId);
+  console.warn(`[post-call] draft ${cls.state} for ${a.callId}: ${cls.reason}`);
+  return null;
 }
 
 export function renderRecapEmail(
