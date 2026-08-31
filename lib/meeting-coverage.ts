@@ -466,12 +466,23 @@ export async function getMeetingCoverage(
     // to a no-show (no conversation to recap).
     const briefing = dealMeeting || (isNoShow && hasDeal) ? scoreBriefing(sent.briefing, start, now) : notExpected();
     const recap = dealMeeting && !isNoShow ? scoreAfter(sent.recap, end, now) : notExpected();
-    // The customer follow-up draft is narrower than the recap: it only applies
-    // to opportunity calls, since an existing-customer check-in does not want a
-    // sales follow-up sitting in the rep's drafts. Same gate as
+    // The follow-up draft applies to every customer call that is not internal.
+    //
+    // THIS GATE DRIFTED FROM THE PIPELINE AND THE VIEW LIED FOR IT. It used to
+    // read `isOpp`, matching autoDraftFollowUpForCall when that only drafted for
+    // new_opportunity. The pipeline gate was widened to skip only internal
+    // meetings, and this was not, so Landstar and Goarmstrong showed "not
+    // applicable" for a step the pipeline now runs. A coverage view that reports
+    // a step as not expected, when it was expected and did not happen, hides
+    // exactly the failure it exists to surface.
+    //
+    // The comment that used to sit here said "same gate as
     // autoDraftFollowUpForCall, so the view cannot claim a step is missing that
-    // the pipeline was never going to run.
-    const followupDraft = isOpp && !isNoShow ? scoreAfter(sent.followup, end, now) : notExpected();
+    // the pipeline was never going to run". It was right about the danger and
+    // wrong about the direction, and a comment asserting two things match is not
+    // what makes them match.
+    const isInternal = c.meeting_type === "internal";
+    const followupDraft = hasDeal && !isInternal && !isNoShow ? scoreAfter(sent.followup, end, now) : notExpected();
 
     // No-show steps: the follow-up draft to the rep, and the Rolldog no-show log
     // (only expected when the deal is Rolldog-linked). Both fire right after the

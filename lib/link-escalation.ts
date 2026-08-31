@@ -45,6 +45,26 @@ import { supabaseAdmin } from "./supabase";
 /** How long before the same deal may be raised with the same rep again. */
 export const ESCALATION_COOLDOWN_DAYS = 7;
 
+/**
+ * How many times one deal may be raised with a rep before we stop asking.
+ *
+ * The cooldown stops a deal being chased twice in a week and does nothing about
+ * it being chased forever. Measured 2026-08-31: 24 escalations across 19 deals,
+ * 11 still unlinked, and five of those asked twice since Aug 17 with no reply.
+ * A third ask is not persistence, it is the rep learning that DealRipe mail can
+ * be ignored, and that costs more than one unlinked deal.
+ *
+ * The ones that stick are mostly free-mail individuals: Luke Rousselle on
+ * icloud.com, a deal literally named Icloud. Free-mail never resolves by domain
+ * and often has no Salesforce account at all, so the rep's honest answer is
+ * "there isn't one" and there is no reply path for them to give it.
+ *
+ * The deal is NOT forgotten. It still shows unlinked in the coverage view and
+ * in sync-writeback-allowlist, which is where an operator looks. It just stops
+ * arriving in a rep's inbox.
+ */
+export const ESCALATION_MAX_ASKS = 2;
+
 export type EscalationDecision =
   | { kind: "sent"; account: string; to: string }
   | { kind: "skipped"; account: string; reason: string }
@@ -248,6 +268,24 @@ export async function escalateUnlinkedDeals(args: {
       });
       continue;
     }
+    // ASKED ENOUGH. Separate from the cooldown because they answer different
+    // questions: the cooldown is "not again this week", this is "not again".
+    const allTime = await db
+      .from("sent_messages")
+      .select("id")
+      .eq("tenant_id", args.tenantId)
+      .eq("deal_id", d.dealId)
+      .eq("kind", "link_escalation");
+    if (!allTime.error && (allTime.data ?? []).length >= ESCALATION_MAX_ASKS) {
+      counts.onCooldown += 1;
+      emit({
+        kind: "skipped",
+        account: d.account,
+        reason: `asked ${(allTime.data ?? []).length} times already and still unlinked; not asking again`,
+      });
+      continue;
+    }
+
     if ((prior.data ?? []).length > 0) {
       counts.onCooldown += 1;
       emit({

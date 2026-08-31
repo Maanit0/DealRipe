@@ -16,6 +16,8 @@ export type ActivityKind =
   | "followup_draft"
   | "digest"
   | "link_escalation"
+  | "reengage_draft"
+  | "draft_ready"
   | "unknown"
   | "rolldog_write"
   | "salesforce_write";
@@ -53,6 +55,12 @@ const KIND_TITLE: Record<Exclude<ActivityKind, "rolldog_write" | "salesforce_wri
   followup_draft: "Follow-up email drafted",
   digest: "Weekly digest sent",
   link_escalation: "Link escalation sent",
+  // DRAFTED, not sent. "Message sent . Transportnstore / To
+  // yaremi@transportnstore.com" read as DealRipe having emailed the customer,
+  // which it has never done and cannot do: Mail.Send is deliberately not
+  // granted. It wrote a draft in the rep's mailbox.
+  reengage_draft: "Re-engagement email drafted",
+  draft_ready: "Draft ready notice sent",
   unknown: "Message sent",
 };
 
@@ -207,7 +215,21 @@ export async function getActivityLog(tenantId: string): Promise<ActivityEntry[]>
     // A kind we do not recognise is now labelled "Message sent" rather than
     // impersonating a known artifact. Wrong-but-vague is recoverable;
     // wrong-but-specific is what costs an evening.
-    const KNOWN = ["briefing", "recap", "no_show_draft", "followup_draft", "digest", "link_escalation"];
+    // Every kind in SentMessageKind belongs here. reengage_draft has existed
+    // since the re-engagement sweep shipped and was never added, so seven of
+    // them this morning displayed as "Message sent" against a customer address,
+    // which is the same failure as the link_escalation one recorded above:
+    // an unknown kind falling back to a label that describes something else.
+    const KNOWN = [
+      "briefing",
+      "recap",
+      "no_show_draft",
+      "followup_draft",
+      "digest",
+      "link_escalation",
+      "reengage_draft",
+      "draft_ready",
+    ];
     const kind = (KNOWN.includes(m.kind) ? m.kind : "unknown") as Exclude<ActivityKind, "rolldog_write" | "salesforce_write">;
     // Prefer the call_id stored on the message (hard link, set on every recap /
     // briefing / no-show draft going forward). Fall back to nearest-in-time only

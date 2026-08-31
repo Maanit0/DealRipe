@@ -19,6 +19,8 @@ const KIND_META: Record<ActivityKind, { label: string; cls: string }> = {
   followup_draft: { label: "Follow-up draft", cls: "bg-warn/10 text-warn" },
   digest: { label: "Digest", cls: "bg-ink/[0.06] text-muted" },
   link_escalation: { label: "Link escalation", cls: "bg-ink/[0.06] text-muted" },
+  reengage_draft: { label: "Re-engagement draft", cls: "bg-warn/10 text-warn" },
+  draft_ready: { label: "Draft ready", cls: "bg-ink/[0.06] text-muted" },
   // A kind the log does not recognise. Deliberately dull and deliberately
   // vague: until 2026-08-24 an unknown kind rendered as "Recap", and a log that
   // confidently names the wrong artifact is worse than one that admits it does

@@ -11,7 +11,7 @@
  * mistake you only get to make once.
  *
  *   npx tsx scripts/test-send-report.ts --to you@example.com
- *   npx tsx scripts/test-send-report.ts --to mark@... --bcc you@... --live
+ *   npx tsx scripts/test-send-report.ts --to mark@...,mitch@... --bcc you@... --live
  *   npx tsx scripts/test-send-report.ts --to mark@... --bcc you@... --live --at 06:05
  */
 
@@ -36,9 +36,12 @@ function arg(n: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  const to = (arg("--to") ?? "").trim();
-  if (!to || !to.includes("@")) {
-    console.error("\nUsage: --to you@example.com\nNo default recipient: this sends real mail.\n");
+  // COMMA-SEPARATED, because the real recipients are a group. Sending to one
+  // person and hiding the rest in bcc is a different message: it tells Mark he
+  // is the only reader, and it stops Mitch and Eduardo replying to each other.
+  const to = list(arg("--to"));
+  if (to.length === 0 || to.some((a) => !a.includes("@"))) {
+    console.error("\nUsage: --to a@example.com,b@example.com\nNo default recipient: this sends real mail.\n");
     process.exit(1);
   }
 
@@ -91,7 +94,7 @@ async function main(): Promise<void> {
     console.log(`  Scheduled for ${target.toLocaleString("en-US", { timeZone: "America/Chicago" })} Central.`);
   }
   const res = await sendEmail({
-    to: [to],
+    to,
     ...(bcc.length > 0 ? { bcc } : {}),
     // --live drops the [TEST] prefix. Off by default so a rehearsal send can
     // never be mistaken for the real Monday report by whoever receives it.
@@ -106,7 +109,7 @@ async function main(): Promise<void> {
   // what customers and reps were actually sent, and a test to your own inbox is
   // not that. Polluting it would make the coverage views lie.
   console.log(
-    `\n  Sent to ${to}${bcc.length ? ` (bcc ${bcc.join(", ")})` : ""} (resend id ${res.id}), PDF attached.` +
+    `\n  Sent to ${to.join(", ")}${bcc.length ? ` (bcc ${bcc.join(", ")})` : ""} (resend id ${res.id}), PDF attached.` +
       ` Not recorded in sent_messages.\n`,
   );
 }
