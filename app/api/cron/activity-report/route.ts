@@ -23,6 +23,13 @@ const PILOT_TENANT_SLUG = "magaya";
  * an order neither of us controls. The digest is the one he already reads, so
  * it goes first and this follows.
  *
+ * NO PDF FROM HERE. Mark asked for the report as a PDF, and this route cannot
+ * make one: rendering it needs a headless browser and Vercel's Node runtime has
+ * no Chrome. So the cron sends the HTML, which is complete and readable, and the
+ * PDF is produced by scripts/test-send-report.ts on a machine that has Chrome.
+ * Saying this here because "the cron sends a PDF" is the obvious assumption and
+ * it is wrong.
+ *
  * SENDING IS OFF UNTIL EXPLICITLY ENABLED.
  *
  * ACTIVITY_REPORT_ENABLED must be exactly "1". Without it this builds the
@@ -55,6 +62,13 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  // ACTIVITY_REPORT_BCC, its own variable rather than DIGEST_BCC. Whoever is
+  // watching this report land is not necessarily on the digest, and one list
+  // doing two jobs is how a name ends up on mail nobody meant to send them.
+  const bcc = (process.env.ACTIVITY_REPORT_BCC ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   try {
     const tenantId = await resolveTenantId(PILOT_TENANT_SLUG);
@@ -62,7 +76,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
     if (!apply || to.length === 0) {
       console.log(
-        `[activity-report] apply=${apply} recipients=${to.length} ` +
+        `[activity-report] apply=${apply} recipients=${to.length} bcc=${bcc.length} ` +
           `total=${report.counts.total} moving=${report.counts.moving} notMoving=${report.counts.notMoving} stalled=${report.counts.stalled} silent=${report.counts.silent} (not sent)`,
       );
       return NextResponse.json({
@@ -81,6 +95,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       // deals rendered as text is unreadable, and a text part nobody can use is
       // worse than one that says where to look.
       text: `${report.subject}. ${report.counts.silent} deals have gone quiet, ${report.counts.moving} are moving. Open the HTML version for the full list.`,
+      ...(bcc.length > 0 ? { bcc } : {}),
     });
     await recordActivityReportSend({
       tenantId,

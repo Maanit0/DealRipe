@@ -550,20 +550,30 @@ function dropRestatedFacts(read: string | null | undefined, r: Row): string | nu
     t = t.replace(/\s*[,;]?\s*(and\s+)?(no|nothing)\s+(is\s+)?(booked|scheduled)( yet)?/gi, "");
   }
 
-  // A silence count in prose next to a silence pill that computes its own.
-  // The PRECEDING punctuation is consumed too. Without it, "sent since Aug 12;
-  // no reply in 14 days" became "sent since Aug 12;, no reply since": the clause
-  // went, the semicolon stayed, and a stray ";," shipped in three rows of a CRO's
-  // report. Removing a clause means removing the join that attached it.
-  if (r.activity.quietDays !== null) {
-    // "no CUSTOMER reply in 13 days" was slipping past a pattern that expected
-    // "no reply" adjacent. IFF printed a 17d silent pill beside a read saying
-    // 13 days, which is the contradiction this rule exists to remove.
-    t = t.replace(
-      /\s*[,;]?\s*(and\s+)?no\s+(\w+\s+)?repl(y|ies)\s+(in|for)\s+\d+\s+days?/gi,
-      ", no reply since",
-    );
-  }
+  // EVERY ELAPSED-DAY COUNT COMES OUT, not just the phrasings we happened to
+  // pattern-match.
+  //
+  // deal_reads is written when the evidence hash moves and read back for weeks,
+  // so a paragraph saying "no reply in 13 days" still says 13 on the day it is
+  // 17. Measured across the stored reads on 2026-08-31: twelve of twelve
+  // carrying a day count were written four days earlier, so every one of them
+  // understated by four. The status pill computes its own count live and is
+  // right; the prose beside it was wrong, and a CRO reading both sees the
+  // report disagree with itself.
+  //
+  // This is the same rule as lib/snapshot-diff.ts: never let a stored artifact
+  // state a number that moves with the clock. The row carries the live count a
+  // few centimetres away, so nothing is lost by removing it here.
+  //
+  // FORWARD estimates are deliberately kept. "once CBP paperwork clears,
+  // roughly 10 days" and "90-day notice" are not claims about elapsed time and
+  // do not go stale; only backward-looking durations do.
+  t = t
+    .replace(/\s*[,;]?\s*(and\s+)?(with\s+)?no\s+(\w+\s+)?(repl(y|ies)|response|contact|activity)\s+(in|for)\s+\d+\s+days?/gi, ", no reply since")
+    .replace(/\b(silent|quiet|dark)\s+for\s+\d+\s+days?/gi, "$1 since")
+    .replace(/\b\d+\s+days?\s+(of\s+)?(silence|silent|no contact|without a reply)/gi, "no reply since")
+    .replace(/,?\s*\d+\s+days?\s+(later|on|since)\b/gi, "")
+    .replace(/\bnow\s+\w+\s+weeks\s+silent\b/gi, "still silent");
 
   // A TRAILING ELLIPSIS FROM A READ WRITTEN BEFORE THE CLIP WAS FIXED.
   //

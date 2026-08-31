@@ -11,6 +11,7 @@
  * mistake you only get to make once.
  *
  *   npx tsx scripts/test-send-report.ts --to you@example.com
+ *   npx tsx scripts/test-send-report.ts --to mark@... --bcc you@... --live
  */
 
 import { config } from "dotenv";
@@ -23,6 +24,10 @@ import { resolve } from "node:path";
 import { buildActivityReport } from "../lib/activity-report";
 import { sendEmail } from "../lib/mailer";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
+
+function list(v: string | undefined): string[] {
+  return (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+}
 
 function arg(n: string): string | undefined {
   const i = process.argv.indexOf(n);
@@ -56,9 +61,14 @@ async function main(): Promise<void> {
   const pdf = readFileSync(pdfPath);
   console.log(`  PDF is ${Math.round(pdf.length / 1024)}KB.`);
 
+  const bcc = list(arg("--bcc"));
+  const live = process.argv.includes("--live");
   const res = await sendEmail({
     to: [to],
-    subject: `[TEST] ${report.subject}`,
+    ...(bcc.length > 0 ? { bcc } : {}),
+    // --live drops the [TEST] prefix. Off by default so a rehearsal send can
+    // never be mistaken for the real Monday report by whoever receives it.
+    subject: live ? report.subject : `[TEST] ${report.subject}`,
     html: report.html,
     text: `${report.subject}. ${report.counts.silent} gone silent, ${report.counts.moving} moving. The PDF is attached.`,
     attachments: [{ filename: "DealRipe-pipeline-review.pdf", content: pdf.toString("base64") }],
@@ -67,7 +77,10 @@ async function main(): Promise<void> {
   // Deliberately NOT recorded in sent_messages. That table is the audit trail of
   // what customers and reps were actually sent, and a test to your own inbox is
   // not that. Polluting it would make the coverage views lie.
-  console.log(`\n  Sent to ${to} (resend id ${res.id}), PDF attached. Not recorded in sent_messages.\n`);
+  console.log(
+    `\n  Sent to ${to}${bcc.length ? ` (bcc ${bcc.join(", ")})` : ""} (resend id ${res.id}), PDF attached.` +
+      ` Not recorded in sent_messages.\n`,
+  );
 }
 
 main().catch((e) => {
