@@ -202,25 +202,18 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
 }
 
 export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
-  const to = input.to.filter(Boolean).join(", ");
+  // BUILT FROM THE SAME BLOCK the recap embeds, not from a second copy of it.
+  //
+  // These were two renderers of one card and they drifted the moment anything
+  // changed: the "Attached:" line was added to the block and this kept its own
+  // markup, so the preview showed no attachment while production showed one. A
+  // card rendered two ways will disagree, and the disagreement surfaces as a
+  // preview that lies about the artifact.
+  const card = renderDraftCardBlock(input);
   const subject = `Draft ready: ${input.account}`;
-  const ex = excerpt(input.body);
-
-  const excerptHtml = ex.text
-    .split("\n")
-    .map((l) => `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${NAVY};">${esc(l)}</div>`)
-    .join("");
-
-  const button = input.webLink
-    ? `<a href="${esc(input.webLink)}" style="display:inline-block;background:${NAVY};color:#FFFFFF;font-family:${SANS};font-size:15px;font-weight:600;line-height:20px;padding:13px 26px;border-radius:7px;text-decoration:none;">Open draft</a>
-       <div style="font-family:${SANS};font-size:12.5px;line-height:19px;color:${INK};margin-top:9px;">This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.</div>`
-    : // A missing link is a different thing from a broken one. Say where to look
-      // rather than render a dead button.
-      `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};">We could not get a direct link for this one. It is in your mailbox under the subject above. Nothing has been sent.</div>`;
 
   const html = `<div style="background:${BG};padding:24px 0;">
   <div style="max-width:600px;margin:0 auto;background:${CARD};border:1px solid ${BORDER};border-radius:10px;padding:24px 26px;">
-
     <div style="font-family:${SANS};font-size:21px;line-height:28px;color:${NAVY};font-weight:700;">${esc(input.account)}</div>
     ${
       input.meetingTitle
@@ -229,75 +222,19 @@ export function renderDraftReadyEmail(input: DraftReadyInput): RenderedEmail {
     }
     ${
       input.meetingWhen
-        ? `<div style="font-family:${SANS};font-size:12.5px;letter-spacing:0.6px;color:${INK};font-weight:600;margin-top:5px;">${esc(input.meetingWhen)}</div>`
+        ? `<div style="font-family:${SANS};font-size:12.5px;letter-spacing:0.6px;font-weight:600;color:${INK};margin-top:5px;">${esc(input.meetingWhen)}</div>`
         : ""
     }
-
-    <div style="height:1px;background:${BORDER};margin:18px 0 0 0;"></div>
-
-    <div style="font-family:${SANS};font-size:12px;letter-spacing:0.7px;text-transform:uppercase;color:${GREEN};font-weight:700;margin-top:17px;">Follow up on this meeting</div>
-
-    <div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
-      <!--
-        INLINE AND BOLD, the way Sybill writes it.
-
-        An eyebrow label was tried and Maanit reversed it: "Subject:" reads
-        faster in front of the string than stacked above it, and a rep already
-        knows the thing beginning "RE:" is a subject. It stays labelled at all
-        because the string is the payload here. A follow-up is written as a reply
-        so it threads onto the customer conversation, the mail provider then
-        replaces our subject with the thread's, and Ariel Rodriguez spent twenty
-        minutes looking for "Following up on our call" when his mailbox had
-        called it "RE: Magaya / Grupo Orvia (Cost/Budget)".
-      -->
-      <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${NAVY};font-weight:700;">Subject: ${esc(input.draftSubject)}</div>
-      ${
-        to
-          ? `<div style="font-family:${SANS};font-size:13.5px;line-height:20px;color:${INK};margin-top:4px;">To ${esc(to)}</div>`
-          : ""
-      }
-      ${
-        (input.unaddressed ?? []).length > 0
-          ? `<div style="font-family:${SANS};font-size:13px;line-height:19px;color:${INK};margin-top:6px;">Also spoke, not on the invite and no address on file: ${esc((input.unaddressed ?? []).join(", "))}. Add them yourself if they should get this.</div>`
-          : ""
-      }
-      <div style="height:1px;background:${BORDER};margin:12px 0;"></div>
-      ${excerptHtml}
-      ${
-        ex.truncated
-          ? `<div style="font-family:${SANS};font-size:14px;line-height:22px;color:${INK};margin-top:2px;">...</div>`
-          : ""
-      }
-    </div>
-
-    <div style="margin-top:18px;">${button}</div>
-
+    <div style="height:1px;background:${BORDER};margin:18px 0 17px 0;"></div>
+    <div style="font-family:${SANS};font-size:18px;line-height:24px;color:${NAVY};font-weight:700;margin:0 0 9px 0;">Follow up on this meeting</div>
+    ${card.html}
   </div>
 </div>`;
 
-  const text = [
-    input.account,
-    input.meetingTitle ?? null,
-    input.meetingWhen ?? null,
-    ``,
-    `FOLLOW UP ON THIS MEETING`,
-    ``,
-    `Subject: ${input.draftSubject}`,
-    to ? `To: ${to}` : null,
-    (input.unaddressed ?? []).length > 0
-      ? `Also spoke, not on the invite and no address on file: ${(input.unaddressed ?? []).join(", ")}. Add them yourself if they should get this.`
-      : null,
-    ``,
-    ex.text,
-    ex.truncated ? `...` : null,
-    ``,
-    input.webLink
-      ? `Open draft: ${input.webLink}`
-      : `It is in your mailbox under that subject.`,
-    `This does not send it. It opens the draft in your mailbox, on the right thread, so you can edit it and send it yourself.`,
-  ]
+  const text = [input.account, input.meetingTitle ?? null, input.meetingWhen ?? null, ``, `FOLLOW UP ON THIS MEETING`, ``, card.text]
     .filter((l) => l !== null)
     .join("\n");
 
   return { subject, html, text };
 }
+

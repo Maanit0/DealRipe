@@ -73,6 +73,11 @@ async function main(): Promise<void> {
     // it, so this preview shows the BUTTON with a stand-in href. Marked as such
     // in the console output: the layout is real, this particular link is not.
     webLink: "https://outlook.office.com/mail/drafts/",
+    // Shown so the "Attached:" line is visible in the preview. In production
+    // this list is whatever attachFileToDraft actually put on the draft, never a
+    // guess: a file that failed to attach keeps the "attach before sending"
+    // line instead.
+    attachedFiles: ["Magaya-Supply-Chain-Data-Sheet.pdf"],
   });
 
   mkdirSync(".previews", { recursive: true });
