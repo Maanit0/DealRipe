@@ -150,14 +150,30 @@ export async function logNoShowToRolldog(
   // no-show call has no other activity write, so any prior one is this no-show.
   const prior = await db
     .from("crm_access_log")
-    .select("id")
+    .select("fields")
     .eq("tenant_id", tenantId)
     .eq("operation", "write")
     .eq("allowed", true)
     .eq("call_id", opts.callId)
-    .contains("fields", ["activities"])
-    .limit(1);
-  if ((prior.data ?? []).length > 0) {
+    .limit(50);
+  // FAIL CLOSED on a failed lookup, and FILTER IN JS.
+  //
+  // This read `.contains("fields", ["activities"]).limit(1)` and Postgres
+  // answered `invalid input syntax for type json` every single time, because
+  // PostgREST serialises the array argument into a shape this jsonb column will
+  // not accept. Nothing checked `prior.error`, so the guard read its own failure
+  // as "no activity has been logged" and wrote again: 4 opportunities in
+  // Magaya's Rolldog carry a duplicate interaction because of it.
+  //
+  // That is the house failure mode landing in a customer's CRM. Not writing is
+  // recoverable; a second entry in their interactions tab is not.
+  if (prior.error) {
+    return { written: false, reason: `could not check for a prior activity: ${prior.error.message}` };
+  }
+  const alreadyLogged = ((prior.data ?? []) as Array<{ fields?: unknown }>).some(
+    (r) => Array.isArray(r.fields) && (r.fields as string[]).includes("activities"),
+  );
+  if (alreadyLogged) {
     return { written: false, opportunityId: opp, reason: "no-show activity already logged for this call" };
   }
 
@@ -227,14 +243,30 @@ export async function logHistoryBackfillToRolldog(
 
   const prior = await db
     .from("crm_access_log")
-    .select("id")
+    .select("fields")
     .eq("tenant_id", tenantId)
     .eq("operation", "write")
     .eq("allowed", true)
     .eq("call_id", opts.callId)
-    .contains("fields", ["activities"])
-    .limit(1);
-  if ((prior.data ?? []).length > 0) {
+    .limit(50);
+  // FAIL CLOSED on a failed lookup, and FILTER IN JS.
+  //
+  // This read `.contains("fields", ["activities"]).limit(1)` and Postgres
+  // answered `invalid input syntax for type json` every single time, because
+  // PostgREST serialises the array argument into a shape this jsonb column will
+  // not accept. Nothing checked `prior.error`, so the guard read its own failure
+  // as "no activity has been logged" and wrote again: 4 opportunities in
+  // Magaya's Rolldog carry a duplicate interaction because of it.
+  //
+  // That is the house failure mode landing in a customer's CRM. Not writing is
+  // recoverable; a second entry in their interactions tab is not.
+  if (prior.error) {
+    return { written: false, reason: `could not check for a prior activity: ${prior.error.message}` };
+  }
+  const alreadyLogged = ((prior.data ?? []) as Array<{ fields?: unknown }>).some(
+    (r) => Array.isArray(r.fields) && (r.fields as string[]).includes("activities"),
+  );
+  if (alreadyLogged) {
     return { written: false, reason: "an activity was already logged for this call" };
   }
 

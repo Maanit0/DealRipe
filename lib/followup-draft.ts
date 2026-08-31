@@ -24,6 +24,7 @@
  *    the rep's habits, so we do not scale one rep's ceiling to the team.
  */
 
+import { draftArchiveHtml } from "./draft-archive";
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
 import { bundleForNamedAttachments, collateralPromptBlock } from "./magaya-collateral";
@@ -560,6 +561,29 @@ const SIGNOFF_RE =
  * broken image on outgoing customer mail is worse than no image. It is tracked
  * as an open item instead.
  */
+/**
+ * Close a draft the way this rep closes their own mail.
+ *
+ * EXPORTED AND SHARED because the re-engagement path did not have it. Its
+ * prompt said "no signature, the rep's own signature is appended by Outlook",
+ * which is not true of a draft created through Graph: Outlook applies a
+ * signature when a person composes in the client, not to a message the API
+ * wrote. So every re-engagement draft reached a rep with no sign-off and no
+ * name, and the seven sent on 2026-08-31 all end mid-sentence-block.
+ *
+ * One implementation rather than two, for the reason the archive renderer now
+ * lives in its own file: the same artifact rendered twice diverges, and here
+ * the divergence lands in a customer's inbox.
+ */
+export function appendRepSignature(body: string, mailbox: string, samples: ReadonlyArray<string>): string {
+  const learned = learnSignature(samples, repFirstName(mailbox));
+  // A rep-supplied block replaces the LEARNED BLOCK ONLY, and keeps the rep's
+  // own sign-off word above it when we have measured one.
+  const supplied = REP_SIGNATURE_BLOCK[mailbox.toLowerCase()];
+  const signature = supplied ? `${learnedSignOff(learned) ?? "Best regards,"}\n${supplied}` : learned;
+  return `${body.trimEnd()}\n\n${signature ?? `Best regards,\n${repFirstName(mailbox)}`}`;
+}
+
 const REP_SIGNATURE_BLOCK: Record<string, string> = {
   // Supplied by Juan on 2026-08-27, transcribed from the block in his own mail.
   "jlopez@magaya.com": "JUAN LOPEZ\nSENIOR SOFTWARE ADVISOR\n786.363.6269",
@@ -655,8 +679,10 @@ Non-negotiable rules:
 10. FORMAT AS SHORT STANDALONE LINES, one thought each, with a blank line between. Never a dense paragraph. A rep reads this on a phone between calls and a wall of text gets rewritten. Roughly: greeting, one line on what is in the email, one line with the dated ask, one optional line with the softer question.
 10a. STOP AFTER THE LAST CONTENT LINE. Do NOT write a closing line, a sign-off, a name, a title or a phone number. The rep's signature is appended automatically and is not yours to write. End the body on the final sentence of substance.
 11. For anything going out WITH this email, use present tense and stay neutral about the mechanism: "Here's the recording from Friday's session." That stays true once the rep attaches it.
-11a. NEVER PROMISE ANOTHER EMAIL. Do not write "in a separate email", "in a follow-up email", "I'll send that shortly", or any other future correspondence. You are writing the email the rep sends; a second one does not exist unless the rep decides to write it, and inventing it creates an obligation they did not make and a promise to the customer they may not keep. The Orvia draft said "the questionnaire is on its way in a separate email", which is DealRipe committing Ariel to homework nobody agreed to. If the rep committed on the call to send something, there are exactly two honest ways to write it: name it in attachmentsToAdd and refer to it as here, present tense, because it is going out with THIS email; or, when it genuinely cannot go now, state the commitment with the date the rep gave, in the rep's control, as "I'll get the questionnaire to you by Monday morning". Never a promise about a message.
-   Do NOT write "please find attached" or "I have attached": nothing is attached when the rep opens the draft, and it reads as a mistake.
+11a. NEVER PROMISE ANOTHER EMAIL. Do not write "in a separate email", "in a follow-up email", "I'll send that shortly", or any other future correspondence. You are writing the email the rep sends; a second one does not exist unless the rep decides to write it, and inventing it creates an obligation they did not make and a promise to the customer they may not keep. The Orvia draft said "the questionnaire is on its way in a separate email", which is DealRipe committing Ariel to homework nobody agreed to. If the rep committed on the call to send something, there are exactly two honest ways to write it: name it in attachmentsToAdd and, ONLY IF IT IS ONE OF THE COLLATERAL BUNDLE'S OWN FILES, refer to it in the present tense because DealRipe attaches those before the rep opens the draft; or, for anything else, state the commitment with the date the rep gave, in the rep's control, as "I'll get the questionnaire to you by Monday morning". Never a promise about a message.
+   ONLY THE BUNDLE FILES ARE ACTUALLY ATTACHED. Everything else you name in attachmentsToAdd is a note to the rep, and the draft that went to Departure Pets on 2026-08-31 proves what happens when that is forgotten: its body said "The barcode cargo label PDF and the help.magaya.com link covering airway bill field configuration and document templates are attached" while the card above it said "Nothing is attached yet". Two claims about the same email, in the same email, and the customer only sees the false one.
+   A LINK IS NEVER AN ATTACHMENT. A help.magaya.com page goes in the body as a URL. Never name a link in attachmentsToAdd and never describe one as attached.
+   Do NOT write "please find attached" or "I have attached" for anything that is not a bundle file.
    Do NOT write "is on its way", "are on their way" or "I'll send it over" for something included in THIS email either. Those describe a separate, later email and leave the customer waiting for one that never arrives.
    Always name the file in attachmentsToAdd so the rep knows what to attach before sending.
 
@@ -961,14 +987,7 @@ export async function generateFollowUpDraft(
   // regards" gave every rep the same sign-off regardless of how they actually
   // close, and gave none of them their name, title and phone, so the first
   // thing each rep did to a draft was retype their own signature.
-  const learned = learnSignature(samples, repFirstName(input.mailbox));
-  // A rep-supplied block replaces the LEARNED BLOCK ONLY, and keeps the rep's
-  // own sign-off word above it when we have measured one.
-  const supplied = REP_SIGNATURE_BLOCK[input.mailbox.toLowerCase()];
-  const signature = supplied
-    ? `${learnedSignOff(learned) ?? "Best regards,"}\n${supplied}`
-    : learned;
-  parsed.body = `${parsed.body.trimEnd()}\n\n${signature ?? `Best regards,\n${repFirstName(input.mailbox)}`}`;
+  parsed.body = appendRepSignature(parsed.body, input.mailbox, samples);
 
   // Customer-side addresses from the CALL, computed the same way for a reply and
   // for a fresh draft.
@@ -1539,6 +1558,13 @@ export async function autoDraftFollowUpForCall(args: {
     }
   }
 
+  // What the rep STILL OWES, computed once and used by both the card and the
+  // archive. It was computed inline for the card only, so the Activity log kept
+  // printing "Rep must attach: Magaya datasheet" on drafts that already carried
+  // the datasheet. Two readings of one fact is how that happened; there is now
+  // one.
+  const stillOwed = (res.draft.attachmentsToAdd ?? []).filter(() => attached.length === 0);
+
   // THE CARD FOR THE TOP OF THE RECAP, built here and returned rather than
   // emailed separately.
   //
@@ -1568,7 +1594,7 @@ export async function autoDraftFollowUpForCall(args: {
       generatedSubject: res.draft.subject,
       body: res.draft.body,
       // Only what the rep still has to do. A file we attached is not a chore.
-      attachmentsToAdd: (res.draft.attachmentsToAdd ?? []).filter(() => attached.length === 0),
+      attachmentsToAdd: stillOwed,
       attachedFiles: attached,
       webLink: res.webLink ?? null,
       internetMessageId: res.draftId ?? null,
@@ -1592,7 +1618,12 @@ export async function autoDraftFollowUpForCall(args: {
     // Real HTML, not an empty string: the Activity log renders body_html in the
     // expandable detail, so an empty body means the row cannot be inspected.
     // Inspecting exactly what was put in a rep's mailbox is the whole point.
-    html: draftArchiveHtml(res.draft),
+    html: draftArchiveHtml({
+      to: res.draft.to,
+      body: res.draft.body,
+      replyToMessageId: res.draft.replyToMessageId,
+      attachmentsToAdd: stillOwed,
+    }),
     text: res.draft.body,
     // GRAPH'S DRAFT ID, in the provider column.
     //
@@ -1606,29 +1637,6 @@ export async function autoDraftFollowUpForCall(args: {
     providerId: res.draftId ?? null,
   });
   return { created: true, card };
-}
-
-/**
- * The archived copy shown in the Activity log. Records what the rep will see,
- * including whether it went onto a thread and which files they still need to
- * attach, since those are the two things most likely to be wrong.
- */
-function draftArchiveHtml(draft: FollowUpDraft): string {
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const meta = draft.replyToMessageId
-    ? "Reply on the existing customer thread"
-    : `New email to ${draft.to.join(", ") || "(no recipients resolved)"}`;
-  const attach = draft.attachmentsToAdd.length
-    ? `<p style="margin:12px 0 0;color:#b45309;font-size:12px;">Rep must attach: ${esc(draft.attachmentsToAdd.join(", "))}</p>`
-    : "";
-  return [
-    `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:13px;color:#0F172A;">`,
-    `<p style="margin:0 0 4px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Draft, not sent</p>`,
-    `<p style="margin:0 0 12px;color:#334155;font-size:12px;">${esc(meta)}</p>`,
-    `<div style="white-space:pre-wrap;">${esc(draft.body)}</div>`,
-    attach,
-    `</div>`,
-  ].join("");
 }
 
 /** Deal domains for thread lookup, excluding anything internal. */

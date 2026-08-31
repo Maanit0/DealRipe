@@ -175,7 +175,7 @@ export function CoverageList({
                         ? "written to interactions tab"
                         : wb.nextStep === "gated"
                           ? "composed, live write gated (ROLLDOG_WRITE_NEXT_STEP off)"
-                          : "none"}
+                          : "no next-step activity written"}
                     </div>
 
                     {writes.length > 0 && (

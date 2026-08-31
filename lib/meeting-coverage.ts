@@ -527,6 +527,15 @@ export async function getMeetingCoverage(
         missed = Array.from(expected).filter((s) => !written.includes(s));
       }
 
+      // "none" MEANS "WE WROTE NO NEXT-STEP ACTIVITY", NOT "THERE WAS NO NEXT
+      // STEP." Those are different facts and this cannot currently tell them
+      // apart, because `writeNextStep` is conditional on a non-empty
+      // `opts.nextAction` and logs nothing when it skips. The Dunavant demo on
+      // 2026-08-31 read as "the rep agreed no next step", which is a finding
+      // about a $293k deal, when the recap for that same call says Debra
+      // confirmed a warehousing demo. The value is named for what it observes
+      // and the UI says so; closing the gap needs the skip to be recorded at
+      // the point it happens, in lib/crm-writer.ts.
       const nextStep: WritebackCoverage["nextStep"] = written.includes("activities")
         ? "written"
         : liveNextStep

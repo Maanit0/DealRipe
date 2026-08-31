@@ -22,6 +22,7 @@
  * presses send.
  */
 import { loadPortfolioRead } from "./deal-read-portfolio";
+import { isSystemAddress, rosterForDeal } from "./reengage-recipients";
 import { domainOf } from "./graph-mail";
 import { DRAFTABLE, createReengageDraft, generateReengageDraft, recentlyDrafted } from "./reengage-draft";
 import { supabaseAdmin } from "./supabase";
@@ -50,6 +51,14 @@ export type SweepResult = {
   previews: SweepPreview[];
 };
 
+/**
+ * Every customer address seen on the deal's last four captured calls.
+ *
+ * SYSTEM ADDRESSES ARE DROPPED HERE. `noreply@sender.zohocalendar.in` sat on an
+ * Apexcargo invite as a participant and was drafted to on 2026-08-31, because
+ * the only filter was the seller's domain. This returns the candidate set;
+ * `pickRecipient` decides which ONE of them the mail is addressed to.
+ */
 async function customerEmailsFor(tenantId: string, dealId: string): Promise<string[]> {
   const res = await supabaseAdmin()
     .from("calls")
@@ -65,7 +74,7 @@ async function customerEmailsFor(tenantId: string, dealId: string): Promise<stri
     const people = Array.isArray(row.participants) ? (row.participants as Array<{ email?: string | null }>) : [];
     for (const p of people) {
       const e = (p?.email ?? "").toLowerCase().trim();
-      if (e.includes("@") && domainOf(e) !== INTERNAL_DOMAIN) out.add(e);
+      if (e.includes("@") && domainOf(e) !== INTERNAL_DOMAIN && !isSystemAddress(e)) out.add(e);
     }
   }
   return [...out];
@@ -163,6 +172,7 @@ export async function runReengageSweep(args: {
       account: r.account,
       mailbox: r.repEmail,
       customerEmails,
+      roster: await rosterForDeal(tenantId, r.dealId, customerEmails),
       signals: r.signals,
       flags: r.flags,
       salesforceAccountId: sfByDeal.get(r.dealId) ?? null,

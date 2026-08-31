@@ -37,6 +37,10 @@
       "schedule": "15 */4 * * *"
     },
     {
+      "path": "/api/cron/email-log",
+      "schedule": "45 */2 * * *"
+    },
+    {
       "path": "/api/cron/digest",
       "schedule": "0 11 * * 1"
     },

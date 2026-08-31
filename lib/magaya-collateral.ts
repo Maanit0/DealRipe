@@ -69,7 +69,13 @@ export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
         url: "https://www.youtube.com/watch?v=FEY6Sl6g_Vo&list=PLsPRY0qd--QeBhs05epBgNkOkofaQ8NA5",
       },
     ],
-    attachments: ["Magaya datasheet", "Product overview"],
+    // JUST THE DATASHEET. "Product overview" was here and is not a document.
+    // Four months of Juan's sent mail to 2026-08-31 carry the Supply Chain Data
+    // Sheet 23 times, the Rates Solution Sheet once, and nothing named a product
+    // overview at all; everything else he attaches is a per-customer proposal or
+    // SOW. So the line asked him to attach a file that does not exist, forever,
+    // on every supply chain draft. The datasheet IS the overview.
+    attachments: ["Magaya datasheet"],
     files: ["Magaya-Supply-Chain-Data-Sheet.pdf"],
   },
 ];
@@ -99,7 +105,7 @@ RULES FOR COLLATERAL, and the default is to send none:
 - Pick ONE bundle. If the call genuinely covered both, pick the one the customer spent the most time on and say nothing about the other.
 - If you cannot tell which one fits, INCLUDE NO LINKS AND NO ATTACHMENTS. The rep attaches the right one in ten seconds; the wrong one costs them longer than an empty draft and teaches them to check every draft afterwards.
 - Write the links into the body EXACTLY as given, each on its own line with its title, the way the rep already writes them. Never invent a URL, never shorten one, never describe a video that has no link here.
-- Name the attachments in attachmentsToAdd, never in the body as "please find attached": nothing is attached when the rep opens the draft.
+- Name the attachments in attachmentsToAdd. DealRipe attaches the bundle's own datasheet to the draft before the rep opens it, so referring to it in the body in the present tense is correct and true. Never promise a file that is not in this list.
 - An MNDA is NOT in this list and is not yours to promise. The rep sends it through AdobeSign by hand, and saying it has been sent when it has not is a false statement to a customer.`;
 }
 

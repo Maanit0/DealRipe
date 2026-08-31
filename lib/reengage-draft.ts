@@ -41,6 +41,9 @@
  *   should be a rep's deliberate choice.
  */
 
+import { draftArchiveHtml } from "./draft-archive";
+import { appendRepSignature, voiceSamples } from "./followup-draft";
+import { pickRecipient, type Roster } from "./reengage-recipients";
 import { computeDealFlags, type Flag } from "./deal-flags";
 import { readCustomerStanding, type CustomerStanding } from "./salesforce-context";
 import { assessDeal, computeBuyerSignals, type BuyerSignals } from "./deal-signals-buyer";
@@ -154,10 +157,14 @@ RULES, and each one exists because breaking it produced an email a rep rewrote:
 - Ground every sentence in what was actually said on the calls. Reference a specific thing THEY said they cared about or were waiting on. A message that could have been sent to any account is worse than no message.
 - Never mention our CRM, our forecast, our qualification framework, a stage, or a gap. The customer does not know those exist and does not care.
 - Do not apologise for the gap in contact, do not say "just checking in", "circling back", "touching base", or "I wanted to follow up".
-- Exactly ONE ask, and it is specific. A question they can answer in one line, or a concrete offer. Not "let me know if you have questions".
+- LEAD WITH SOMETHING FROM OUR SIDE, then ask. If WHAT WE STILL OWE THEM is present below, open with the one item most worth reporting on and say where it stands. An email that brings news earns a reply; an email that requests a status update asks the customer to do our work.
+- NEVER ask whether the project is still active, still on their radar, still moving, or has been tabled. It hands them a clean exit and it is the exact wording of the two attempts in this pilot that got no answer. Assume it is live and write as though it is.
+- Exactly ONE ask, and it is specific. A question they can answer in one line, or a concrete offer. Not "let me know if you have questions". Where you can, shrink the cost of saying yes to a number: "15 to 20 minutes" beats "a quick call".
 - No em-dashes and no en-dashes anywhere. Use commas or start a new sentence.
 - Six sentences maximum, and shorter is better. This is read on a phone.
-- No subject line in the body. No signature, no "Best regards": the rep's own signature is appended by Outlook.
+- Open with a greeting on its own line, the way the rep writes it: "Hi Carrie," or "Yaremi," followed by a blank line. Address the ONE person the message is for, even when others are copied.
+- No subject line in the body, and no sign-off or signature. DealRipe appends the rep's own measured signature after you. (This used to say Outlook appends it. Outlook does not append a signature to a draft created through the API, so every re-engagement went out unsigned.)
+- Do not restate your own ask as a noun phrase, and never count it. "That one answer would help me" is "That would help me". Also out: "just that one thing", "even a quick reply", "it would mean a lot". Asking for something and then narrating how valuable it is to you is a sales move; the rep asks and stops.
 
 Return JSON only: {"subject": "...", "body": "..."}
 The subject is ignored when this replies to an existing thread, so write it as though it were a fresh email either way.`;
@@ -192,11 +199,101 @@ async function lastCallContext(
     .filter((r) => r.answer)
     .map((r) => `- ${r.framework_field_key}: ${r.answer}${r.evidence ? ` (they said: "${String(r.evidence).slice(0, 220)}")` : ""}`);
 
+  // THE RECAP NARRATIVE, alongside the extraction rather than instead of it.
+  //
+  // The extraction is the framework's answer set, so it holds what the
+  // qualification asks about and nothing else. The narrative pass is written in
+  // the customer's own words with no framework vocabulary, which is where the
+  // offhand detail, the objection as they phrased it and the personal thing
+  // live. Those are what make a re-engagement sound like the rep wrote it.
+  //
+  // The stored recap opens with a copy of the follow-up draft, so only the
+  // WHAT HAPPENED section is taken. A recap that does not carry that heading
+  // contributes nothing rather than a slice of the wrong thing.
+  const narrative = await recapNarrative(c.id);
+  // WHAT THE REP PROMISED AND HAS NOT DELIVERED.
+  //
+  // The one re-engagement in this pilot that got a reply inside two days was
+  // Juan reporting on work he had done: "I have been in discussions with my
+  // implementation team and have some resources lined up and reserved for you."
+  // He invented no news. He reported on a commitment he had already made.
+  //
+  // Those commitments are already written down, as the bullets in the follow-up
+  // email the rep sent after the call, so this needs no roadmap feed and no
+  // implementation calendar. It also cannot hallucinate an offer, because every
+  // line is something the rep said out loud on a recorded call.
+  const owed = await openCommitments(c.id);
+
   return {
     callId: c.id,
     when: c.scheduled_start ?? c.call_date,
-    summary: [c.title ? `Meeting: ${c.title}` : null, ...lines].filter(Boolean).join("\n"),
+    summary: [
+      c.title ? `Meeting: ${c.title}` : null,
+      narrative ? `How the call actually went:\n${narrative}` : null,
+      owed ? `WHAT WE STILL OWE THEM, from the follow-up the rep sent after that call:\n${owed}` : null,
+      lines.length > 0 ? `What was established:` : null,
+      ...lines,
+    ]
+      .filter(Boolean)
+      .join("\n"),
   };
+}
+
+/**
+ * The commitment bullets from the follow-up draft the rep sent after the call.
+ *
+ * The stored recap opens with a copy of that draft, and its bullet list is the
+ * "here is what we will do" block. Only lines that read as an obligation are
+ * kept: a bullet describing what the CUSTOMER will do is not something we can
+ * report progress on, and offering it back to them is worse than saying
+ * nothing.
+ */
+async function openCommitments(callId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin()
+    .from("sent_messages")
+    .select("body_text")
+    .eq("call_id", callId)
+    .eq("kind", "recap")
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const text = (data as { body_text?: string | null } | null)?.body_text;
+  if (!text) return null;
+  // Stop at the recap proper; past that the bullets are extracted fields, not
+  // promises.
+  const head = text.split(/\n-{6,}\n/)[0] ?? text;
+  const bullets = head
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => /^[-*\u2022]\s+/.test(l))
+    .map((l) => l.replace(/^[-*\u2022]\s+/, ""))
+    // Ours, not theirs. "I am looking into", "Steven is checking", "we are
+    // flagging" are reportable; "Debra will send the org chart" is not.
+    .filter((l) => !/^(they|the customer|[A-Z][a-z]+ (will|is going to) (send|share|provide|get back))/i.test(l))
+    .slice(0, 6);
+  return bullets.length > 0 ? bullets.map((b) => `- ${b}`).join("\n") : null;
+}
+
+/** The WHAT HAPPENED section of the last recap for this call, or null. */
+async function recapNarrative(callId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin()
+    .from("sent_messages")
+    .select("body_text")
+    .eq("call_id", callId)
+    .eq("kind", "recap")
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const text = (data as { body_text?: string | null } | null)?.body_text;
+  if (!text) return null;
+  const start = text.indexOf("WHAT HAPPENED");
+  if (start < 0) return null;
+  const rest = text.slice(start + "WHAT HAPPENED".length);
+  // Ends at the next all-caps heading, which is CAPTURED ON THIS CALL today and
+  // must not be assumed: anything matching the heading shape closes the block.
+  const end = rest.search(/\n[A-Z][A-Z '&-]{6,}\n/);
+  const body = (end < 0 ? rest : rest.slice(0, end)).trim();
+  return body.length > 40 ? body.slice(0, 1800) : null;
 }
 
 /**
@@ -212,6 +309,14 @@ export async function generateReengageDraft(args: {
   account: string;
   mailbox: string;
   customerEmails: string[];
+  /**
+   * The candidate recipients split by whether they have ever replied.
+   *
+   * Optional so a caller that has not built one still works, and then the mail
+   * falls back to the whole roster exactly as it did before rather than
+   * silently going nowhere.
+   */
+  roster?: Roster;
   signals: BuyerSignals;
   flags: Flag[];
   /**
@@ -300,8 +405,18 @@ export async function generateReengageDraft(args: {
     mailbox: args.mailbox,
     flag: chosen.flag,
     subject: dedash(parsed.subject ?? `${args.account}`),
-    body: dedash(parsed.body).trim(),
-    to: args.customerEmails,
+    // SIGNED THE SAME WAY A FOLLOW-UP IS, through the one shared function.
+    // These reached reps ending on the last sentence with no name attached,
+    // because the prompt asserted Outlook would add one and nothing checked.
+    body: appendRepSignature(dedash(parsed.body).trim(), args.mailbox, await voiceSamples(args.mailbox)),
+    // ONE PERSON. The model addresses a single human in its first line and the
+    // To line used to carry the whole call roster, so IFF Inc's "rather than
+    // working through you as the go-between" was drafted to ten colleagues.
+    // The rest are DROPPED, not cc'd.
+    to: (() => {
+      const one = args.roster ? pickRecipient(args.roster, chosen.flag.id) : null;
+      return one ? [one] : args.customerEmails;
+    })(),
     replyToMessageId: thread?.id ?? null,
     groundedInCallId: ctx?.callId ?? null,
   };
@@ -416,7 +531,19 @@ export async function createReengageDraft(
     kind: "reengage_draft",
     toEmail: draft.to.join(", "),
     subject: `[${draft.flag.id}] ${draft.subject}`,
-    html: "",
+    // REAL HTML, not an empty string. The Activity log renders body_html in the
+    // expandable detail, so `html: ""` produced seven rows on 2026-08-31 that
+    // named a customer and their addresses and could not be opened. The
+    // follow-up path learned this and this one did not, which is why the
+    // renderer now lives in one file both call.
+    html: draftArchiveHtml({
+      to: draft.to,
+      body: draft.body,
+      replyToMessageId: draft.replyToMessageId,
+      // The flag is the whole reason this draft exists. Without it the reader
+      // cannot tell a deliberate sweep from a stray send to a customer.
+      reason: { title: draft.flag.title, evidence: draft.flag.evidence },
+    }),
     text: draft.body,
   }).catch((e) => {
     // The draft is in the rep's mailbox either way. Losing the archive costs
