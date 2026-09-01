@@ -217,6 +217,34 @@ export type PostCallMailRead =
   | { status: "bad_call_date"; at: string }
   | { status: "unavailable"; mailbox: string; error: string };
 
+/**
+ * E-signature services, whose mail is evidence a commitment was kept.
+ *
+ * A signature confirmation is written by neither the rep nor the customer, so
+ * a filter that keeps only the customer's domain drops the single clearest
+ * proof a deal moved. Medovlog's three "Completed: You're copied on Magaya
+ * Quote Agreement" notices come from echosign.com, and the commitment they
+ * settle scored as not kept because of it.
+ *
+ * WHAT WE HAVE SEEN, not a claim of completeness. Magaya sends through Adobe
+ * Sign; another tenant will use something else and this list will be wrong for
+ * them until someone looks.
+ */
+const SIGNATURE_SERVICE_DOMAINS = [
+  "echosign.com",
+  "adobesign.com",
+  "docusign.net",
+  "docusign.com",
+  "hellosign.com",
+  "dropboxsign.com",
+  "pandadoc.com",
+];
+
+export function isSignatureServiceDomain(domain: string | null | undefined): boolean {
+  const d = (domain ?? "").toLowerCase();
+  return SIGNATURE_SERVICE_DOMAINS.some((s) => d === s || d.endsWith(`.${s}`));
+}
+
 export async function readPostCallCustomerMail(
   call: OutcomeCall,
 ): Promise<PostCallMailRead> {
@@ -253,9 +281,16 @@ export async function readPostCallCustomerMail(
       // did not write. "Accepted: Magaya Demo" was being counted as the rep
       // following up, which credits a click as work.
       .filter((m) => !isCalendarResponseSubject(m.subject));
+    // The customer's own mail, PLUS the signing service's. Not the seller's own
+    // domain: a Magaya address arriving inbound is a colleague on the thread,
+    // and crediting that as the customer replying is the mistake this filter
+    // exists to prevent.
     const inbound = msgs
       .filter((m) => !m.outbound)
-      .filter((m) => domains.includes(domainOf(m.from ?? "") ?? ""))
+      .filter((m) => {
+        const from = domainOf(m.from ?? "");
+        return domains.includes(from ?? "") || isSignatureServiceDomain(from);
+      })
       .filter((m) => !isCalendarResponseSubject(m.subject));
     return { status: "read", mailbox: rep, domains, outbound, inbound };
   } catch (err) {

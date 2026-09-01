@@ -69,13 +69,19 @@ const OUTBOUND_ERA = process.argv.includes("--outbound-era");
       .map((c) => [c.id, c.scheduled_start ?? c.call_date]),
   );
 
-  const now = Date.now();
   const reopen = rows.filter((r) => {
     if (r.followed === "yes") return false; // already settled in our favour, leave it
     const at = r.call_id ? callAt.get(r.call_id) : null;
     if (!at) return false;
-    const days = (now - Date.parse(at)) / 86_400_000;
-    if (!(days >= COMMITMENT_SETTLE_DAYS)) return false;
+    // NO REQUIREMENT THAT THE CALL IS PAST THE SETTLE WINDOW.
+    //
+    // An earlier version had one, to avoid reopening a row that a deployment
+    // without COMMITMENT_SETTLE_DAYS would simply stamp again. With the settle
+    // window in place the scorer leaves such a row open instead, so the guard
+    // now does harm: Medovlog's 08-27 commitment is five days old, carries a
+    // stamp applied on 08-30, and was therefore skipped and left frozen at 'no'
+    // by the very script written to unfreeze it. A stamp that should not exist
+    // is worth clearing whether or not the commitment is due yet.
     if (OUTBOUND_ERA) return true;
     // Was it judged before the commitment could plausibly have been kept?
     const checkedDaysAfterCall = (Date.parse(r.email_checked_at) - Date.parse(at)) / 86_400_000;

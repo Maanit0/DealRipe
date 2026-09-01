@@ -34,6 +34,8 @@ import {
   type OutcomeCall,
   type PostCallMailRead,
 } from "./prescription-outcomes";
+import { domainOf } from "./graph-mail";
+import { isSignatureServiceDomain } from "./prescription-outcomes";
 import { ledgerError } from "./prescription-ledger";
 import { supabaseAdmin } from "./supabase";
 import { resolveTenantId } from "./tenant-deal-lookup";
@@ -521,6 +523,11 @@ export async function scoreCommitmentInEmail(args: {
 /** How many messages to read in full, PER DIRECTION. */
 const EMAIL_BODIES_TO_READ = 3;
 
+/** A signing service's own confirmation, which settles a commitment outright. */
+function isSignedNotice(m: { subject: string; from?: string | null }): boolean {
+  return isSignatureServiceDomain(domainOf(m.from ?? ""));
+}
+
 /**
  * Run the email pass for one call's unsettled commitments.
  *
@@ -568,7 +575,14 @@ async function runEmailPass(args: {
   const emails: Array<{ subject: string; body: string; direction: "rep" | "customer" }> = [];
   const toRead: Array<{ m: (typeof mail.outbound)[number]; direction: "rep" | "customer" }> = [
     ...mail.outbound.slice(0, EMAIL_BODIES_TO_READ).map((m) => ({ m, direction: "rep" as const })),
-    ...mail.inbound.slice(0, EMAIL_BODIES_TO_READ).map((m) => ({ m, direction: "customer" as const })),
+    // Signature confirmations FIRST, then the rest of the customer's mail. A
+    // busy thread can run to a dozen replies, and taking the first three by
+    // whatever order Graph returned is how the one message that proves the
+    // commitment gets left out of the read.
+    ...[...mail.inbound]
+      .sort((a, b) => Number(isSignedNotice(b)) - Number(isSignedNotice(a)))
+      .slice(0, EMAIL_BODIES_TO_READ + 1)
+      .map((m) => ({ m, direction: "customer" as const })),
   ];
   for (const { m, direction } of toRead) {
     const body = await getMessageBody({
