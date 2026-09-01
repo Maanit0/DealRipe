@@ -21,3 +21,61 @@ html, body {
 }
 .flash-yes { animation: flash-yes 1500ms ease-out; }
 .flash-no  { animation: flash-no 1500ms ease-out; }
+
+/* ---------------------------------------------------------------------------
+   Marketing site scroll reveal.
+   Sections start hidden and animate in as they enter the viewport. Guarded
+   three ways so content is never JS-dependent: prefers-reduced-motion is
+   honoured in the component, the <noscript> block in layout.tsx restores
+   everything, and the markup is fully present in the HTML regardless, so a
+   crawler reading the DOM sees all of it.
+--------------------------------------------------------------------------- */
+.dr-reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 620ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 620ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dr-reveal.dr-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Children that populate in sequence once their section has arrived. The
+   delay is set inline per child so the stagger follows document order. */
+.dr-reveal .dr-item {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 420ms ease,
+    transform 420ms cubic-bezier(0.2, 1, 0.3, 1);
+}
+.dr-reveal.dr-in .dr-item {
+  opacity: 1;
+  transform: none;
+}
+
+/* The swarm populates rather than fading as a block: the argument of that
+   section is that there are many of them. */
+.dr-reveal .dr-dot {
+  opacity: 0;
+  transform: scale(0.55);
+  transition:
+    opacity 340ms ease,
+    transform 420ms cubic-bezier(0.2, 1.3, 0.4, 1);
+}
+.dr-reveal.dr-in .dr-dot {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dr-reveal,
+  .dr-reveal .dr-item,
+  .dr-reveal .dr-dot {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
