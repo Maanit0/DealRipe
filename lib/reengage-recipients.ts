@@ -32,11 +32,14 @@ export function isSystemAddress(email: string): boolean {
   return SYSTEM_LOCAL.test(local) || SYSTEM_HOST.test(host) || /zohocalendar|calendly|calendar\.google/.test(host);
 }
 
+/** A candidate recipient, carrying the name so the greeting can match the address. */
+export type Person = { email: string; name: string | null };
+
 export type Roster = {
   /** People who have actually written back to us, most recent first. */
-  engaged: string[];
+  engaged: Person[];
   /** People on a call who have never replied by mail, most recent call first. */
-  quiet: string[];
+  quiet: Person[];
 };
 
 /**
@@ -50,10 +53,14 @@ export type Roster = {
  * empty `engaged` as "nobody has replied OR we have not ingested", never as the
  * first alone. Ingest currently runs by hand.
  */
-export async function rosterForDeal(tenantId: string, dealId: string, callParticipants: string[]): Promise<Roster> {
+export async function rosterForDeal(
+  tenantId: string,
+  dealId: string,
+  callParticipants: ReadonlyArray<Person>,
+): Promise<Roster> {
   const candidates = callParticipants
-    .map((e) => e.toLowerCase().trim())
-    .filter((e) => e.includes("@") && !isSystemAddress(e));
+    .map((p) => ({ email: p.email.toLowerCase().trim(), name: displayName(p) }))
+    .filter((p) => p.email.includes("@") && !isSystemAddress(p.email));
 
   const { data } = await supabaseAdmin()
     .from("deal_messages")
@@ -69,9 +76,25 @@ export async function rosterForDeal(tenantId: string, dealId: string, callPartic
     if (e && !repliedAt.has(e)) repliedAt.set(e, r.sent_at);
   }
 
-  const engaged = candidates.filter((e) => repliedAt.has(e)).sort((a, b) => (repliedAt.get(b) ?? "").localeCompare(repliedAt.get(a) ?? ""));
-  const quiet = candidates.filter((e) => !repliedAt.has(e));
+  const engaged = candidates
+    .filter((p) => repliedAt.has(p.email))
+    .sort((a, b) => (repliedAt.get(b.email) ?? "").localeCompare(repliedAt.get(a.email) ?? ""));
+  const quiet = candidates.filter((p) => !repliedAt.has(p.email));
   return { engaged, quiet };
+}
+
+/**
+ * A name worth putting in a greeting, or null.
+ *
+ * Graph writes the address into the name field when the invite carried no
+ * display name, so "jane.julius@fglobalshipping.com" arrives as a name. Writing
+ * "Hi jane.julius@fglobalshipping.com," is worse than writing no greeting, so
+ * anything that looks like an address is discarded rather than used.
+ */
+function displayName(p: Person): string | null {
+  const n = (p.name ?? "").trim();
+  if (!n || n.includes("@")) return null;
+  return n;
 }
 
 /**
@@ -87,9 +110,14 @@ export async function rosterForDeal(tenantId: string, dealId: string, callPartic
  * back. Sending it to the account's most talkative contact asks the wrong human
  * a question only the quiet one can answer.
  */
-export function pickRecipient(roster: Roster, flagId: string): string | null {
-  const order = flagId === "invited_but_silent" ? [...roster.quiet, ...roster.engaged] : [...roster.engaged, ...roster.quiet];
-  return order[0] ?? null;
+export function rankedRecipients(roster: Roster, flagId: string): Person[] {
+  return flagId === "invited_but_silent"
+    ? [...roster.quiet, ...roster.engaged]
+    : [...roster.engaged, ...roster.quiet];
+}
+
+export function pickRecipient(roster: Roster, flagId: string): Person | null {
+  return rankedRecipients(roster, flagId)[0] ?? null;
 }
 
 /** Non-Magaya, non-system addresses from the deal's captured calls. */

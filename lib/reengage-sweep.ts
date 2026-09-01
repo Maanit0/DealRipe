@@ -22,7 +22,7 @@
  * presses send.
  */
 import { loadPortfolioRead } from "./deal-read-portfolio";
-import { isSystemAddress, rosterForDeal } from "./reengage-recipients";
+import { isSystemAddress, rosterForDeal, type Person } from "./reengage-recipients";
 import { domainOf } from "./graph-mail";
 import { DRAFTABLE, createReengageDraft, generateReengageDraft, recentlyDrafted } from "./reengage-draft";
 import { supabaseAdmin } from "./supabase";
@@ -59,7 +59,7 @@ export type SweepResult = {
  * the only filter was the seller's domain. This returns the candidate set;
  * `pickRecipient` decides which ONE of them the mail is addressed to.
  */
-async function customerEmailsFor(tenantId: string, dealId: string): Promise<string[]> {
+async function customerEmailsFor(tenantId: string, dealId: string): Promise<Person[]> {
   const res = await supabaseAdmin()
     .from("calls")
     .select("participants, scheduled_start")
@@ -69,15 +69,22 @@ async function customerEmailsFor(tenantId: string, dealId: string): Promise<stri
     .order("scheduled_start", { ascending: false })
     .limit(4);
   if (res.error) return [];
-  const out = new Set<string>();
+  // Keyed by address so one person on four calls is one candidate, and the
+  // first non-empty display name wins: an invite that carried a name is better
+  // evidence than a later one that did not.
+  const out = new Map<string, Person>();
   for (const row of (res.data ?? []) as Array<{ participants: unknown }>) {
-    const people = Array.isArray(row.participants) ? (row.participants as Array<{ email?: string | null }>) : [];
+    const people = Array.isArray(row.participants)
+      ? (row.participants as Array<{ email?: string | null; name?: string | null }>)
+      : [];
     for (const p of people) {
       const e = (p?.email ?? "").toLowerCase().trim();
-      if (e.includes("@") && domainOf(e) !== INTERNAL_DOMAIN && !isSystemAddress(e)) out.add(e);
+      if (!e.includes("@") || domainOf(e) === INTERNAL_DOMAIN || isSystemAddress(e)) continue;
+      const existing = out.get(e);
+      if (!existing || (!existing.name && p?.name)) out.set(e, { email: e, name: p?.name ?? null });
     }
   }
-  return [...out];
+  return [...out.values()];
 }
 
 export async function runReengageSweep(args: {

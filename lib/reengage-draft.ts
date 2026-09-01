@@ -43,7 +43,7 @@
 
 import { draftArchiveHtml } from "./draft-archive";
 import { appendRepSignature, voiceSamples } from "./followup-draft";
-import { pickRecipient, type Roster } from "./reengage-recipients";
+import { pickRecipient, rankedRecipients, type Person, type Roster } from "./reengage-recipients";
 import { computeDealFlags, type Flag } from "./deal-flags";
 import { readCustomerStanding, type CustomerStanding } from "./salesforce-context";
 import { assessDeal, computeBuyerSignals, type BuyerSignals } from "./deal-signals-buyer";
@@ -162,11 +162,13 @@ RULES, and each one exists because breaking it produced an email a rep rewrote:
 - Exactly ONE ask, and it is specific. A question they can answer in one line, or a concrete offer. Not "let me know if you have questions". Where you can, shrink the cost of saying yes to a number: "15 to 20 minutes" beats "a quick call".
 - No em-dashes and no en-dashes anywhere. Use commas or start a new sentence.
 - Six sentences maximum, and shorter is better. This is read on a phone.
-- Open with a greeting on its own line, the way the rep writes it: "Hi Carrie," or "Yaremi," followed by a blank line. Address the ONE person the message is for, even when others are copied.
+- Open with a greeting on its own line, the way the rep writes it: "Hi Carrie," or "Yaremi," followed by a blank line.
+- WRITE TO EXACTLY ONE PERSON, chosen from WHO YOU CAN WRITE TO below, and return their address in "to". The greeting and "to" must be the same human: this draft is delivered to the address you return, so greeting one person and returning another's address sends a personal question to the wrong inbox. The list is ordered with the best recipient first; choose a different one only if the calls give you a reason.
+- If nobody on that list has a usable name, open with "Hi," rather than guessing a name or writing an address into the greeting.
 - No subject line in the body, and no sign-off or signature. DealRipe appends the rep's own measured signature after you. (This used to say Outlook appends it. Outlook does not append a signature to a draft created through the API, so every re-engagement went out unsigned.)
 - Do not restate your own ask as a noun phrase, and never count it. "That one answer would help me" is "That would help me". Also out: "just that one thing", "even a quick reply", "it would mean a lot". Asking for something and then narrating how valuable it is to you is a sales move; the rep asks and stops.
 
-Return JSON only: {"subject": "...", "body": "..."}
+Return JSON only: {"subject": "...", "body": "...", "to": "the one address you are writing to"}
 The subject is ignored when this replies to an existing thread, so write it as though it were a fresh email either way.`;
 
 async function lastCallContext(
@@ -308,7 +310,7 @@ export async function generateReengageDraft(args: {
   dealId: string;
   account: string;
   mailbox: string;
-  customerEmails: string[];
+  customerEmails: Person[];
   /**
    * The candidate recipients split by whether they have ever replied.
    *
@@ -335,7 +337,7 @@ export async function generateReengageDraft(args: {
   if (!chosen) return null;
 
   const ctx = await lastCallContext(args.tenantId, args.dealId);
-  const domains = [...new Set(args.customerEmails.map((e) => domainOf(e)).filter((d): d is string => !!d))];
+  const domains = [...new Set(args.customerEmails.map((p) => domainOf(p.email)).filter((d): d is string => !!d))];
   const thread = await findCustomerThread(args.mailbox, domains).catch(() => null);
 
   const quiet =
@@ -358,6 +360,16 @@ export async function generateReengageDraft(args: {
         ]
       : [];
 
+  // The ORDER is ours and the CHOICE is the model's, because the model is the
+  // one writing the greeting. Picking the address separately is how "Hi Raul"
+  // was drafted to sang1@unitedchb.com: two decisions about one person, made in
+  // different places, with nothing reconciling them.
+  const ranked: Person[] = args.roster ? rankedRecipients(args.roster, chosen.flag.id) : args.customerEmails;
+  const recommendedBecause =
+    chosen.flag.id === "invited_but_silent"
+      ? "this flag is about the person who did not speak, so the quietest contact is the point"
+      : "they have actually written back to us";
+
   const prompt = [
     `Account: ${args.account}`,
     ctx?.when ? `Last call: ${ctx.when.slice(0, 10)}${quiet !== null ? `, ${quiet} days ago` : ""}` : "No captured call.",
@@ -369,6 +381,14 @@ export async function generateReengageDraft(args: {
     ``,
     `WHAT THE CALLS ESTABLISHED, in their words where we have them:`,
     ctx?.summary || "(nothing captured)",
+    ``,
+    ``,
+    `WHO YOU CAN WRITE TO, best first:`,
+    ...ranked.map(
+      (p, i) =>
+        `${i + 1}. ${p.name ? `${p.name} <${p.email}>` : p.email}` +
+        (i === 0 ? `  (recommended: ${recommendedBecause})` : ""),
+    ),
     ``,
     thread
       ? `This will reply on an existing thread, subject "${thread.subject ?? "(none)"}". Write it as a reply: no reintroduction.`
@@ -384,7 +404,7 @@ export async function generateReengageDraft(args: {
     maxTokens: 900,
   });
 
-  let parsed: { subject?: string; body?: string };
+  let parsed: { subject?: string; body?: string; to?: string };
   try {
     const m = res.text.match(/\{[\s\S]*\}/);
     parsed = m ? JSON.parse(m[0]) : {};
@@ -409,13 +429,21 @@ export async function generateReengageDraft(args: {
     // These reached reps ending on the last sentence with no name attached,
     // because the prompt asserted Outlook would add one and nothing checked.
     body: appendRepSignature(dedash(parsed.body).trim(), args.mailbox, await voiceSamples(args.mailbox)),
-    // ONE PERSON. The model addresses a single human in its first line and the
-    // To line used to carry the whole call roster, so IFF Inc's "rather than
-    // working through you as the go-between" was drafted to ten colleagues.
-    // The rest are DROPPED, not cc'd.
+    // ONE PERSON, and the SAME person the greeting names, because the model
+    // returned both. Validated against the candidate list rather than trusted:
+    // an address the model invented, or one belonging to somebody who was never
+    // on a call, would be a cold email from a rep's own mailbox.
     to: (() => {
+      const claimed = (parsed.to ?? "").toLowerCase().trim();
+      const match = ranked.find((p) => p.email === claimed);
+      if (match) return [match.email];
+      if (claimed) {
+        console.warn(
+          `[reengage-draft] ${args.account}: model returned "${claimed}", which is not a candidate. Falling back to the ranked first.`,
+        );
+      }
       const one = args.roster ? pickRecipient(args.roster, chosen.flag.id) : null;
-      return one ? [one] : args.customerEmails;
+      return one ? [one.email] : ranked.slice(0, 1).map((p) => p.email);
     })(),
     replyToMessageId: thread?.id ?? null,
     groundedInCallId: ctx?.callId ?? null,
