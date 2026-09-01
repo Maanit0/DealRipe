@@ -38,6 +38,16 @@ import { COMMITMENT_SETTLE_DAYS } from "../lib/prescription-scoring";
 import { supabaseAdmin } from "../lib/supabase";
 
 const APPLY = process.argv.includes("--apply");
+/**
+ * Reopen every commitment decided by the OUTBOUND-ONLY email pass, not just the
+ * ones judged too early.
+ *
+ * The pass read `mail.outbound` alone until 2026-08-31, so a commitment the
+ * CUSTOMER owed could not be evidenced at all and a signature confirmation,
+ * written by neither party, was invisible. Every verdict recorded before the
+ * inbound fix rests on half the thread.
+ */
+const OUTBOUND_ERA = process.argv.includes("--outbound-era");
 
 (async () => {
   const db = supabaseAdmin();
@@ -66,6 +76,7 @@ const APPLY = process.argv.includes("--apply");
     if (!at) return false;
     const days = (now - Date.parse(at)) / 86_400_000;
     if (!(days >= COMMITMENT_SETTLE_DAYS)) return false;
+    if (OUTBOUND_ERA) return true;
     // Was it judged before the commitment could plausibly have been kept?
     const checkedDaysAfterCall = (Date.parse(r.email_checked_at) - Date.parse(at)) / 86_400_000;
     return checkedDaysAfterCall < COMMITMENT_SETTLE_DAYS;

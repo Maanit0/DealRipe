@@ -188,7 +188,29 @@ export async function readNextMeeting(call: OutcomeCall): Promise<OutcomeRead> {
  * look" are not the same fact and never collapse to the same value.
  */
 export type PostCallMailRead =
-  | { status: "read"; mailbox: string; domains: string[]; outbound: MailMessage[] }
+  | {
+      status: "read";
+      mailbox: string;
+      domains: string[];
+      /** Mail the REP wrote to the customer after the call. */
+      outbound: MailMessage[];
+      /**
+       * Mail the CUSTOMER wrote back after the call.
+       *
+       * Carried separately because the two answer different questions and only
+       * one of them is about the rep. `readDraftSent` wants outbound alone: a
+       * customer replying is not the rep following up. Commitment scoring wants
+       * both, because a commitment has two parties and the evidence often sits
+       * on the customer's side of the thread.
+       *
+       * Medovlog, 2026-08-31: "Nick sends the services list by Friday August 28,
+       * Magaya sends the revised proposal by Wednesday September 2" scored 'no'
+       * against 1 outbound message, while 13 inbound ones sat in the same
+       * thread, three of them DocuSign "Completed: You're copied on Magaya Quote
+       * Agreement". The deal closed WON the next day.
+       */
+      inbound: MailMessage[];
+    }
   | { status: "no_rep" }
   | { status: "no_mailbox_access"; mailbox: string }
   | { status: "no_domains" }
@@ -231,7 +253,11 @@ export async function readPostCallCustomerMail(
       // did not write. "Accepted: Magaya Demo" was being counted as the rep
       // following up, which credits a click as work.
       .filter((m) => !isCalendarResponseSubject(m.subject));
-    return { status: "read", mailbox: rep, domains, outbound };
+    const inbound = msgs
+      .filter((m) => !m.outbound)
+      .filter((m) => domains.includes(domainOf(m.from ?? "") ?? ""))
+      .filter((m) => !isCalendarResponseSubject(m.subject));
+    return { status: "read", mailbox: rep, domains, outbound, inbound };
   } catch (err) {
     return {
       status: "unavailable",

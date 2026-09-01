@@ -408,17 +408,20 @@ export async function scoreCallPrescriptions(args: {
  * already answered whether it happened on the call, and this is asking a
  * second, additional question.
  */
-const EMAIL_SYSTEM = `You are checking whether a sales rep secured a specific next step with a customer by email, after a call where they did not secure it out loud.
+const EMAIL_SYSTEM = `You are checking whether a commitment made on a sales call was kept, using the email thread that followed it.
 
-You are given the next step the rep was supposed to secure, and the emails the rep sent that customer after the call.
+You are given the commitment and the messages between the rep and the customer after the call. Each message is labelled FROM THE REP or FROM THE CUSTOMER.
 
 Rules:
 
-1. EVIDENCE OR NOTHING. "secured": true requires a quote copied word for word from one of the emails. If you cannot find one, "secured" is false and "quote" is null.
-2. The rep must ACTUALLY MAKE THE MOVE, not mention the topic. "Are you free Thursday the 21st at 10am ET to walk through the estimate?" secures a next step. "Great speaking today, let me know if you have questions" does not, and neither does "we should find time soon".
-3. It must be the SAME next step, or close enough that a sales manager would call it the same move. A proposed demo is not a signed NDA. If the instruction named a date or a week and the rep proposed a materially different one, that still counts: the rep secured the step, the timing is their call.
-4. Only the rep's own words count. Quoting the customer's reply does not prove the rep asked.
-5. When torn, answer false.
+1. EVIDENCE OR NOTHING. "secured": true requires a quote copied word for word from one of the messages. If you cannot find one, "secured" is false and "quote" is null.
+2. WHOEVER OWED IT. Read the commitment and decide whose action it names, then look on that side of the thread. "Send the proposal by Friday" is the rep's, so it needs the rep's own words. "Nick sends the services list by Friday" is the CUSTOMER'S, and the customer's message delivering it is the evidence. A commitment naming both parties is kept when the part that was owed at this point was done.
+   This rule exists because the check used to read the rep's outbound mail only. Medovlog's commitment "Nick sends the services list by Friday August 28, Magaya sends the revised proposal by Wednesday September 2" scored as not kept against one outbound message while thirteen inbound ones sat in the same thread, three of them a completed signature notice, and the deal closed won the next day.
+3. A SIGNATURE OR SYSTEM CONFIRMATION COUNTS. "Completed: You're copied on ..." from a signing service, an accepted quote, a returned document: these are the commitment being kept, in writing, and they are usually not written by either person.
+4. The MOVE must be made, not the topic mentioned. "Are you free Thursday the 21st at 10am ET to walk through the estimate?" secures a next step. "Great speaking today, let me know if you have questions" does not, and neither does "we should find time soon".
+5. It must be the SAME commitment, or close enough that a sales manager would call it the same move. A proposed demo is not a signed NDA. If the commitment named a date or a week and the move happened on a materially different one, that still counts: it was kept, the timing is theirs.
+6. DO NOT CREDIT THE REP FOR THE CUSTOMER'S WORDS on a commitment the rep owed. A customer writing "we'll get you the list" is not the rep sending the proposal.
+7. When torn, answer false.
 
 Return JSON only, no prose and no markdown fences:
 {"secured": boolean, "quote": string | null}`;
@@ -438,14 +441,22 @@ export type EmailCommitmentResult =
  */
 export async function scoreCommitmentInEmail(args: {
   commitment: string;
-  /** Subject + body of each message the rep sent the customer after the call. */
-  emails: Array<{ subject: string; body: string }>;
+  /**
+   * Subject + body of each message in the thread after the call, LABELLED BY
+   * DIRECTION. Both sides, because a commitment has two parties and rule 2
+   * cannot be applied to a list that only holds one of them.
+   */
+  emails: Array<{ subject: string; body: string; direction: "rep" | "customer" }>;
   account: string;
 }): Promise<EmailCommitmentResult> {
   if (args.emails.length === 0) return { status: "no_mail" };
 
   const corpus = args.emails
-    .map((e, i) => `--- EMAIL ${i + 1} ---\nSubject: ${e.subject}\n${e.body}`)
+    .map(
+      (e, i) =>
+        `--- MESSAGE ${i + 1}, ${e.direction === "rep" ? "FROM THE REP" : "FROM THE CUSTOMER"} ---\n` +
+        `Subject: ${e.subject}\n${e.body}`,
+    )
     .join("\n\n");
 
   let raw: string;
@@ -461,13 +472,13 @@ export async function scoreCommitmentInEmail(args: {
           content: [
             `CUSTOMER: ${args.account}`,
             ``,
-            `THE NEXT STEP THE REP WAS SUPPOSED TO SECURE:`,
+            `THE COMMITMENT MADE ON THE CALL:`,
             args.commitment,
             ``,
-            `WHAT THE REP SENT THEM AFTER THE CALL:`,
+            `THE THREAD AFTER THE CALL, BOTH SIDES:`,
             corpus,
             ``,
-            `Did the rep secure that next step in these emails? Quote word for word or answer false. Return JSON only.`,
+            `Was that commitment kept, by whoever owed it? Quote word for word or answer false. Return JSON only.`,
           ].join("\n"),
         },
       ],
@@ -507,7 +518,7 @@ export async function scoreCommitmentInEmail(args: {
   return { status: "secured", evidence: quote };
 }
 
-/** How many of the rep's post-call emails to read in full. */
+/** How many messages to read in full, PER DIRECTION. */
 const EMAIL_BODIES_TO_READ = 3;
 
 /**
@@ -550,14 +561,22 @@ async function runEmailPass(args: {
   // Bodies, because bodyPreview is the first ~255 characters and a dated ask
   // usually sits at the end of a follow-up rather than the start.
   const { getMessageBody } = await import("./graph-mail");
-  const emails: Array<{ subject: string; body: string }> = [];
-  for (const m of mail.outbound.slice(0, EMAIL_BODIES_TO_READ)) {
+  // BOTH SIDES OF THE THREAD. Reading only the rep's outbound mail answers
+  // "did the rep follow up", which is a different question from "was the
+  // commitment kept": a commitment the CUSTOMER owed can only ever be evidenced
+  // by inbound mail, and a signature confirmation is written by neither party.
+  const emails: Array<{ subject: string; body: string; direction: "rep" | "customer" }> = [];
+  const toRead: Array<{ m: (typeof mail.outbound)[number]; direction: "rep" | "customer" }> = [
+    ...mail.outbound.slice(0, EMAIL_BODIES_TO_READ).map((m) => ({ m, direction: "rep" as const })),
+    ...mail.inbound.slice(0, EMAIL_BODIES_TO_READ).map((m) => ({ m, direction: "customer" as const })),
+  ];
+  for (const { m, direction } of toRead) {
     const body = await getMessageBody({
       tenantIdOrDomain: "magaya.com",
       mailbox: mail.mailbox,
       messageId: m.id,
     }).catch(() => null);
-    emails.push({ subject: m.subject, body: body ?? m.preview });
+    emails.push({ subject: m.subject, body: body ?? m.preview, direction });
   }
 
   for (const row of rows) {
