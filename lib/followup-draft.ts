@@ -675,6 +675,12 @@ Non-negotiable rules:
 7. Match the sample voice for greeting, sign-off, sentence length and formality. If the samples are terse, be terse.
 7b. WRITE IN THE LANGUAGE THE CUSTOMER SPOKE ON THE CALL. Magaya sells across Latin America and whole calls run in Spanish; Ariel Rodriguez asked for this directly and Mark Buman raised it separately, because a rep who has to translate every draft before sending it is faster writing their own. Decide from the CUSTOMER's speech in the transcript, not the rep's and not the greetings: a call that opens with "good afternoon" and then runs for an hour in Spanish is a Spanish call. Write the entire body in that language, including the greeting and the dated ask. Keep product names, module names and file names exactly as they are, in English, because that is what they are called in the CRM and on the invoice: Magaya Customs Compliance, Data Warehouse, CargoWise, NetSuite. Use the formality the customer used, which in Spanish means matching usted or tu rather than choosing one. If the customer's own language is genuinely unclear, write in English: a draft in the wrong language is worse than one the rep translates.
 7a. GREET ONLY THE PEOPLE LISTED UNDER "WRITING TO". The rep is the sender and must never appear in their own greeting, and neither must anyone else from the rep's own company. Names in the transcript are the room, not the address line. If no recipients are listed, open without names rather than guessing from the transcript.
+7c. THE NEXT MOVE MAY NOT BE YOURS TO PROPOSE. Before writing a dated ask, decide from the transcript who owns the next step.
+   If the CUSTOMER stated what happens next ("we'll come back to you in two weeks", "I'll take it to my team and revert"), restate THEIR commitment with their own timeframe and stop. Do not counter-propose a date. Ariel's draft offered "Tuesday, September 8 at 10:00 AM CET, or the week of September 21st" to a customer who had said he would review videos and come back; the email Ariel actually sent read "we agreed that you will reach back to us in about 2 weeks".
+   If a meeting is ALREADY ON THE CALENDAR, reference it as settled and ask something else.
+   If the call ended with the next step genuinely open and ours to drive, then propose one dated time.
+   If none of those is true, close without an ask rather than inventing one. Alexandra Suntrup, 2026-09-02: "it always kind of adds in like a time... it's situational". A date the customer did not agree to is a small thing to have to delete, and reps delete it by rewriting the whole email.
+
 8. Any proposed time carries a TIMEZONE. "Thursday, August 13th at 10:00 AM ET", never a bare "10:00 AM". These customers span Canada, Latin America, Europe and Asia, and an unqualified time is how a booked meeting turns into a no-show. When the customer's own timezone is given below, state the time in THEIRS, then the rep's in brackets: "10:00 AM ET (9:00 AM CT my time)". Writing a time only in the seller's zone quietly makes the buyer do the conversion.
 9. Distinguish what is IN THIS EMAIL from what will be REVIEWED at the meeting. A recording, a datasheet or a video is in this email: write "here's the recording", present tense. A proposal, pricing or an implementation estimate is walked through live, because emailing it ahead removes the reason for the meeting and lets the buyer evaluate it alone. Unless the transcript shows the rep explicitly promising to email a proposal ahead, do NOT say it is coming. Do not lump them together: "the proposal, recording and estimate are on their way" is wrong when only the recording is going now.
 10. FORMAT AS SHORT STANDALONE LINES, one thought each, with a blank line between. Never a dense paragraph. A rep reads this on a phone between calls and a wall of text gets rewritten. Roughly: greeting, one line on what is in the email, one line with the dated ask, one optional line with the softer question.
@@ -685,6 +691,7 @@ Non-negotiable rules:
    A LINK IS NEVER AN ATTACHMENT. A help.magaya.com page goes in the body as a URL. Never name a link in attachmentsToAdd and never describe one as attached.
    Do NOT write "please find attached" or "I have attached" for anything that is not a bundle file.
    Do NOT write "is on its way", "are on their way" or "I'll send it over" for something included in THIS email either. Those describe a separate, later email and leave the customer waiting for one that never arrives.
+   IF YOU HAVE THE LINKS, PUT THEM IN. When the collateral block below gives you URLs, write them into the body now. Ariel's 2026-09-01 draft to Fichs said "once that's done I'll send the overview videos" and the email he actually sent carried six links inline, because the customer wanted to watch them, not to be told they were coming. A promise to send a link is strictly worse than the link.
    Always name the file in attachmentsToAdd so the rep knows what to attach before sending.
 
 WHAT THIS PARTICULAR EMAIL IS FOR
@@ -1258,6 +1265,14 @@ async function buildDraftCard(args: {
   meetingTitle: string | null;
   attachmentsToAdd: string[];
   attachedFiles: string[];
+  /**
+   * Subject of a customer message that arrived AFTER the call, if one did.
+   *
+   * The draft was written to the call and the conversation has moved since.
+   * Shown, never used to suppress: the draft may still be most of what the rep
+   * wants, and that is theirs to judge.
+   */
+  customerWroteBack?: string | null;
 }): Promise<{ html: string; text: string } | null> {
   const { readMessageStateByInternetId } = await import("./graph-mail");
   const { renderDraftCardBlock } = await import("./emails/draft-ready");
@@ -1283,6 +1298,7 @@ async function buildDraftCard(args: {
     body: args.body,
     attachmentsToAdd: args.attachmentsToAdd,
     attachedFiles: args.attachedFiles,
+    customerWroteBack: args.customerWroteBack ?? null,
     unaddressed: await unaddressedSpeakers(args.tenantId, args.dealId, args.callId),
     webLink: args.webLink,
   });
@@ -1426,6 +1442,7 @@ export async function autoDraftFollowUpForCall(args: {
   // A mailbox we could not read returns nothing, which must NOT be read as "no
   // follow-up happened". Failing to check is a reason to hold off on a RETRY,
   // not a licence to write one.
+  let customerWroteBack: { subject: string; receivedAt?: string } | null = null;
   const callEnd = args.isRetry && args.callDate ? new Date(args.callDate) : null;
   if (callEnd && !Number.isNaN(callEnd.getTime())) {
     const { listMailboxMessages, domainOf: domOf } = await import("./graph-mail");
@@ -1446,6 +1463,21 @@ export async function autoDraftFollowUpForCall(args: {
         // written. That rep is the one who most wants the draft.
         .filter((m) => m.outbound && !m.isMeetingMessage)
         .find((m) => [...m.to, ...m.cc].some((a) => domains.includes(domOf(a) ?? "")));
+      // THE CUSTOMER WROTE BACK, which the draft cannot know and the rep cannot
+      // unsee. Steven's Loomis draft was a three-item recap; by the time he
+      // opened it Gina had written and all he needed was one line. Ariel's
+      // Orvia draft summarised a proposal the customer had already declined on
+      // price. Two of the three pairs read on 2026-09-02 were answering a
+      // moment that had passed, which is worse than no draft: it costs the rep
+      // the read before it costs them the rewrite.
+      //
+      // Surfaced, not suppressed. The draft may still be most of what they
+      // want, and deciding that is the rep's job, not ours.
+      customerWroteBack =
+        msgs
+          .filter((m) => !m.outbound && !m.isMeetingMessage)
+          .find((m) => domains.includes(domOf(m.from ?? "") ?? "")) ?? null;
+
       if (already) {
         return {
           created: false,
@@ -1640,6 +1672,8 @@ export async function autoDraftFollowUpForCall(args: {
       // Only what the rep still has to do. A file we attached is not a chore.
       attachmentsToAdd: stillOwed,
       attachedFiles: attached,
+      // Named on the card so the rep sees it before they read the draft.
+      customerWroteBack: customerWroteBack?.subject ?? null,
       webLink: res.webLink ?? null,
       internetMessageId: res.draftId ?? null,
       meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,

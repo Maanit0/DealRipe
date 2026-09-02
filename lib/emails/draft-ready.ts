@@ -48,6 +48,16 @@ const EXCERPT_LINES = 4;
 const EXCERPT_CHARS = 340;
 
 export type DraftReadyInput = {
+  /**
+   * Subject of a customer message received AFTER the call, if there was one.
+   *
+   * The draft was written from the call. Two of three drafts read on
+   * 2026-09-02 were answering a moment that had passed: Steven's Loomis recap
+   * while Gina had already written, Ariel's Orvia proposal summary while the
+   * customer had already declined on price. Shown, never used to suppress; the
+   * draft may still be most of what the rep wants.
+   */
+  customerWroteBack?: string | null;
   /** The company, as the CRM spells it. */
   account: string;
   /** "AUGUST 28 2026 . 01:00 PM", already formatted for the rep's timezone. */
@@ -145,7 +155,14 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
   // whatever is placing this block, not to the block. Inside the recap it sits
   // above the card with the RECAP label as its sibling; the standalone email
   // renders its own. Emitting it here too printed it twice.
-  const html = `<div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
+  // ABOVE the card. A rep who reads the draft first has already spent the
+  // attention this is meant to save.
+  const staleHtml = input.customerWroteBack
+    ? `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:11px 14px;margin-top:11px;font-family:${SANS};font-size:13px;line-height:20px;color:#78350F;">` +
+      `The customer has written since this call: &ldquo;${esc(input.customerWroteBack)}&rdquo;. This draft was written from the call, so check it still fits.</div>`
+    : "";
+
+  const html = staleHtml + `<div style="background:${QUOTE_BG};border:1px solid ${BORDER};border-radius:8px;padding:15px 17px;margin-top:11px;">
       <div style="font-family:${SANS};font-size:15px;line-height:23px;color:${NAVY};font-weight:700;">Subject: ${esc(input.draftSubject)}</div>
       ${
         to
@@ -179,6 +196,9 @@ export function renderDraftCardBlock(input: DraftReadyInput): { html: string; te
     <div style="margin-top:18px;">${button}</div>`;
 
   const text = [
+    input.customerWroteBack
+      ? `NOTE: the customer has written since this call ("${input.customerWroteBack}"). This draft was written from the call.`
+      : null,
     `Subject: ${input.draftSubject}`,
     to ? `To: ${to}` : null,
     (input.attachedFiles ?? []).length > 0 ? `Attached: ${(input.attachedFiles ?? []).join(", ")}` : null,
