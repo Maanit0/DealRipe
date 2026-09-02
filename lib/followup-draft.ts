@@ -1439,6 +1439,39 @@ export async function autoDraftFollowUpForCall(args: {
     return { created: false, reason: "no customer-side attendee on the call" };
   }
 
+  // HAVE WE ALREADY DRAFTED THIS CALL?
+  //
+  // The followup_draft row calls itself "the idempotency marker" where it is
+  // written, and nothing read it as one. Two paths reach this function,
+  // recap-sync and post-call-notify's own defaultDraft, and only the recap
+  // itself is guarded, so a call recapped down one path and drafted down the
+  // other put two near-identical emails in a rep's Outlook. One live instance,
+  // 2026-09-01, "MAGAYA CUSTOMS COMPLIANCE - DEMO", 14 seconds apart.
+  //
+  // THIS CHECK ALONE DOES NOT CLOSE THE RACE and is not pretending to. Two runs
+  // that both read before either writes still both proceed, which is exactly
+  // what those 14 seconds were: the gap is between the two archive rows,
+  // written after generation, so the reads happened together minutes earlier.
+  // The lock is the partial unique index in supabase/add-draft-claim.sql; this
+  // is the cheap check that catches every non-concurrent case, including a
+  // manual re-run and a retry down the other path.
+  const priorDraft = await supabaseAdmin()
+    .from("sent_messages")
+    .select("id")
+    .eq("tenant_id", args.tenantId)
+    .eq("call_id", args.callId)
+    .eq("kind", "followup_draft")
+    .limit(1);
+  if (priorDraft.error) {
+    // Fail closed. A read we could not make is not permission to write a second
+    // draft into a rep's mailbox, and the cost of skipping is a missing draft
+    // that a retry recovers.
+    return { created: false, reason: `could not check for an existing draft: ${priorDraft.error.message}` };
+  }
+  if ((priorDraft.data ?? []).length > 0) {
+    return { created: false, reason: "a follow-up draft already exists for this call" };
+  }
+
   // Has the rep already followed up themselves? ONLY ASKED ON A RETRY.
   //
   // A draft exists to save a job, not to duplicate one that is done. On

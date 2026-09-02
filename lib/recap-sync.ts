@@ -294,8 +294,19 @@ export async function runRecapSync(
       body_text: "",
     });
     if (claim.error) {
-      counts.failed += 1;
-      console.error(`[recap-sync] could not claim ${row.id}, skipping rather than risking a duplicate: ${claim.error.message}`);
+      // 23505 is the partial unique index in supabase/add-draft-claim.sql doing
+      // its job: another run already holds this call. That is the claim
+      // WORKING, not a failure, and counting it as one would report every
+      // healthy overlapping run as an error and bury the real ones. Any other
+      // error is a genuine failure to reserve, and both skip.
+      const raced = (claim.error as { code?: string }).code === "23505";
+      if (raced) {
+        counts.skipped += 1;
+        console.log(`[recap-sync] ${row.id} is claimed by a concurrent run, skipping`);
+      } else {
+        counts.failed += 1;
+        console.error(`[recap-sync] could not claim ${row.id}, skipping rather than risking a duplicate: ${claim.error.message}`);
+      }
       continue;
     }
 
