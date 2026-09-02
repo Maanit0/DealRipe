@@ -983,7 +983,7 @@ async function writePlaybook(tenantId: string, moves: Move[]): Promise<void> {
   // silently re-approve, nor un-approve something a person has already read.
   const { error, count } = await db
     .from("mined_plays")
-    .upsert(rows, { onConflict: "tenant_id,md5(quote)", ignoreDuplicates: false, count: "exact" });
+    .upsert(rows, { onConflict: "tenant_id,quote_hash", ignoreDuplicates: false, count: "exact" });
   if (error) {
     console.error(`\n  COULD NOT STORE: ${error.message}`);
     console.error(`  Has supabase/add-mined-plays.sql been run?`);

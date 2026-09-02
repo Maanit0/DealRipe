@@ -35,14 +35,20 @@ create table if not exists public.mined_plays (
   -- reads aloud to a customer.
   approved boolean not null default false,
   first_seen_at timestamptz not null default now(),
-  last_seen_at timestamptz not null default now()
+  last_seen_at timestamptz not null default now(),
+  -- A STORED COLUMN rather than a unique index on md5(quote) directly.
+  -- PostgREST's on_conflict takes column names and not expressions, so an
+  -- expression index cannot be named as the conflict target and the upsert in
+  -- scripts/mine-plays.ts would fail at runtime against a schema that looks
+  -- correct in psql.
+  quote_hash text generated always as (md5(quote)) stored
 );
 
 -- Re-running the miner over an overlapping window must not duplicate a move.
 -- Keyed on the quote itself, since that is what identifies it: the same
 -- sentence re-mined is the same move, and its outcome columns may have moved on.
 create unique index if not exists mined_plays_tenant_quote_uniq
-  on public.mined_plays (tenant_id, md5(quote));
+  on public.mined_plays (tenant_id, quote_hash);
 
 create index if not exists mined_plays_lookup_idx
   on public.mined_plays (tenant_id, approved, stage);

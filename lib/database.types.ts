@@ -496,6 +496,7 @@ export type Database = {
           approved: boolean;
           first_seen_at: string;
           last_seen_at: string;
+          quote_hash: string;
         };
         Insert: {
           id?: string;
