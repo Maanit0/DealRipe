@@ -705,6 +705,15 @@ export async function attachFileToDraft(args: {
   contentType: string;
   /** Raw bytes. Base64 encoding happens here so callers do not each do it. */
   bytes: Buffer;
+  /**
+   * Set for a signature image, so the body's cid: reference resolves.
+   *
+   * An inline attachment does not show as a paper clip; it is the picture in
+   * the mail. Without both isInline and contentId Outlook renders a broken
+   * image, which on outgoing customer mail is worse than no image at all.
+   */
+  contentId?: string;
+  isInline?: boolean;
 }): Promise<void> {
   assertMailboxAllowed(args.mailbox);
   const MAX = 3_000_000;
@@ -726,11 +735,40 @@ export async function attachFileToDraft(args: {
         name: args.filename,
         contentType: args.contentType,
         contentBytes: args.bytes.toString("base64"),
+        ...(args.contentId ? { contentId: args.contentId, isInline: args.isInline ?? true } : {}),
       }),
     },
   );
   if (!res.ok) {
     throw new GraphMailError(res.status, `attach ${args.filename} to ${args.mailbox}: ${(await res.text()).slice(0, 300)}`);
+  }
+}
+
+/**
+ * Replace a draft's body. Nothing is sent.
+ *
+ * Used to swap a plain-text body for the HTML one a rep's real signature needs,
+ * after the draft exists and its inline images can be attached to it.
+ */
+export async function updateDraftBody(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  draftId: string;
+  html: string;
+}): Promise<void> {
+  assertMailboxAllowed(args.mailbox);
+  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+  const token = await getAppOnlyToken(tenantId);
+  const res = await fetch(
+    `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.draftId)}`,
+    {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ body: { contentType: "HTML", content: args.html } }),
+    },
+  );
+  if (!res.ok) {
+    throw new GraphMailError(res.status, `update draft body for ${args.mailbox}: ${(await res.text()).slice(0, 300)}`);
   }
 }
 

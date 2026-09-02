@@ -26,8 +26,10 @@ module.exports = {
      * both forms below rather than guessed at once.
      */
     outputFileTracingIncludes: {
-      "/api/**": ["./assets/collateral/**"],
-      "/app/api/**": ["./assets/collateral/**"],
+      // Signatures alongside collateral: lib/rep-signature-html.ts reads them
+      // with the same runtime-built path and would hit the same ENOENT.
+      "/api/**": ["./assets/collateral/**", "./assets/signatures/**"],
+      "/app/api/**": ["./assets/collateral/**", "./assets/signatures/**"],
     },
   },
 };

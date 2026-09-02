@@ -25,6 +25,7 @@
  */
 
 import { draftArchiveHtml } from "./draft-archive";
+import { bodyTextToHtml, hasHtmlSignature, signatureFor, signatureHtml } from "./rep-signature-html";
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
 import { bundleForNamedAttachments, collateralPromptBlock } from "./magaya-collateral";
@@ -987,7 +988,12 @@ export async function generateFollowUpDraft(
   // regards" gave every rep the same sign-off regardless of how they actually
   // close, and gave none of them their name, title and phone, so the first
   // thing each rep did to a draft was retype their own signature.
-  parsed.body = appendRepSignature(parsed.body, input.mailbox, samples);
+  // A rep with a real HTML signature gets it applied after the draft exists,
+  // where its inline images can be attached. Appending the plain three lines
+  // here as well would put his name in twice.
+  if (!hasHtmlSignature(input.mailbox)) {
+    parsed.body = appendRepSignature(parsed.body, input.mailbox, samples);
+  }
 
   // Customer-side addresses from the CALL, computed the same way for a reply and
   // for a fresh draft.
@@ -1550,6 +1556,48 @@ export async function autoDraftFollowUpForCall(args: {
           }`,
         );
       }
+    }
+  }
+
+  // THE REP'S REAL SIGNATURE, applied after the draft exists so its inline
+  // images can be attached to that message. Best effort in the strongest sense:
+  // a draft with a plain sign-off is the status quo, a half applied one is not.
+  if (res.graphId && hasHtmlSignature(mailbox)) {
+    try {
+      const sigHtml = await signatureHtml(mailbox);
+      const sig = signatureFor(mailbox);
+      if (sigHtml && sig) {
+        const { updateDraftBody, attachFileToDraft } = await import("./graph-mail");
+        const { readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        // Images first. A body referencing cid: images that are not attached
+        // yet renders as broken boxes for however long the gap lasts.
+        for (const a of sig.assets) {
+          const bytes = await readFile(join(process.cwd(), "assets", "signatures", sig.dir, a.filename));
+          await attachFileToDraft({
+            tenantIdOrDomain: GRAPH_TENANT,
+            mailbox,
+            draftId: res.graphId,
+            filename: a.filename,
+            contentType: a.contentType,
+            bytes,
+            contentId: a.contentId,
+            isInline: true,
+          });
+        }
+        await updateDraftBody({
+          tenantIdOrDomain: GRAPH_TENANT,
+          mailbox,
+          draftId: res.graphId,
+          html: `${bodyTextToHtml(res.draft.body)}\n${sigHtml}`,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        `[followup-draft] signature not applied for ${mailbox}, the draft keeps its plain body: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 

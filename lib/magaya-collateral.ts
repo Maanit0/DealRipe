@@ -110,15 +110,49 @@ RULES FOR COLLATERAL, and the default is to send none:
 }
 
 
-/** The bundle whose named attachments the model asked for, or null. */
+/**
+ * Files made for ONE customer. Never our stock collateral, whatever else the
+ * name contains.
+ *
+ * Eduardo's 2026-08-27 draft named "Magaya Supply Chain Demo Deck - Dunavant
+ * 2026-08-27.pptx, Magaya API Guide.pdf". The old matcher tested the joined
+ * string for "supply chain" and would have attached the generic Supply Chain
+ * Data Sheet to a draft asking for a deck built for Dunavant. It never fired
+ * only because the attachment itself was broken.
+ */
+const CUSTOMER_SPECIFIC =
+  /\b(deck|proposal|quote|quotation|nda|mnda|agreement|estimate|sow|statement of work|contract|invoice|order form|pricing|recording|webinar|guide)\b/i;
+
+/** The stock collateral, named as the thing it is. */
+const DATASHEET = /\b(data ?sheet|product overview|solution sheet)\b/i;
+const RATES = /\brates? (management|solution|sheet|datasheet|data sheet)\b|\brate management\b/i;
+
+/**
+ * The bundle whose named attachments the model asked for, or null.
+ *
+ * PER ITEM, not on the joined string. A draft naming both a customer proposal
+ * and the datasheet should still get the datasheet, and testing the whole
+ * haystack at once cannot express that. It also stops one customer-specific
+ * filename poisoning a legitimate request beside it.
+ *
+ * Abstains unless an item names the collateral as such. "Supply chain" in a
+ * filename is a topic; "data sheet" is the document.
+ */
 export function bundleForNamedAttachments(named: ReadonlyArray<string>): CollateralBundle | null {
-  const hay = named.join(" ").toLowerCase();
-  if (!hay.trim()) return null;
-  // Rate first: "rate management datasheet" contains "datasheet" and would match
-  // the supply chain bundle on the looser word.
-  if (/\brate/.test(hay)) return COLLATERAL.find((b) => b.key === "rate_management") ?? null;
-  if (/data ?sheet|datasheet|overview|supply chain/.test(hay)) {
-    return COLLATERAL.find((b) => b.key === "supply_chain_ops") ?? null;
+  const items = named.map((n) => (n ?? "").trim()).filter(Boolean);
+  if (items.length === 0) return null;
+
+  let wantsRates = false;
+  let wantsSheet = false;
+  for (const item of items) {
+    if (CUSTOMER_SPECIFIC.test(item)) continue;
+    if (RATES.test(item)) wantsRates = true;
+    else if (DATASHEET.test(item)) wantsSheet = true;
   }
+  // Rate first: "rate management datasheet" satisfies both and the rates sheet
+  // is the more specific answer.
+  if (wantsRates) return COLLATERAL.find((b) => b.key === "rate_management") ?? null;
+  if (wantsSheet) return COLLATERAL.find((b) => b.key === "supply_chain_ops") ?? null;
   return null;
 }
+
