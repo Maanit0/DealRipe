@@ -164,6 +164,8 @@ export type MailMessage = {
    * Null when Graph omits it, which happens on some drafts.
    */
   internetMessageId: string | null;
+  /** True while it sits in Drafts. Never counts as mail on the deal. */
+  isDraft: boolean;
   /** Graph's thread key. Groups a reply chain without parsing References. */
   conversationId: string | null;
   subject: string;
@@ -220,6 +222,14 @@ const MESSAGE_SELECT = [
   "from",
   "toRecipients",
   "ccRecipients",
+  // A DRAFT IS NOT MAIL THAT HAPPENED. /users/{id}/messages spans every folder
+  // including Drafts, so without this the mailbox read cannot tell a sent
+  // follow-up from one still sitting unsent, and DealRipe writes a draft into
+  // the very mailbox it then reads. Measured 2026-09-02: 30 of our 43 draft
+  // ids were in deal_messages, mostly as outbound, while draft-adoption said 12
+  // of them had never been sent. A rep holding an unsent draft looked to every
+  // silence signal like a rep who had emailed.
+  "isDraft",
 ].join(",");
 
 function addr(r: GraphRecipient | null | undefined): string | null {
@@ -345,6 +355,7 @@ export async function listMailboxMessages(args: {
         to,
         cc,
         outbound: from === me,
+        isDraft: (m as { isDraft?: boolean }).isDraft === true,
         isMeetingMessage: String((m as { "@odata.type"?: string })["@odata.type"] ?? "")
           .toLowerCase()
           .includes("eventmessage"),

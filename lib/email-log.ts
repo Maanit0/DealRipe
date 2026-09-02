@@ -151,6 +151,19 @@ export async function ingestMailbox(args: {
   type MessageRow = Database["public"]["Tables"]["deal_messages"]["Insert"];
   const rows: MessageRow[] = [];
   for (const m of messages) {
+    // A DRAFT IS NOT MAIL THAT HAPPENED, and this table only records what did.
+    // /users/{id}/messages spans every folder including Drafts, and DealRipe
+    // writes its follow-up draft into the very mailbox this then reads, so
+    // without this line the tool ingests its own output as the rep's outbound
+    // mail. Measured 2026-09-02: 30 of our 43 draft ids were already in
+    // deal_messages, mostly as outbound, while draft-adoption said 12 of those
+    // had never been sent. Cost of leaving it: an unsent draft resets
+    // daysSinceOurMessage, silences emailing_without_reply and tells the
+    // re-engagement sweep the conversation is live, so the deals where the rep
+    // wrote something and never sent it are exactly the ones that stop being
+    // chased. Same shape as reading our own CRM refusal as a deal that had not
+    // moved: a thing we wrote ourselves mistaken for a fact about the deal.
+    if (m.isDraft) continue;
     // Without a stable id we cannot dedupe across mailboxes, and a co-sold
     // thread would be counted once per rep. Skipping is better than counting
     // twice, because these signals are about how often the customer wrote.

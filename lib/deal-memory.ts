@@ -28,6 +28,7 @@
  * never what was inferred from its absence.
  */
 
+import { readDraftAdoption } from "./draft-adoption";
 import { supabaseAdmin } from "./supabase";
 
 /**
@@ -53,16 +54,34 @@ function stripMailChrome(body: string): string {
     .join("\n");
 }
 
-export type PriorCommitment = { when: string; text: string };
+export type PriorCommitment = {
+  when: string;
+  text: string;
+  /**
+   * Whether the draft carrying this promise actually left the mailbox.
+   *
+   * "sent" the customer received it, so it is a real promise and we are on the
+   * hook. "unsent" it is still sitting in Drafts, so the customer never saw it
+   * and offering it as already-promised would invent a commitment. "unknown"
+   * Graph could not be reached or the message is gone, which is deliberately
+   * NOT folded into either, because the two carry opposite instructions.
+   */
+  delivery: "sent" | "unsent" | "unknown";
+};
 export type SentItem = { when: string; subject: string; attachments: string[] };
 
 export type DealMemory = {
   /**
-   * Commitments our earlier drafts made on this deal.
+   * Commitments our earlier drafts made on this deal, each carrying whether it
+   * was actually sent.
    *
-   * PROBABLY said, not certainly. A draft the rep rewrote or never sent
-   * carries a promise the customer never received, and nothing here can tell
-   * the two apart, so the prompt says so rather than asserting it.
+   * This used to say "probably said, not certainly" and hedge the whole list,
+   * because nothing here could tell a sent promise from one still in Drafts.
+   * It can now: the draft's internetMessageId is on sent_messages.provider_id
+   * and readMessageStateByInternetId answers it in one call per draft (median
+   * 1 per deal, max 3, measured 2026-09-02). The hedge was not harmless. It
+   * put unsent promises in front of the model as things we had told the
+   * customer, and the customer had received none of them.
    */
   toldThemWeWould: PriorCommitment[];
   /** What has actually left the rep's mailbox to them since those calls. */
@@ -93,15 +112,90 @@ export type DealMemory = {
  * The draft body is where a commitment actually lives: "Steven is checking
  * internally on the PCIT integration".
  */
-function commitmentBullets(draftText: string): string[] {
-  return draftText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => /^[-*•]\s+/.test(l))
-    .map((l) => l.replace(/^[-*•]\s+/, ""))
-    // Ours, not theirs. "Debra will send the org chart" is not something we owe.
-    .filter((l) => !/^(they|the customer|[A-Z][a-z]+ (will|is going to) (send|share|provide|get back))/i.test(l))
-    .slice(0, 6);
+/**
+ * A first-person promise. "I'll send the pricing" and not "can we get 30
+ * minutes", which is an ask.
+ *
+ * Deliberately narrow on the subject: only I/we, because a commitment the
+ * CUSTOMER made is not something we owe and putting it here would have the
+ * draft apologising for their homework.
+ */
+const OWED = /\b(?:i|we)(?:'ll|'m going to|'re going to| will| shall| can| am going to| are going to)\s+(?:also\s+|then\s+|go ahead and\s+)?([a-z]{2,})/i;
+
+/**
+ * Verbs that are not deliverables.
+ *
+ * Two groups. The first promises nothing at all ("I'll let you know"). The
+ * second describes what happens ON a call, not something we hand over: "that
+ * is exactly what we will walk through" is an agenda, and treating it as owed
+ * had the draft chasing itself for a conversation that was the meeting.
+ */
+const NOT_A_DELIVERABLE =
+  /^(?:let|know|be|have|look forward|hope|think|say|note|mention|add|assume|imagine|expect|understand|see|leave|keep|accommodate)$|^(?:walk|discuss|go|cover|talk|meet|chat|review|dive|explore|revisit|touch|circle|dig)$/i;
+
+/**
+ * A request to THEM, which is the mirror of a commitment and never ours.
+ *
+ * "Bramwell, when you get a chance, please send me a sample file" is the
+ * customer's homework. Recorded as something we owed, it produced a draft
+ * apologising for work the customer had not done. Anything that asks is
+ * dropped unless the same sentence also carries an explicit "I'll" or "we'll",
+ * which is the shape of a genuine trade: "send me the file and I'll get you
+ * the quote".
+ */
+const ASKS_THEM = /\b(?:please|could you|can you|would you|if you could|when you get a chance|on your end)\b/i;
+const CLEARLY_OURS = /\b(?:i|we)(?:'ll|'m going to|'re going to| will)\b/i;
+
+// Exported so a fire-rate check imports THIS and cannot drift from it.
+export function commitmentBullets(draftText: string): string[] {
+  const body = draftText
+    // A signature block is not a commitment, and Alexandra's carries a phone
+    // number that sentence-splits into fragments.
+    .split(/\n\s*(?:Kindly|Best|Thanks|Thank you|Regards|Sincerely|Cheers)\b/i)[0];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (text: string) => {
+    const t = text.replace(/\s+/g, " ").trim();
+    const key = t.toLowerCase();
+    if (t.length < 12 || t.length > 220 || seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  };
+
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    // Bullets were the original and only source. They survive as-is: a rep
+    // who bulleted a next step meant it as one.
+    if (/^[-*•]\s+/.test(line)) {
+      const b = line.replace(/^[-*•]\s+/, "");
+      // Ours, not theirs. "Debra will send the org chart" is not something we owe.
+      const theirs =
+        /^(they|the customer|[A-Z][a-z]+ (will|is going to) (send|share|provide|get back))/i.test(b) ||
+        (ASKS_THEM.test(b) && !CLEARLY_OURS.test(b));
+      if (!theirs) push(b);
+      continue;
+    }
+
+    // 39 of 40 drafts measured 2026-09-02 carried no bullet at all, so reading
+    // only bullets found commitments on ONE deal in the book and the whole
+    // memory was inert. Reps write prose. Split into sentences and keep the
+    // ones where we promised something.
+    for (const sentence of line.split(/(?<=[.!?])\s+/)) {
+      const t = sentence.trim();
+      // A question is an ask, not a promise. "Can we get 30 minutes on the
+      // calendar" is the single most common line in these drafts and it owes
+      // the customer nothing.
+      if (!t || t.endsWith("?")) continue;
+      if (ASKS_THEM.test(t) && !CLEARLY_OURS.test(t)) continue;
+      const m = OWED.exec(t);
+      if (!m || NOT_A_DELIVERABLE.test(m[1])) continue;
+      push(t);
+    }
+  }
+  return out.slice(0, 6);
 }
 
 export async function readDealMemory(args: {
@@ -117,7 +211,7 @@ export async function readDealMemory(args: {
     const [recaps, msgs] = await Promise.all([
       db
         .from("sent_messages")
-        .select("call_id, body_text, sent_at")
+        .select("call_id, body_text, sent_at, provider_id, to_email")
         .eq("deal_id", args.dealId)
         .eq("kind", "followup_draft")
         .order("sent_at", { ascending: false })
@@ -132,13 +226,73 @@ export async function readDealMemory(args: {
     ]);
 
     const toldThemWeWould: PriorCommitment[] = [];
-    for (const r of (recaps.data ?? []) as Array<{ call_id: string | null; body_text: string | null; sent_at: string }>) {
+    const priorDrafts = ((recaps.data ?? []) as Array<{
+      call_id: string | null;
+      body_text: string | null;
+      sent_at: string;
+      provider_id: string | null;
+      to_email: string | null;
+    }>)
       // The call being written about is not history for itself.
-      if (args.beforeCallId && r.call_id === args.beforeCallId) continue;
-      for (const b of commitmentBullets(r.body_text ?? "")) {
-        toldThemWeWould.push({ when: r.sent_at.slice(0, 10), text: b });
+      .filter((r) => !(args.beforeCallId && r.call_id === args.beforeCallId))
+      .map((r) => ({ row: r, bullets: commitmentBullets(r.body_text ?? "") }))
+      .filter((d) => d.bullets.length > 0);
+
+    // WHETHER EACH PROMISE ACTUALLY REACHED THE CUSTOMER, from the production
+    // verdict rather than a second opinion.
+    //
+    // The obvious implementation is to look the draft's Message-ID up in the
+    // mailbox and see whether it is still a draft. It does not work, and it
+    // fails in the direction that matters: Graph REASSIGNS the id when a draft
+    // is sent, so the id 404s on precisely the outcome being measured and every
+    // sent draft reads as still sitting there. Written that way first, it
+    // returned sent=0 across 18 deals against a known adoption rate near a
+    // third. lib/draft-adoption.ts already carries the answer, content match and
+    // all, so this calls it instead of re-deriving it.
+    const domains = Array.from(
+      new Set(
+        ((msgs.data ?? []) as Array<{ customer_side: boolean | null; from_domain: string | null }>)
+          .filter((r) => r.customer_side === true && r.from_domain)
+          .map((r) => (r.from_domain as string).toLowerCase()),
+      ),
+    );
+    const delivery = await Promise.all(
+      priorDrafts.map(async ({ row }): Promise<PriorCommitment["delivery"]> => {
+        // provider_id is the draft's Message-ID and to_email is the mailbox it
+        // was created in, which is the REP's own address: a draft is written
+        // into the rep's Drafts folder, not sent anywhere.
+        if (!row.provider_id || !row.to_email) return "unknown";
+        try {
+          const { verdict } = await readDraftAdoption({
+            dealId: args.dealId,
+            account: "",
+            callId: row.call_id,
+            kind: "followup_draft",
+            mailbox: row.to_email,
+            draftId: row.provider_id,
+            draftText: row.body_text ?? "",
+            draftedAt: row.sent_at,
+            domains,
+          });
+          // sent_ours and sent_edited both put OUR words in front of the
+          // customer, so the promise landed. sent_own did not: the rep wrote
+          // their own message and nothing here knows whether it carried this
+          // particular commitment, which is a genuine "did not check" and is
+          // kept apart from both answers rather than rounded to either.
+          if (verdict === "sent_ours" || verdict === "sent_edited") return "sent";
+          if (verdict === "not_sent") return "unsent";
+          return "unknown";
+        } catch {
+          return "unknown";
+        }
+      }),
+    );
+
+    priorDrafts.forEach(({ row, bullets }, i) => {
+      for (const b of bullets) {
+        toldThemWeWould.push({ when: row.sent_at.slice(0, 10), text: b, delivery: delivery[i] });
       }
-    }
+    });
 
     const rows = (msgs.data ?? []) as Array<{
       direction: string;
@@ -149,10 +303,24 @@ export async function readDealMemory(args: {
       from_domain: string | null;
       customer_side: boolean | null;
     }>;
-    const sentSince: SentItem[] = rows
-      .filter((m) => m.direction === "outbound")
-      .slice(0, 8)
-      .map((m) => ({ when: m.sent_at.slice(0, 10), subject: m.subject ?? "(no subject)", attachments: [] }));
+    // Deduped on the day and the thread, not on the row. A co-sold deal is
+    // ingested once per rep mailbox, so one message becomes three rows and the
+    // block printed "RE: Magaya SOW preparation" three times for one send.
+    // Reply prefixes are stripped for the same reason: RE: and FW: of the same
+    // subject on the same day are one thread, and listing them separately
+    // reads as three pieces of outreach where there was one.
+    const seenSends = new Set<string>();
+    const sentSince: SentItem[] = [];
+    for (const m of rows) {
+      if (m.direction !== "outbound") continue;
+      const subject = m.subject ?? "(no subject)";
+      const thread = subject.replace(/^\s*(?:re|fw|fwd)\s*:\s*/gi, "").trim().toLowerCase();
+      const key = `${m.sent_at.slice(0, 10)}|${thread}`;
+      if (seenSends.has(key)) continue;
+      seenSends.add(key);
+      sentSince.push({ when: m.sent_at.slice(0, 10), subject, attachments: [] });
+      if (sentSince.length >= 8) break;
+    }
     // INBOUND IS NOT THE SAME AS FROM THE CUSTOMER. Dunavant has two Magaya
     // reps on it, so Eduardo's own email to Debra is ingested as INBOUND in
     // Steven's mailbox. The first version of this quoted a colleague's outbound
@@ -206,10 +374,34 @@ export async function readDealMemory(args: {
 /** The memory as prompt text, or null when there is nothing worth saying. */
 export function dealMemoryBlock(m: DealMemory): string | null {
   const parts: string[] = [];
-  if (m.toldThemWeWould.length > 0) {
+  const lines = (kind: PriorCommitment["delivery"]) =>
+    m.toldThemWeWould.filter((c) => c.delivery === kind).map((c) => `- ${c.when}: ${c.text}`);
+
+  // Sent, unsent and unknown are three different instructions to the writer, so
+  // they are three blocks. Merging them is what the old single hedged list did,
+  // and it put promises the customer never received in front of the model as
+  // things we had said.
+  const promised = lines("sent");
+  if (promised.length > 0) {
     parts.push(
-      `WHAT OUR EARLIER FOLLOW-UP DRAFTS COMMITTED TO on this deal. The rep may have edited or not sent any of these, so treat them as probably said rather than certainly said. Check the send history below before offering any of it again:\n` +
-        m.toldThemWeWould.map((c) => `- ${c.when}: ${c.text}`).join("\n"),
+      `WHAT WE TOLD THIS CUSTOMER WE WOULD DO. These went out and they have them, so we are on the hook for each one. If the send history below does not show it landing, say where it is or say when it will be, and never repeat the promise as if it were new:\n` +
+        promised.join("\n"),
+    );
+  }
+
+  const unsent = lines("unsent");
+  if (unsent.length > 0) {
+    parts.push(
+      `DRAFTED ON AN EARLIER CALL AND NEVER SENT. The customer has NOT seen any of this. Do not write "as promised" or "as I mentioned" about it, and do not treat it as owed. It is here for one reason: it is what we meant to do and did not, so if it is still the right move, make it now as a first offer rather than a follow-up:\n` +
+        unsent.join("\n"),
+    );
+  }
+
+  const unsure = lines("unknown");
+  if (unsure.length > 0) {
+    parts.push(
+      `EARLIER DRAFTS COMMITTED TO THIS, and we could not check whether they were sent. Do not assert either way. If you use one, phrase it so it reads correctly whether or not they already have it:\n` +
+        unsure.join("\n"),
     );
   }
   if (m.sentSince.length > 0) {
