@@ -58,9 +58,11 @@ export async function GET(req: NextRequest) {
     const prompt = vote === "up" ? "What worked?" : "What was wrong with it?";
     return page(
       "Noted, thank you",
-      vote === "up"
-        ? "Recorded as useful. It goes straight into what DealRipe writes you next."
-        : "Recorded as not useful. That is the more valuable of the two, and it goes straight into what DealRipe writes you next.",
+      // NO EDITORIALISING, AND NO CLAIM WE CANNOT BACK. This said the rating
+      // "goes straight into what DealRipe writes you next". Nothing consumes
+      // feedback yet, so that was a promise about a loop that does not exist,
+      // made to the person best placed to notice.
+      vote === "up" ? "Recorded as useful." : "Recorded as not useful.",
       `<form method="post" action="?id=${encodeURIComponent(token)}&v=${vote}" style="margin-top:18px">
   <label for="note" style="display:block;font-size:13px;color:#334155;margin-bottom:6px">${prompt} <span style="color:#94A3B8">Optional, one line is plenty.</span></label>
   <textarea id="note" name="note" rows="3" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:14px;padding:9px 11px;border:1px solid #CBD5E1;border-radius:7px;resize:vertical"></textarea>
@@ -116,7 +118,7 @@ export async function POST(req: NextRequest) {
       .eq("feedback_token", token);
     if (error) throw new Error(error.message);
     console.log(`[feedback] note added (${note.length} chars) for ${token.slice(0, 8)}`);
-    return page("Got it, thank you", "That is more useful than the rating on its own, and Maanit reads these.");
+    return page("Got it, thank you", "Maanit reads these.");
   } catch (err) {
     console.error(`[feedback] note write failed: ${err instanceof Error ? err.message : String(err)}`);
     // The rating survived. Say which half made it rather than implying both did.
