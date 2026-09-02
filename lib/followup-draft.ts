@@ -1544,7 +1544,8 @@ export async function autoDraftFollowUpForCall(args: {
           tenantIdOrDomain: GRAPH_TENANT,
           mailbox,
           draftId: res.graphId ?? "",
-          filename: file,
+          // The name the customer sees, which is the rep's, not the download's.
+          filename: bundle.sendAs?.[file] ?? file,
           contentType: "application/pdf",
           bytes,
         });

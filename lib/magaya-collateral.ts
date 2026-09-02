@@ -41,6 +41,16 @@ export type CollateralBundle = {
    * 95/5 split he described.
    */
   files: string[];
+  /**
+   * What the customer sees the attachment called.
+   *
+   * The disk name is hyphenated because it came off a download; Juan sends
+   * "Magaya Supply Chain Data Sheet.pdf" with spaces, and the rates one keeps
+   * its "(1)". A customer receiving a differently named file than the rep has
+   * always sent them is a small tell that something else wrote the email.
+   * Keyed by the disk filename.
+   */
+  sendAs?: Record<string, string>;
 };
 
 export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
@@ -52,6 +62,7 @@ export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
     links: [{ title: "Rate management video tour", url: "https://www.youtube.com/watch?v=_WWi6Z5IoKU" }],
     attachments: ["Rate management datasheet"],
     files: ["Magaya-Rates-Solution-Sheet-02192024-1-.pdf"],
+    sendAs: { "Magaya-Rates-Solution-Sheet-02192024-1-.pdf": "Magaya Rates Solution Sheet 02192024 (1).pdf" },
   },
   {
     key: "supply_chain_ops",
@@ -77,6 +88,7 @@ export const COLLATERAL: ReadonlyArray<CollateralBundle> = [
     // on every supply chain draft. The datasheet IS the overview.
     attachments: ["Magaya datasheet"],
     files: ["Magaya-Supply-Chain-Data-Sheet.pdf"],
+    sendAs: { "Magaya-Supply-Chain-Data-Sheet.pdf": "Magaya Supply Chain Data Sheet.pdf" },
   },
 ];
 
