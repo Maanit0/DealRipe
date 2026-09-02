@@ -474,6 +474,43 @@ that signal also pushed nine deals over the readable-signal threshold, so
 the whole book before shipping it; the target shape is roughly 1 flag per deal
 with a third of deals carrying none.
 
+**DealRipe was reading its own unsent drafts back as the rep's outbound mail.**
+`/users/{id}/messages` spans EVERY folder including Drafts, and DealRipe writes
+its follow-up draft into the very mailbox `lib/email-log.ts` then reads, so the
+tool ingested its own output as the rep's work. Measured 2026-09-02: 31 rows in
+`deal_messages` across 28 deals are our own drafts, and on 12 deals the most
+recent outbound is one. That resets `daysSinceOurMessage`, silences
+`emailing_without_reply` and tells the re-engagement sweep the conversation is
+live, so the deals where the rep wrote something and never sent it are exactly
+the ones that stop being chased. `isDraft` is on `MESSAGE_SELECT` now and the
+ingest skips drafts. THE HISTORICAL ROWS ARE NOT SAFE TO BULK DELETE: the
+Message-ID survives the send, so 22 of the 31 have no same-day twin on the
+thread and that row IS the real send wherever the draft went out. Only the
+unsent ones are phantom, which is a per-row question and `lib/draft-adoption.ts`
+is the only thing that answers it.
+
+**Do not ask whether a draft was sent by looking its Message-ID up in the
+mailbox.** It cannot see the outcome it is measuring. Written that way in
+`lib/deal-memory.ts` first, it returned sent=0 across 18 deals against a known
+adoption rate near a third, because a sent draft does not come back as a plain
+`sent`. `lib/draft-adoption.ts` already answers this properly, content match
+against the rep's actual sent mail included, and anything asking "did the rep
+send ours" calls `readDraftAdoption` rather than re-deriving it. `sent_own` is
+NOT an answer to that question: the rep wrote their own message and nothing
+knows whether it carried the commitment being asked about.
+
+**Reps do not write bullet points.** `commitmentBullets` in `lib/deal-memory.ts`
+read bullet lines only, and 39 of 40 follow-up drafts contain no bullet, so deal
+memory found commitments on ONE deal in the book and was silently inert
+everywhere else. It reads sentences now: 43% of drafts yield at least one
+commitment, averaging 1.3. Two things that look like commitments and are not, so
+do not remove the guards: a question is an ask ("can we get 30 minutes on the
+calendar" is the single most common line in these drafts and owes the customer
+nothing), and a call agenda is not a deliverable ("that is exactly what we will
+walk through"). A request TO them is the mirror error and the worst of the three,
+since "Bramwell, when you get a chance, please send me a sample file" recorded as
+ours produced a draft apologising for the customer's own homework.
+
 **"No open opportunity" is NOT a closed deal, and a flag that said so was wrong
 on all 45 deals it fired on.** DealRipe creates a deal from a calendar invite;
 Magaya does not create the opportunity until AFTER the discovery call, which
