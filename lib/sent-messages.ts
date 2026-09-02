@@ -65,9 +65,6 @@ export async function recordSentMessage(args: {
   try {
     const res = await supabaseAdmin()
       .from("sent_messages")
-      // The cast covers feedback_token only, which is absent from the generated
-      // types until supabase/add-artifact-feedback.sql has run. Drop it and
-      // regenerate once the column exists.
       .insert({
         tenant_id: args.tenantId,
         deal_id: args.dealId,
@@ -79,7 +76,7 @@ export async function recordSentMessage(args: {
         body_text: args.text,
         ...(args.feedbackToken ? { feedback_token: args.feedbackToken } : {}),
         provider_id: args.providerId ?? null,
-      } as never);
+      });
     if (res.error) {
       console.error(`[sent-messages] insert failed for deal ${args.dealId}: ${res.error.message}`);
     }

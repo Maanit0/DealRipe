@@ -1031,6 +1031,10 @@ export type Database = {
           body_text: string;
           provider_id: string | null;
           sent_at: string;
+          feedback_token: string | null;
+          feedback: string | null;
+          feedback_at: string | null;
+          feedback_note: string | null;
         };
         Insert: {
           id?: string;
@@ -1044,6 +1048,10 @@ export type Database = {
           body_text: string;
           provider_id?: string | null;
           sent_at?: string;
+          feedback_token?: string | null;
+          feedback?: string | null;
+          feedback_at?: string | null;
+          feedback_note?: string | null;
         };
         Update: {
           id?: string;
@@ -1057,6 +1065,10 @@ export type Database = {
           body_text?: string;
           provider_id?: string | null;
           sent_at?: string;
+          feedback_token?: string | null;
+          feedback?: string | null;
+          feedback_at?: string | null;
+          feedback_note?: string | null;
         };
         Relationships: [];
       };
