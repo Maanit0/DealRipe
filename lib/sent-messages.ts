@@ -61,8 +61,32 @@ export async function recordSentMessage(args: {
    * its way back to the thing it was rating.
    */
   feedbackToken?: string | null;
+  /**
+   * Fill a row already claimed by claimSentMessageSlot instead of inserting.
+   *
+   * The claim is taken BEFORE the artifact is created so the lock covers the
+   * mailbox write and not just the archive row. Without this the row would be
+   * inserted afterwards, which is a unique index that guarantees one RECORD per
+   * call while a rep still ends up with two drafts.
+   */
+  rowId?: string | null;
 }): Promise<void> {
   try {
+    if (args.rowId) {
+      const upd = await supabaseAdmin()
+        .from("sent_messages")
+        .update({
+          to_email: args.toEmail,
+          subject: args.subject,
+          body_html: args.html,
+          body_text: args.text,
+          ...(args.feedbackToken ? { feedback_token: args.feedbackToken } : {}),
+          provider_id: args.providerId ?? null,
+        })
+        .eq("id", args.rowId);
+      if (upd.error) console.error(`[sent-messages] could not fill claimed row ${args.rowId}: ${upd.error.message}`);
+      return;
+    }
     const res = await supabaseAdmin()
       .from("sent_messages")
       .insert({
@@ -224,4 +248,55 @@ export async function getSentMessages(dealId: string): Promise<SentMessage[]> {
     providerId: r.provider_id,
     sentAt: r.sent_at,
   }));
+}
+
+/**
+ * Reserve the one archive row for this artifact, before creating it.
+ *
+ * The partial unique index in supabase/add-draft-claim.sql turns this INSERT
+ * into the lock. A second concurrent run is rejected with 23505 and gets
+ * "raced", so it returns before writing anything into a rep's mailbox, which
+ * the previous ordering could not prevent: the Outlook draft was created first
+ * and the row inserted after, so the index guaranteed one RECORD per call while
+ * the rep still got two drafts.
+ *
+ * A crash between claiming and filling leaves an empty row that blocks the
+ * call. That is the same trade recap-sync's own claim makes and the direction
+ * is deliberate: a missing draft is visible in followup_draft_state, a
+ * duplicate is already in a rep's inbox. Release it with releaseSentMessageSlot
+ * on every path that gives up.
+ */
+export async function claimSentMessageSlot(args: {
+  tenantId: string;
+  dealId: string;
+  callId: string;
+  kind: SentMessageKind;
+  toEmail: string;
+}): Promise<{ status: "claimed"; rowId: string } | { status: "raced" } | { status: "error"; message: string }> {
+  const res = await supabaseAdmin()
+    .from("sent_messages")
+    .insert({
+      tenant_id: args.tenantId,
+      deal_id: args.dealId,
+      call_id: args.callId,
+      kind: args.kind,
+      to_email: args.toEmail,
+      subject: "",
+      body_html: "",
+      body_text: "",
+    })
+    .select("id")
+    .single();
+  if (res.error) {
+    const code = (res.error as { code?: string }).code;
+    if (code === "23505") return { status: "raced" };
+    return { status: "error", message: res.error.message };
+  }
+  return { status: "claimed", rowId: (res.data as { id: string }).id };
+}
+
+/** Give the slot back, so a retry is not blocked by an attempt that never produced anything. */
+export async function releaseSentMessageSlot(rowId: string): Promise<void> {
+  const res = await supabaseAdmin().from("sent_messages").delete().eq("id", rowId);
+  if (res.error) console.error(`[sent-messages] could not release claim ${rowId}: ${res.error.message}`);
 }

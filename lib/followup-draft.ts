@@ -1547,6 +1547,39 @@ export async function autoDraftFollowUpForCall(args: {
     return { created: false, reason: "follow-up already drafted for this call" };
   }
 
+  // RESERVE THE SLOT BEFORE ANYTHING REACHES THE MAILBOX.
+  //
+  // The check above is a read, and two runs that both read before either writes
+  // both continue. The archive row used to be inserted at the very END, after
+  // the Outlook draft already existed, so the unique index added on
+  // 2026-09-02 guaranteed one RECORD per call while the rep still got two
+  // drafts, and the loser's draft was then untracked, which is worse than the
+  // duplicate. Claiming here puts the Graph write inside the lock.
+  const { claimSentMessageSlot, releaseSentMessageSlot } = await import("./sent-messages");
+  const slot = await claimSentMessageSlot({
+    tenantId: args.tenantId,
+    dealId: args.dealId,
+    callId: args.callId,
+    kind: "followup_draft",
+    toEmail: mailbox,
+  });
+  if (slot.status === "raced") {
+    return { created: false, reason: "follow-up already drafted for this call" };
+  }
+  if (slot.status === "error") {
+    // Fail closed, and say which of the two it is. Not being able to reserve is
+    // not permission to write a second draft into a rep's Outlook.
+    return {
+      created: false,
+      reason: `could not establish whether a follow-up was already drafted for this call: ${slot.message}`,
+    };
+  }
+  const claimedRowId = slot.rowId;
+
+  // From here every exit releases the slot, or a run that produced nothing
+  // blocks the retry that would have succeeded.
+  try {
+
   // Same calendar the briefing sync reads, so proposed times are real openings.
   const conn = await db
     .from("microsoft_connections")
@@ -1594,7 +1627,10 @@ export async function autoDraftFollowUpForCall(args: {
     callSubtype: args.callSubtype ?? null,
     dealMemory: [dealMemoryBlock(memory), dealChangeBlock(changes)].filter(Boolean).join("\n\n") || null,
   });
-  if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
+  if (!res.created || !res.draft) {
+    await releaseSentMessageSlot(claimedRowId);
+    return { created: false, reason: res.reason ?? "draft not created" };
+  }
 
   // ATTACH THE FILE THE REP PROMISED, so the draft opens with it on.
   //
@@ -1731,6 +1767,9 @@ export async function autoDraftFollowUpForCall(args: {
   // Archive it. This is both the audit trail and the idempotency marker, so it
   // is recorded even though nothing was emailed.
   await recordSentMessage({
+    // Fills the row claimed above. An insert here would hit the unique index it
+    // just reserved against itself.
+    rowId: claimedRowId,
     tenantId: args.tenantId,
     dealId: args.dealId,
     callId: args.callId,
@@ -1759,6 +1798,14 @@ export async function autoDraftFollowUpForCall(args: {
     providerId: res.draftId ?? null,
   });
   return { created: true, card };
+  } catch (err) {
+    // A throw after claiming and before the draft exists would otherwise leave
+    // an empty row blocking this call forever, and the retry that would have
+    // worked reads it as "already drafted". Release, then rethrow so the caller
+    // still classifies and records the failure as it always did.
+    await releaseSentMessageSlot(claimedRowId);
+    throw err;
+  }
 }
 
 
