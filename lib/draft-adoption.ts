@@ -29,6 +29,7 @@
  */
 
 import {
+  getMessageBody,
   domainOf,
   listMailboxMessages,
   readMessageStateByInternetId,
@@ -64,8 +65,22 @@ export type AdoptionRow = {
   verdict: AdoptionVerdict;
   /** Why, in one line. Always populated, including for "unknown". */
   reason: string;
-  /** 0 to 1 word overlap with what we wrote, where a sent message was found. */
+  /**
+   * 0 to 1 word overlap with what we wrote, where a sent message was found.
+   *
+   * COMPUTED AGAINST bodyPreview, roughly the first 255 characters of their
+   * message, because that is what the mailbox listing returns. It therefore
+   * UNDERSTATES how much of our draft survived: a rep who kept our middle
+   * paragraph and rewrote the opening scores near zero. Good enough to separate
+   * "sent ours" from "wrote their own", and not a number to quote as a rewrite
+   * rate. scripts/draft-vs-sent.ts pulls both full bodies where the real
+   * comparison matters.
+   */
   overlap?: number;
+  /** The rep's own message we compared against, for pulling the full body. */
+  matchedMessageId?: string;
+  /** What we drafted, so a caller can diff without re-reading the archive. */
+  ourText?: string;
 };
 
 // =====================================================================
@@ -114,6 +129,12 @@ export function wordOverlap(ours: string, theirs: string): number {
  */
 const SENT_OURS = 0.6;
 const SENT_EDITED = 0.3;
+/**
+ * At or above this, an outbound message IS our draft however it got there.
+ * Deliberately high: it has to be past any plausible coincidence between two
+ * emails about the same call.
+ */
+const COPIED = 0.75;
 
 function verdictFromOverlap(overlap: number): "sent_ours" | "sent_edited" | "sent_own" {
   if (overlap >= SENT_OURS) return "sent_ours";
@@ -215,10 +236,36 @@ export async function readDraftAdoption(rec: DraftRecord): Promise<AdoptionRow> 
 
   // Compare against the closest match rather than the first. A rep may write
   // several times; the question is whether ANY of them is our draft.
+  //
+  // TWO PASSES, AND THE SECOND ONE IS THE MEASUREMENT. The listing returns
+  // bodyPreview, roughly the first 255 characters, so a typical 700 character
+  // draft could never score above about 36% however faithfully it was sent.
+  // SENT_OURS is 0.6, which made "the rep sent our draft" structurally
+  // unreachable and put adoption at 3%. Two pairs pulled in full on 2026-09-02
+  // were byte identical and both had been recorded as "wrote their own".
+  //
+  // So the preview picks the candidate, which is what it is good for, and the
+  // full body decides the verdict.
   let best = { overlap: 0, msg: sentMail[0] };
   for (const m of sentMail) {
     const o = wordOverlap(rec.draftText, m.preview);
     if (o > best.overlap) best = { overlap: o, msg: m };
+  }
+  try {
+    const full = await getMessageBody({
+      tenantIdOrDomain: GRAPH_TENANT,
+      mailbox: rec.mailbox,
+      messageId: best.msg.id,
+    });
+    // Only above the quoted reply: a thread that quotes our draft back is not
+    // the rep having sent it.
+    if (full) {
+      const cut = full.search(/\n\s*(From:|On .+ wrote:|-{5,})/);
+      best = { ...best, overlap: wordOverlap(rec.draftText, cut > 0 ? full.slice(0, cut) : full) };
+    }
+  } catch {
+    // Keep the preview number rather than failing the row, and it is marked as
+    // a floor in the reason line so nobody reads it as the real figure.
   }
 
   // OUR DRAFT STILL SITTING IN DRAFTS SETTLES IT.
@@ -234,10 +281,31 @@ export async function readDraftAdoption(rec: DraftRecord): Promise<AdoptionRow> 
   // genuinely ambiguous: a high match there is real evidence the draft went out
   // and something rewrote the id on the way.
   if (state.status === "draft") {
+    // UNLESS THEY COPIED IT. The rule below exists because two follow-ups about
+    // one call share the customer, the product and the next step, and a 32%
+    // coincidence was once scored as adoption. A near total match is not that:
+    // Loomis on 2026-09-02 sat unsent in drafts while an outbound message
+    // carried 100% of its words, which is the rep pasting our draft into a new
+    // message and sending it. Recording that as "wrote their own" undercounts
+    // the thing the whole report exists to measure.
+    if (best.overlap >= COPIED) {
+      return {
+        ...base,
+        verdict: "sent_ours",
+        overlap: best.overlap,
+        matchedMessageId: best.msg.id,
+        ourText: rec.draftText,
+        reason: `our copy is still in drafts, but they sent a message carrying ${Math.round(
+          best.overlap * 100,
+        )}% of our words ("${best.msg.subject}"), so it was copied out and sent`,
+      };
+    }
     return {
       ...base,
       verdict: "sent_own",
       overlap: best.overlap,
+      matchedMessageId: best.msg.id,
+      ourText: rec.draftText,
       reason: `our draft is still unsent and the rep wrote their own ("${best.msg.subject}"), sharing ${Math.round(
         best.overlap * 100,
       )}% of our words`,
@@ -247,6 +315,8 @@ export async function readDraftAdoption(rec: DraftRecord): Promise<AdoptionRow> 
     ...base,
     verdict: verdictFromOverlap(best.overlap),
     overlap: best.overlap,
+    matchedMessageId: best.msg.id,
+    ourText: rec.draftText,
     reason: `the draft is gone from the mailbox and an outbound message matches at ${Math.round(
       best.overlap * 100,
     )}% ("${best.msg.subject}")`,
