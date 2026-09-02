@@ -24,6 +24,7 @@
  *    the rep's habits, so we do not scale one rep's ceiling to the team.
  */
 
+import { dealMemoryBlock, readDealMemory } from "./deal-memory";
 import { draftArchiveHtml } from "./draft-archive";
 import { bodyTextToHtml, hasHtmlSignature, signatureFor, signatureHtml } from "./rep-signature-html";
 import { runModel } from "./model-run";
@@ -108,6 +109,15 @@ export type FollowUpDraftInput = {
    * one and he was only sending a recording. Discussed is not agreed.
    */
   agreed?: { weOwe: string[]; customerOwes: string[] };
+  /**
+   * What the DEAL knows, beyond this one call. See lib/deal-memory.ts.
+   *
+   * The draft used to run on the transcript, the extraction and the rep's
+   * voice. Ten pairs read on 2026-09-02 show that every time a rep wrote their
+   * own instead, they held something we did not: a EULA outstanding, a file
+   * already sent, a reply that arrived this morning.
+   */
+  dealMemory?: string | null;
   /**
    * What KIND of conversation this was, so the email has the right job.
    *
@@ -769,6 +779,7 @@ function buildUserMessage(
     transcript
       ? `THE CALL, VERBATIM. This is your source. Write from what was actually said, and use the customer's own words where they said something worth echoing back. Everything below this is checked detail to get right, not material to narrate.\n\n${transcript}`
       : "",
+    input.dealMemory ? `THE DEAL BEFORE TODAY. This is history, not material to narrate; use it to avoid offering what has gone and to meet the conversation where it actually is.\n\n${input.dealMemory}` : "",
     KIND_LABEL[kind]
       ? `THIS WAS A ${KIND_LABEL[kind]} CALL. Write the email that kind of call needs.`
       : `CALL KIND NOT CLASSIFIED, so write the default discovery shape.`,
@@ -1538,6 +1549,15 @@ export async function autoDraftFollowUpForCall(args: {
 
   const draftAccountName = await crmCustomerName(args.dealId);
 
+  // The deal's own history, read once and handed to the writer. Failure here
+  // returns an empty memory rather than throwing: a draft with no history is
+  // what we had yesterday, and a draft that never gets written is worse.
+  const memory = await readDealMemory({
+    tenantId: args.tenantId,
+    dealId: args.dealId,
+    beforeCallId: args.callId ?? null,
+  });
+
   const res = await createFollowUpDraft({
     mailbox,
     customerDomains: customerDomainsFor(customerEmails),
@@ -1555,6 +1575,7 @@ export async function autoDraftFollowUpForCall(args: {
     callDate: args.callDate ?? null,
     calendarConnectionId: conn.data?.id ?? null,
     callSubtype: args.callSubtype ?? null,
+    dealMemory: dealMemoryBlock(memory),
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
 
@@ -1724,6 +1745,28 @@ export async function autoDraftFollowUpForCall(args: {
 }
 
 
+
+/**
+ * The first name of a transcript speaker whose label contains `needle`.
+ *
+ * "gong" finds "Peter Gong" and returns "Peter"; "cabrera" finds "Luis
+ * Cabrera". Two words minimum, so a bare handle in the speaker list cannot
+ * match itself and be mistaken for a full name.
+ */
+function speakerFirstName(transcript: string, needle: string): string | null {
+  for (const line of transcript.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx <= 0 || idx > 60) continue;
+    const label = line.slice(0, idx).split("|")[0].trim();
+    const words = label.split(/\s+/).filter(Boolean);
+    if (words.length < 2) continue;
+    if (words.some((w) => w.toLowerCase() === needle || needle.includes(w.toLowerCase()))) {
+      return words[0];
+    }
+  }
+  return null;
+}
+
 /**
  * The first name to greet one recipient by.
  *
@@ -1751,22 +1794,29 @@ export function firstNameFor(
   transcript: string | null,
 ): string {
   const raw = (inviteName ?? "").trim();
-  if (raw && !raw.includes("@")) return raw.split(/\s+/)[0];
+  // A full name from the invite is the best source and needs no help.
+  if (raw && !raw.includes("@") && raw.split(/\s+/).length >= 2) return raw.split(/\s+/)[0];
+
+  // A SINGLE WORD IS PROBABLY A SURNAME. Daniel's Scantibodies draft opened
+  // "Hi purchasinggroup@scantibodies.com, Cabrera, Garcia, Barboza": the
+  // address is fixed below, and Cabrera, Garcia and Barboza came from invites
+  // carrying one word each. Greeting a customer by surname is not a small
+  // thing in Latin America, where Magaya does much of its business. The
+  // transcript usually holds the full name, so the same lookup answers it.
+  const single = raw && !raw.includes("@") ? raw.toLowerCase() : null;
+  if (single && transcript) {
+    const found = speakerFirstName(transcript, single);
+    if (found) return found;
+    // No match: the one word we have is better than nothing, and it may well
+    // be a first name.
+    return raw;
+  }
+  if (single) return raw;
 
   const local = (email.split("@")[0] ?? "").toLowerCase();
   if (local && transcript) {
-    // A speaker label whose words include the local part: "gong" inside
-    // "Peter Gong". Two words minimum, so a bare handle does not qualify.
-    for (const line of transcript.split("\n")) {
-      const idx = line.indexOf(":");
-      if (idx <= 0 || idx > 60) continue;
-      const label = line.slice(0, idx).split("|")[0].trim();
-      const words = label.split(/\s+/).filter(Boolean);
-      if (words.length < 2) continue;
-      if (words.some((w) => w.toLowerCase() === local || local.includes(w.toLowerCase()))) {
-        return words[0];
-      }
-    }
+    const found = speakerFirstName(transcript, local);
+    if (found) return found;
   }
   // A handle is not a name. "tferguson7772" greeted as "Tferguson7772" is worse
   // than no greeting, and rule 7a already tells the model to open without names
