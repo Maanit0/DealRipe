@@ -28,6 +28,7 @@ const LABEL: Record<string, string> = {
   sent_ours: "sent ours",
   sent_edited: "sent ours, rewritten",
   sent_own: "wrote their own",
+  too_soon: "too soon to say",
   not_sent: "not sent",
   unknown: "could not tell",
 };

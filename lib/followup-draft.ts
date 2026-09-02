@@ -1460,12 +1460,7 @@ export async function autoDraftFollowUpForCall(args: {
   // that decides who receives the mail, so the greeting and the address line
   // cannot disagree about who this email is for.
   const recipients = customerSide
-    .map((p, i) => {
-      const name = (p.name ?? "").trim();
-      if (name) return name.split(/\s+/)[0];
-      const local = customerEmails[i].split("@")[0].split(/[._-]/)[0];
-      return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
-    })
+    .map((p, i) => firstNameFor(p.name, customerEmails[i], args.transcript ?? null))
     .filter(Boolean)
     .join(", ");
 
@@ -1637,6 +1632,66 @@ export async function autoDraftFollowUpForCall(args: {
     providerId: res.draftId ?? null,
   });
   return { created: true, card };
+}
+
+
+/**
+ * The first name to greet one recipient by.
+ *
+ * Three sources, in falling order of trust, because getting this wrong is
+ * customer-facing. Steven Johnson, 2026-09-02: a Great Way draft opened "Good
+ * Day Gong and Jenny". The invite carried
+ *
+ *   name: "gong@great-way.com"   email: gong@great-way.com
+ *
+ * because Graph writes the address into the name field when the invite had no
+ * display name, and the old code took `name.split(/\s+/)[0]`. The man is Peter
+ * Gong. We greeted him by his surname, taken from an email address.
+ *
+ * 1. THE INVITE NAME, unless it is an address wearing a name's clothes.
+ * 2. THE TRANSCRIPT. "Peter Gong" was in the speaker lines of that very call.
+ *    Rule 7a forbids taking the ADDRESS LIST from the transcript, and rightly:
+ *    the room is not the address line. Using it to spell a name for somebody we
+ *    have already decided to write to is a different question.
+ * 3. THE EMAIL LOCAL PART, last and reluctantly. It is as likely to be a
+ *    surname or an initial as a first name, so it is a guess, not a read.
+ */
+export function firstNameFor(
+  inviteName: string | null | undefined,
+  email: string,
+  transcript: string | null,
+): string {
+  const raw = (inviteName ?? "").trim();
+  if (raw && !raw.includes("@")) return raw.split(/\s+/)[0];
+
+  const local = (email.split("@")[0] ?? "").toLowerCase();
+  if (local && transcript) {
+    // A speaker label whose words include the local part: "gong" inside
+    // "Peter Gong". Two words minimum, so a bare handle does not qualify.
+    for (const line of transcript.split("\n")) {
+      const idx = line.indexOf(":");
+      if (idx <= 0 || idx > 60) continue;
+      const label = line.slice(0, idx).split("|")[0].trim();
+      const words = label.split(/\s+/).filter(Boolean);
+      if (words.length < 2) continue;
+      if (words.some((w) => w.toLowerCase() === local || local.includes(w.toLowerCase()))) {
+        return words[0];
+      }
+    }
+  }
+  // A handle is not a name. "tferguson7772" greeted as "Tferguson7772" is worse
+  // than no greeting, and rule 7a already tells the model to open without names
+  // when none are given, so an empty string is a real answer here.
+  const guess = local.split(/[._-]/)[0];
+  // Length is the tell for a concatenated address. "dkristopson" and
+  // "jennyzhao" are an initial plus a surname and a first plus last name, and
+  // greeting either as written is worse than not greeting. Short locals like
+  // "gong" or "chris" survive, and where the transcript has the person the
+  // branch above has already answered.
+  const noSeparator = local === guess;
+  if (!guess || guess.length < 2 || /\d/.test(guess)) return "";
+  if (noSeparator && guess.length > 8) return "";
+  return guess.charAt(0).toUpperCase() + guess.slice(1);
 }
 
 /** Deal domains for thread lookup, excluding anything internal. */

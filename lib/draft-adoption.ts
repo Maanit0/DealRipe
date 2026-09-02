@@ -52,6 +52,15 @@ export type AdoptionVerdict =
   | "sent_own"
   /** The draft is still sitting unsent, and no other mail went out. */
   | "not_sent"
+  /**
+   * Written too recently for not-sent to mean anything yet.
+   *
+   * Excluded from both sides like "unknown". A rep drafts after a call and
+   * sends that evening or the next morning, so a report run in the afternoon
+   * counted every draft written that morning as a failure. The number is read
+   * most often on the day it is worst.
+   */
+  | "too_soon"
   /** We could not tell. Never counted as either side. */
   | "unknown";
 
@@ -135,6 +144,13 @@ const SENT_EDITED = 0.3;
  * emails about the same call.
  */
 const COPIED = 0.75;
+/**
+ * How long a draft has to sit before "unsent" is a fact about the rep.
+ *
+ * Twenty four hours: a follow-up drafted at 5pm and sent at 9am the next
+ * morning is sixteen, and that rep did nothing wrong.
+ */
+const SETTLE_MS = 24 * 60 * 60 * 1000;
 
 function verdictFromOverlap(overlap: number): "sent_ours" | "sent_edited" | "sent_own" {
   if (overlap >= SENT_OURS) return "sent_ours";
@@ -225,6 +241,13 @@ export async function readDraftAdoption(rec: DraftRecord): Promise<AdoptionRow> 
 
   if (sentMail.length === 0) {
     if (state.status === "draft") {
+      if (Date.now() - Date.parse(rec.draftedAt) < SETTLE_MS) {
+        return {
+          ...base,
+          verdict: "too_soon",
+          reason: `drafted ${Math.round((Date.now() - Date.parse(rec.draftedAt)) / 3_600_000)}h ago, too recent for unsent to mean anything`,
+        };
+      }
       return { ...base, verdict: "not_sent", reason: "still sitting in the rep's drafts, and no mail went to the customer" };
     }
     return {
@@ -439,6 +462,7 @@ export function summarise(rows: ReadonlyArray<AdoptionRow>): Record<AdoptionVerd
     sent_edited: 0,
     sent_own: 0,
     not_sent: 0,
+    too_soon: 0,
     unknown: 0,
   };
   for (const r of rows) out[r.verdict]++;
