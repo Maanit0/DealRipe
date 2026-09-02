@@ -18,6 +18,7 @@ import type { PreCallTypeRead } from "./call-type-precall";
 import type { Framework } from "./framework";
 import { contractFor, shapeForCallType, type BriefingShape } from "./briefing-shapes";
 import { CLOSING_DISCIPLINE, formatPlaysForBriefing } from "./magaya-plays";
+import { formatMinedPlaysForBriefing } from "./mined-plays";
 
 export type FieldStatus = {
   status: "Yes" | "No" | "Unknown";
@@ -452,6 +453,16 @@ export function buildMagayaBriefingUserMessage(args: {
   const playsBlock = formatPlaysForBriefing(gapLabels);
   if (playsBlock) {
     lines.push(``, playsBlock);
+  }
+
+  // The mined counterpart: what these reps actually did on recent calls, rather
+  // than what a human distilled from a handful of calls in April. Returns ""
+  // unless MINED_PLAYS_ENABLED is "1" AND the generated file has been written
+  // and reviewed, so this line changes nothing until a person turns it on.
+  // Six reps read these briefings and say the asks out loud to customers.
+  const minedBlock = formatMinedPlaysForBriefing({ account: args.account, stage: args.stage });
+  if (minedBlock) {
+    lines.push(``, minedBlock);
   }
 
   lines.push(
