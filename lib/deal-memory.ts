@@ -30,6 +30,29 @@
 
 import { supabaseAdmin } from "./supabase";
 
+/**
+ * Strip the mail chrome Exchange prepends to external mail.
+ *
+ * Magaya's tenant stamps "CAUTION: This email originated from outside your
+ * organization" on every inbound message, and Outlook adds "You don't often get
+ * email from x. Learn why this is important". Both land at the TOP, so an
+ * excerpt taken from the top is the banner and nothing else: the first run of
+ * this handed the writer a security warning under the heading "what they said".
+ */
+function stripMailChrome(body: string): string {
+  return body
+    .split("\n")
+    .filter(
+      (l) =>
+        !/^\s*CAUTION:/i.test(l) &&
+        !/originated from outside your organization/i.test(l) &&
+        !/you don'?t often get email from/i.test(l) &&
+        !/Learn why this is important/i.test(l) &&
+        !/^\s*\[?EXTERNAL\]?\s*:?\s*$/i.test(l),
+    )
+    .join("\n");
+}
+
 export type PriorCommitment = { when: string; text: string };
 export type SentItem = { when: string; subject: string; attachments: string[] };
 
@@ -44,8 +67,18 @@ export type DealMemory = {
   toldThemWeWould: PriorCommitment[];
   /** What has actually left the rep's mailbox to them since those calls. */
   sentSince: SentItem[];
-  /** The customer's most recent inbound message, if any. */
-  customerLastWrote: { when: string; subject: string } | null;
+  /**
+   * The customer's most recent inbound message.
+   *
+   * `excerpt` is FETCHED ON DEMAND AND NEVER STORED. deal_messages holds
+   * metadata only, by design: Magaya is under NDA and MS_CLIENT_SECRET is
+   * effectively a tenant-wide mailbox key, so bodies are not retained. This is
+   * the case lib/email-log.ts reserved getMessageBody for, "when one specific
+   * claim needs evidence": knowing they declined on price rewrites the entire
+   * email, and a subject line cannot tell you that. Ariel's Orvia draft
+   * summarised a proposal the customer had already turned down.
+   */
+  customerLastWrote: { when: string; subject: string; excerpt: string | null } | null;
 };
 
 /**
@@ -91,7 +124,7 @@ export async function readDealMemory(args: {
         .limit(6),
       db
         .from("deal_messages")
-        .select("direction, subject, sent_at")
+        .select("direction, subject, sent_at, graph_message_id, mailbox, from_domain, customer_side")
         .eq("tenant_id", args.tenantId)
         .eq("deal_id", args.dealId)
         .order("sent_at", { ascending: false })
@@ -107,17 +140,61 @@ export async function readDealMemory(args: {
       }
     }
 
-    const rows = (msgs.data ?? []) as Array<{ direction: string; subject: string | null; sent_at: string }>;
+    const rows = (msgs.data ?? []) as Array<{
+      direction: string;
+      subject: string | null;
+      sent_at: string;
+      graph_message_id: string | null;
+      mailbox: string | null;
+      from_domain: string | null;
+      customer_side: boolean | null;
+    }>;
     const sentSince: SentItem[] = rows
       .filter((m) => m.direction === "outbound")
       .slice(0, 8)
       .map((m) => ({ when: m.sent_at.slice(0, 10), subject: m.subject ?? "(no subject)", attachments: [] }));
-    const inbound = rows.find((m) => m.direction === "inbound");
+    // INBOUND IS NOT THE SAME AS FROM THE CUSTOMER. Dunavant has two Magaya
+    // reps on it, so Eduardo's own email to Debra is ingested as INBOUND in
+    // Steven's mailbox. The first version of this quoted a colleague's outbound
+    // back to the writer under the heading "what they said", which is the house
+    // failure exactly: a true row under a false label. customer_side is the
+    // column that actually answers it.
+    const inbound = rows.find(
+      (m) => m.direction === "inbound" && m.customer_side === true && (m.from_domain ?? "") !== "magaya.com",
+    );
+
+    // ONE MESSAGE, ON DEMAND, NOT RETAINED. The most recent inbound only:
+    // pulling a thread's worth of bodies to summarise a deal would be exactly
+    // the retention the metadata-only design exists to avoid.
+    let excerpt: string | null = null;
+    if (inbound?.graph_message_id && inbound.mailbox) {
+      try {
+        const { getMessageBody } = await import("./graph-mail");
+        const body = await getMessageBody({
+          tenantIdOrDomain: "magaya.com",
+          mailbox: inbound.mailbox,
+          messageId: inbound.graph_message_id,
+        });
+        if (body) {
+          // Above the quoted reply. Everything below it is our own last email
+          // coming back, which tells the writer nothing and costs tokens.
+          const clean = stripMailChrome(body);
+          const cut = clean.search(/\n\s*(From:|On .+ wrote:|-{5,})/);
+          excerpt = (cut > 0 ? clean.slice(0, cut) : clean).replace(/\s+/g, " ").trim().slice(0, 900) || null;
+        }
+      } catch {
+        // A body we could not read is not an empty message. Subject and date
+        // still stand, and the block says only what it actually has.
+        excerpt = null;
+      }
+    }
 
     return {
       toldThemWeWould: toldThemWeWould.slice(0, 8),
       sentSince,
-      customerLastWrote: inbound ? { when: inbound.sent_at.slice(0, 10), subject: inbound.subject ?? "(no subject)" } : null,
+      customerLastWrote: inbound
+        ? { when: inbound.sent_at.slice(0, 10), subject: inbound.subject ?? "(no subject)", excerpt }
+        : null,
     };
   } catch {
     // A memory we could not read is not an empty deal history. The caller
@@ -143,7 +220,8 @@ export function dealMemoryBlock(m: DealMemory): string | null {
   }
   if (m.customerLastWrote) {
     parts.push(
-      `THE CUSTOMER LAST WROTE on ${m.customerLastWrote.when}: "${m.customerLastWrote.subject}". If that is after the call, the conversation has moved and this email should meet it where it is.`,
+      `THE CUSTOMER LAST WROTE on ${m.customerLastWrote.when}, subject "${m.customerLastWrote.subject}". If that is after the call, the conversation has moved and this email must meet it where it is rather than recapping a moment that has passed.` +
+        (m.customerLastWrote.excerpt ? `\n\nWhat they said:\n${m.customerLastWrote.excerpt}` : ``),
     );
   }
   return parts.length > 0 ? parts.join("\n\n") : null;

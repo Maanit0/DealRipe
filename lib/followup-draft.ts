@@ -24,6 +24,7 @@
  *    the rep's habits, so we do not scale one rep's ceiling to the team.
  */
 
+import { dealChangeBlock, readDealChangeHistory } from "./deal-change-history";
 import { dealMemoryBlock, readDealMemory } from "./deal-memory";
 import { draftArchiveHtml } from "./draft-archive";
 import { bodyTextToHtml, hasHtmlSignature, signatureFor, signatureHtml } from "./rep-signature-html";
@@ -1552,11 +1553,12 @@ export async function autoDraftFollowUpForCall(args: {
   // The deal's own history, read once and handed to the writer. Failure here
   // returns an empty memory rather than throwing: a draft with no history is
   // what we had yesterday, and a draft that never gets written is worse.
-  const memory = await readDealMemory({
-    tenantId: args.tenantId,
-    dealId: args.dealId,
-    beforeCallId: args.callId ?? null,
-  });
+  const [memory, changes] = await Promise.all([
+    readDealMemory({ tenantId: args.tenantId, dealId: args.dealId, beforeCallId: args.callId ?? null }),
+    // What has moved, from the daily snapshot series. Recorded since the pilot
+    // began and never read by anything that writes to a customer.
+    readDealChangeHistory({ dealId: args.dealId, days: 14 }),
+  ]);
 
   const res = await createFollowUpDraft({
     mailbox,
@@ -1575,7 +1577,7 @@ export async function autoDraftFollowUpForCall(args: {
     callDate: args.callDate ?? null,
     calendarConnectionId: conn.data?.id ?? null,
     callSubtype: args.callSubtype ?? null,
-    dealMemory: dealMemoryBlock(memory),
+    dealMemory: [dealMemoryBlock(memory), dealChangeBlock(changes)].filter(Boolean).join("\n\n") || null,
   });
   if (!res.created || !res.draft) return { created: false, reason: res.reason ?? "draft not created" };
 
