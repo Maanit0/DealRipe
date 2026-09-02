@@ -35,6 +35,7 @@
  */
 
 import type { ExtractionMap } from "./briefing-magaya";
+import { draftMailboxForCall } from "./call-rep-presence";
 import { sendPostCallSummary } from "./post-call-notify";
 import type { PostCallSummary } from "./post-call-summary";
 import { withModelContext } from "./model-run";
@@ -337,12 +338,25 @@ export async function runRecapSync(
         } | null;
         if (!d) return null;
 
+        // The draft goes in the mailbox of whoever RAN the call, which is not
+        // always the deal owner. This path is the cron and produces most
+        // drafts, so resolving it only in post-call-notify would have fixed the
+        // fallback and left the common case alone. Falls back to the owner on
+        // anything it cannot establish.
+        const box = await draftMailboxForCall({
+          callId: row.id,
+          owner: d.deals.rep_email ?? "",
+        }).catch(() => null);
+        if (box?.rerouted) {
+          console.log(`[recap-sync] draft rerouted ${d.deals.rep_email} -> ${box.mailbox}: ${box.reason}`);
+        }
+
         const draft = await autoDraftFollowUpForCall({
           tenantId: row.tenant_id,
           callId: row.id,
           dealId: row.deal_id,
           account: d.deals.account,
-          repEmail: d.deals.rep_email,
+          repEmail: box?.mailbox ?? d.deals.rep_email,
           meetingType: row.meeting_type,
           // So a proposal call gets a terms email and a discovery call gets a recap.
           callSubtype: row.call_subtype ?? null,

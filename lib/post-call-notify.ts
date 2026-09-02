@@ -22,6 +22,7 @@ import { formatMeetingWhen } from "./followup-draft";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
+import { draftMailboxForCall } from "./call-rep-presence";
 import { repEmailForDeal } from "./pilot-config";
 import { generatePostCallSummary, type PostCallSummary } from "./post-call-summary";
 import { recordSentMessage } from "./sent-messages";
@@ -138,6 +139,25 @@ export async function sendPostCallSummary(args: {
   const to = recipients.all[0];
   if (!to) {
     return { sent: false, reason: `no rep email for deal '${args.dealExternalId}'` };
+  }
+
+  // WHOSE OUTLOOK THE DRAFT GOES IN, which is not always the deal owner.
+  //
+  // The recap goes to everyone who was on the call; a draft can only go to one
+  // mailbox, because only the person holding it can send it. Steven Johnson,
+  // 2026-09-02: a Great Way meeting he was invited to and did not attend put a
+  // draft in his Outlook while Alexandra Suntrup, who ran the call, had nothing
+  // to send. Measured over the last 40 captured calls this moves 3 of them.
+  //
+  // Falls back to the owner on anything it cannot establish, including a
+  // transcript that matched no pilot rep at all: that is evidence the name
+  // matching failed, not evidence the owner was absent.
+  const draftBox = args.callId
+    ? await draftMailboxForCall({ callId: args.callId, owner: to }).catch(() => null)
+    : null;
+  const draftMailbox = draftBox?.mailbox ?? to;
+  if (draftBox?.rerouted) {
+    console.log(`[post-call] draft rerouted ${to} -> ${draftMailbox}: ${draftBox.reason}`);
   }
 
   // Idempotency: if a recap was already EMAILED for this call, don't send a
@@ -276,7 +296,7 @@ export async function sendPostCallSummary(args: {
             dealId: dealRow.data.id,
             callId: args.callId ?? null,
             account: dealRow.data.account,
-            repEmail: to,
+            repEmail: draftMailbox,
             transcript: args.transcript,
             meetingType: meetingType ?? null,
             summary: qualSummary,
