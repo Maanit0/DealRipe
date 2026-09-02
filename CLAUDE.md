@@ -749,6 +749,13 @@ All read-only unless noted. Run with `npx tsx scripts/<name>.ts`.
   Access Policy was declined, so app-only mail scopes cover every mailbox.
 - `PILOT_OPPORTUNITY_IDS` and `crm-scope.ts` are the boundary governing writes
   into a customer's CRM. Fail-closed by design. Nothing automated may widen it.
+- **Anything DERIVED from a transcript is still transcript.** `mine-plays --write`
+  first emitted a generated TypeScript module so a person could review the diff
+  before the quotes reached a briefing. The instinct was right and the artifact
+  was wrong: one run produced 114 verbatim quotes across 38 named accounts, and
+  a repository is a new place for call content to exist. It lives in
+  `mined_plays` in Supabase, beside the transcripts it came from, gated on an
+  `approved` column that a person sets. Never export that table into a file here.
 - The previously exposed Resend API key still needs rotating.
 - Crons are pinned to the `magaya` tenant. Keelson and Second Nature seeds must
   stay additive, idempotent and inert.
@@ -857,6 +864,12 @@ has looked closely enough to be specific.
 
 **The distance to what the decks promise**
 
+- Consuming the mined motion. `lib/mined-plays.ts` reads approved rows into the
+  briefing prompt beside the hand-curated `magaya-plays.ts`, and the retrieval
+  spreads across the six move kinds, ranks same-stage first and excludes the
+  deal's own account. Needs `supabase/add-mined-plays.sql`, then
+  `mine-plays --write`, then somebody approving rows, then
+  `MINED_PLAYS_ENABLED=1`. Inert at every step until the last.
 - The learning loop. `outcome-sync` now resolves and labels correctly (1 won and
   3 lost applied 2026-08-20, 105 snapshots and 8 prescriptions backfilled with an
   outcome) and nothing consumes it yet. That is the remaining half. Note only 7
