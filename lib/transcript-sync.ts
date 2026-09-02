@@ -371,6 +371,53 @@ export async function retryFailedDrafts(): Promise<void> {
       if (draft.created) {
         console.log(`[transcript-sync] follow-up draft recovered on retry for call ${r.id}`);
         await recordDraftWritten(db, r.id);
+
+        // THE RECAP HAS ALREADY GONE, SO THE CARD HAS NOWHERE TO RIDE.
+        //
+        // This is the retry path. When it succeeds, the recap for this call was
+        // sent minutes or hours earlier without a draft to point at, and the
+        // card built here was being discarded. Measured 2026-09-02: of 42
+        // recaps that should carry a card, 18 did not, and 17 of those 18 had
+        // their draft archived AFTER the recap. A draft nobody can find is the
+        // same as no draft, and it is exactly what Ariel Rodriguez reported on
+        // 08-28: "I don't get anything on draft".
+        //
+        // He also named the fix on that call: "another deal right email after
+        // the meeting saying, hey, your draft is done. Just click here to send
+        // it." That is what this sends, and only on the retry path, because on
+        // the normal path the card is already in the recap and a second email
+        // would be noise.
+        if (draft.card) {
+          try {
+            const { sendEmail } = await import("./mailer");
+            const { recordSentMessage } = await import("./sent-messages");
+            const to = r.deals.rep_email;
+            if (to) {
+              const subject = `Follow-up draft ready: ${r.deals.account}`;
+              const res = await sendEmail({ to: [to], subject, html: draft.card.html, text: draft.card.text });
+              await recordSentMessage({
+                tenantId: await resolveMagayaTenantId(db),
+                dealId: r.deal_id,
+                callId: r.id,
+                kind: "draft_ready",
+                toEmail: to,
+                subject,
+                html: draft.card.html,
+                text: draft.card.text,
+                providerId: res.id || null,
+              });
+              console.log(`[transcript-sync] draft-ready card emailed to ${to} for call ${r.id}`);
+            }
+          } catch (err) {
+            // The draft is in the mailbox either way. Losing the pointer costs
+            // findability, not the work, and must not fail the retry.
+            console.warn(
+              `[transcript-sync] draft recovered but the card email failed for call ${r.id}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
       } else {
         console.warn(
           `[transcript-sync] draft retry ${r.followup_draft_attempts + 1} for call ${r.id}: ${draft.reason}`,
