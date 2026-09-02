@@ -106,6 +106,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         SUPABASE_SERVICE_ROLE_KEY: secretShape("SUPABASE_SERVICE_ROLE_KEY"),
       },
 
+      /**
+       * Can the RUNNING FUNCTION read the files it attaches?
+       *
+       * The PDFs and the signature images are read at runtime with a path built
+       * from process.cwd(), which Next's tracer cannot see, so a file committed
+       * to git is not thereby beside a deployed function. That failed silently
+       * for a week: every one of Juan's drafts came back from Graph with
+       * hasAttachments false while the same code attached correctly on a
+       * laptop. outputFileTracingIncludes fixes it, and nothing except asking
+       * the deployment can confirm the fix.
+       *
+       * Sizes, not contents. A present-but-truncated file is the other way this
+       * goes wrong and a byte count catches it.
+       */
+      assets: await readAssets(),
+
       routing: {
         DIGEST_TO: process.env.DIGEST_TO ?? null,
         DIGEST_BCC: process.env.DIGEST_BCC ?? null,
@@ -116,4 +132,30 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     },
     { status: 200 },
   );
+}
+
+/** Bytes on disk for each runtime-read asset, or why not. */
+async function readAssets(): Promise<Record<string, string>> {
+  const { stat } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const wanted = [
+    "assets/collateral/Magaya-Supply-Chain-Data-Sheet.pdf",
+    "assets/collateral/Magaya-Rates-Solution-Sheet-02192024-1-.pdf",
+    "assets/signatures/jlopez/signature.html",
+    "assets/signatures/jlopez/image001.png",
+    "assets/signatures/jlopez/image002.jpg",
+    "assets/signatures/jlopez/image003.jpg",
+    "assets/signatures/jlopez/image004.jpg",
+    "assets/signatures/jlopez/image005.jpg",
+  ];
+  const out: Record<string, string> = {};
+  for (const rel of wanted) {
+    try {
+      const st = await stat(join(process.cwd(), rel));
+      out[rel] = `${st.size} bytes`;
+    } catch (err) {
+      out[rel] = `MISSING (${err instanceof Error ? (err as NodeJS.ErrnoException).code ?? err.message : String(err)})`;
+    }
+  }
+  return out;
 }
