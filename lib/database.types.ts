@@ -479,6 +479,60 @@ export type Database = {
         };
         Relationships: [];
       };
+      mined_plays: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          kind: string;
+          quote: string;
+          doing: string;
+          speaker: string;
+          rep: string | null;
+          account: string | null;
+          stage: string | null;
+          call_date: string | null;
+          preceded_advance: boolean;
+          next_meeting_in_a_week: boolean;
+          approved: boolean;
+          first_seen_at: string;
+          last_seen_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          kind: string;
+          quote: string;
+          doing: string;
+          speaker: string;
+          rep?: string | null;
+          account?: string | null;
+          stage?: string | null;
+          call_date?: string | null;
+          preceded_advance?: boolean;
+          next_meeting_in_a_week?: boolean;
+          approved?: boolean;
+          first_seen_at?: string;
+          last_seen_at?: string;
+        };
+        Update: {
+          id?: string;
+          tenant_id?: string;
+          kind?: string;
+          quote?: string;
+          doing?: string;
+          speaker?: string;
+          rep?: string | null;
+          account?: string | null;
+          stage?: string | null;
+          call_date?: string | null;
+          preceded_advance?: boolean;
+          next_meeting_in_a_week?: boolean;
+          approved?: boolean;
+          first_seen_at?: string;
+          last_seen_at?: string;
+        };
+        Relationships: [];
+      };
       briefing_runs: {
         Row: {
           id: string;

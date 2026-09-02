@@ -18,7 +18,7 @@ import type { PreCallTypeRead } from "./call-type-precall";
 import type { Framework } from "./framework";
 import { contractFor, shapeForCallType, type BriefingShape } from "./briefing-shapes";
 import { CLOSING_DISCIPLINE, formatPlaysForBriefing } from "./magaya-plays";
-import { formatMinedPlaysForBriefing } from "./mined-plays";
+import { formatMinedPlaysForBriefing, type MinedPlay } from "./mined-plays";
 
 export type FieldStatus = {
   status: "Yes" | "No" | "Unknown";
@@ -146,6 +146,14 @@ ${contractFor(shape)}
 export function buildMagayaBriefingUserMessage(args: {
   account: string;
   stage: string;
+  /**
+   * Approved mined moves, loaded by the caller.
+   *
+   * Passed in rather than fetched here so this stays a pure string builder: it
+   * is called from a cron, a script and a test, and none of them should acquire
+   * a database round trip by calling a function that renders a prompt.
+   */
+  minedPlays?: ReadonlyArray<MinedPlay>;
   nextStage: string | null;
   closeDate?: string;
   attendees: string;
@@ -460,7 +468,11 @@ export function buildMagayaBriefingUserMessage(args: {
   // unless MINED_PLAYS_ENABLED is "1" AND the generated file has been written
   // and reviewed, so this line changes nothing until a person turns it on.
   // Six reps read these briefings and say the asks out loud to customers.
-  const minedBlock = formatMinedPlaysForBriefing({ account: args.account, stage: args.stage });
+  const minedBlock = formatMinedPlaysForBriefing({
+    pool: args.minedPlays ?? [],
+    account: args.account,
+    stage: args.stage,
+  });
   if (minedBlock) {
     lines.push(``, minedBlock);
   }

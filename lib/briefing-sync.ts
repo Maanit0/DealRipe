@@ -515,6 +515,11 @@ async function processEvent(
 
   const briefing = await generateBriefingFromState({
     ...briefingStateFromContext(ctx),
+    // Set here rather than threaded through DealContext, which carries what a
+    // briefing is ABOUT and not which tenant is asking. It exists only so the
+    // approved mined plays can be loaded, and every other caller leaves it
+    // unset and gets a briefing without that block.
+    tenantId,
     attendeeContext,
     coachingContext,
     attendees: attendees ?? `the ${ctx.account} team`,

@@ -9,10 +9,14 @@
  * curated list says how Magaya asks about budget, the mined list says what
  * these reps do at this stage that a generic template would never suggest.
  *
- * OFF BY DEFAULT. MINED_PLAYS_ENABLED must be exactly "1". Six reps read these
- * briefings and speak the asks aloud to customers, so the mined material ships
- * when a person has read the generated file and turned it on, not because a
- * cron regenerated it.
+ * OFF BY DEFAULT, TWICE. MINED_PLAYS_ENABLED must be exactly "1", and every row
+ * lands with approved=false and is invisible until a person sets it. Six reps
+ * read these briefings and speak the asks aloud to customers, so mined material
+ * ships because someone read it, never because a cron regenerated it.
+ *
+ * THE ROWS LIVE IN THE DATABASE AND NOT IN THIS REPOSITORY. Magaya is under NDA
+ * and call content is never committed; Supabase already holds the transcripts
+ * these are derived from. Do not export mined_plays into a file here.
  *
  * WHAT THIS IS NOT. It is not evidence that these moves win. precededAdvance
  * records that a stage moved afterwards, over a pilot whose entire
@@ -21,7 +25,20 @@
  * a move worked.
  */
 
-import { MINED_PLAYS, type MinedPlay } from "./mined-plays.generated";
+import { supabaseAdmin } from "./supabase";
+
+export type MinedPlay = {
+  kind: string;
+  quote: string;
+  doing: string;
+  speaker: string;
+  rep: string | null;
+  account: string | null;
+  stage: string | null;
+  callDate: string | null;
+  precededAdvance: boolean;
+  nextMeetingInAWeek: boolean;
+};
 
 /** Same six the miner assigns, in the order they are worth reading. */
 const KIND_LABEL: Record<string, string> = {
@@ -45,6 +62,8 @@ export function minedPlaysEnabled(): boolean {
  * for "no exact match" is a weaker example and never silence.
  */
 export function minedPlaysFor(args: {
+  /** Approved rows, already loaded. See loadMinedPlays. */
+  pool: ReadonlyArray<MinedPlay>;
   /** The deal's own account, excluded so a rep is not shown their own line back. */
   account?: string | null;
   /** SQL1..SQL5 where known. Same-stage moves rank first. */
@@ -55,11 +74,11 @@ export function minedPlaysFor(args: {
   const account = (args.account ?? "").trim().toLowerCase();
   const stage = (args.stage ?? "").trim().toUpperCase();
 
-  const pool = MINED_PLAYS.filter((p) => {
+  const pool = args.pool.filter((p) => {
     // The deal's own prior calls are not a playbook for itself. They are
     // already in the briefing as history, and repeating a rep's own sentence
     // back to them as a suggested move reads as a machine with one idea.
-    if (account && p.account.trim().toLowerCase() === account) return false;
+    if (account && (p.account ?? "").trim().toLowerCase() === account) return false;
     // A quote too short to carry a move is a fragment of diarized speech.
     return p.quote.length >= 40 && p.quote.length <= 420;
   });
@@ -95,6 +114,7 @@ export function minedPlaysFor(args: {
 
 /** The prompt block, or "" when there is nothing to say so callers can append freely. */
 export function formatMinedPlaysForBriefing(args: {
+  pool: ReadonlyArray<MinedPlay>;
   account?: string | null;
   stage?: string | null;
   limit?: number;
@@ -110,8 +130,43 @@ export function formatMinedPlaysForBriefing(args: {
       "never say or imply that one did:",
   ];
   for (const p of plays) {
-    const who = p.speaker.split(/\s+/)[0] || p.rep;
+    const who = p.speaker.split(/\s+/)[0] || p.rep || "A rep";
     lines.push(`- ${KIND_LABEL[p.kind] ?? p.kind}. ${who}: "${p.quote}"  (${p.doing})`);
   }
   return lines.join("\n");
+}
+
+/**
+ * The approved moves for a tenant.
+ *
+ * Returns [] on a failed read, and says so in the log rather than throwing: a
+ * briefing that loses its reference block is a slightly weaker briefing, and a
+ * briefing that does not get built because a nice-to-have query failed is a rep
+ * walking into a call with nothing. This block is the one part of the prompt
+ * that is genuinely optional.
+ */
+export async function loadMinedPlays(tenantId: string): Promise<MinedPlay[]> {
+  if (!minedPlaysEnabled()) return [];
+  const { data, error } = await supabaseAdmin()
+    .from("mined_plays")
+    .select("kind, quote, doing, speaker, rep, account, stage, call_date, preceded_advance, next_meeting_in_a_week")
+    .eq("tenant_id", tenantId)
+    .eq("approved", true)
+    .limit(500);
+  if (error) {
+    console.warn(`[mined-plays] could not read mined_plays, briefing continues without them: ${error.message}`);
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    kind: String(r.kind),
+    quote: String(r.quote),
+    doing: String(r.doing),
+    speaker: String(r.speaker ?? ""),
+    rep: (r.rep as string | null) ?? null,
+    account: (r.account as string | null) ?? null,
+    stage: (r.stage as string | null) ?? null,
+    callDate: (r.call_date as string | null) ?? null,
+    precededAdvance: r.preceded_advance === true,
+    nextMeetingInAWeek: r.next_meeting_in_a_week === true,
+  }));
 }

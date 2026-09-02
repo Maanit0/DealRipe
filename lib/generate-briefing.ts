@@ -11,6 +11,7 @@
  * read is live, pass the actual upcoming-call attendees instead.
  */
 
+import { loadMinedPlays } from "./mined-plays";
 import { runModel } from "./model-run";
 import { shapeForCallType } from "./briefing-shapes";
 import type { DealNumber, StandPoint } from "./briefing-blocks";
@@ -118,6 +119,13 @@ function parseJson(raw: string): MagayaBriefing | null {
 export type BriefingState = {
   account: string;
   stageKey: string;
+  /**
+   * Needed only to load approved mined plays. OPTIONAL on purpose: a caller
+   * that does not have it gets a briefing without the mined reference block
+   * rather than no briefing, which is the right trade for a block that is
+   * itself optional.
+   */
+  tenantId?: string;
   closeDate?: string;
   attendees: string;
   framework: Framework;
@@ -194,8 +202,13 @@ export async function generateBriefingFromState(
   const currentGaps = openGapsUpToStage(framework, extraction, stageKey);
   const nextGaps = next ? openGapsForStage(framework, extraction, next) : [];
 
+  // Empty unless MINED_PLAYS_ENABLED is "1", the migration has been run, and a
+  // person has approved rows. Never throws: see loadMinedPlays.
+  const minedPlays = state.tenantId ? await loadMinedPlays(state.tenantId) : [];
+
   const userMessage = buildMagayaBriefingUserMessage({
     account: state.account,
+    minedPlays,
     stage: stageKey,
     nextStage: next,
     closeDate: state.closeDate,
