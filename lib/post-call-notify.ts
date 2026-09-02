@@ -22,6 +22,7 @@ import { formatMeetingWhen } from "./followup-draft";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
+import { feedbackFooterHtml, feedbackFooterText, newFeedbackToken } from "./artifact-feedback";
 import { draftMailboxForCall } from "./call-rep-presence";
 import { repEmailForDeal } from "./pilot-config";
 import { generatePostCallSummary, type PostCallSummary } from "./post-call-summary";
@@ -323,6 +324,24 @@ export async function sendPostCallSummary(args: {
     };
   }
 
+  // ASK WHETHER THIS WAS USEFUL, at the foot of the thing itself.
+  //
+  // Alexandra Suntrup asked for this on 2026-09-02 and reacted to it more
+  // strongly than to anything else on that call. The token is minted here
+  // because the link must be inside the HTML before the row that stores it
+  // exists.
+  //
+  // The recap only. Every artifact could carry one and a rep who is already
+  // getting a median of five DealRipe emails a day would start ignoring all of
+  // them. This is the artifact she rates highest and reads most, so it is the
+  // one worth asking about.
+  const feedbackToken = newFeedbackToken();
+  email = {
+    ...email,
+    html: `${email.html}${feedbackFooterHtml(feedbackToken, "Was this recap useful?")}`,
+    text: `${email.text}\n\n${feedbackFooterText(feedbackToken, "Was this recap useful?")}`,
+  };
+
   if (args.dryRun) {
     // Archive the freshly-rendered recap without sending. The deal page reads
     // from sent_messages, so this refreshes the visible recap to the current
@@ -337,6 +356,7 @@ export async function sendPostCallSummary(args: {
       html: email.html,
       text: email.text,
       providerId: null,
+      feedbackToken,
     });
     return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction, summary: qualSummary, agreed };
   }
@@ -359,6 +379,7 @@ export async function sendPostCallSummary(args: {
       html: email.html,
       text: email.text,
       providerId: res.id || null,
+      feedbackToken,
     });
     return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary, agreed, noteBody };
   } catch (err) {
