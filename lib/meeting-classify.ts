@@ -56,7 +56,26 @@ const MAX_CHARS = 14000; // enough signal for classification/summary, keeps cost
  */
 export async function classifyMeetingType(
   transcript: string,
-  opts?: { trackedOpportunity?: boolean; subject?: string | null },
+  opts?: {
+    trackedOpportunity?: boolean;
+    subject?: string | null;
+    /**
+     * True when the calendar invite carried a non seller attendee.
+     *
+     * "internal" is inferred from the ABSENCE of a customer voice in the
+     * transcript, and a customer who was invited and did not show produces
+     * exactly that absence. Measured 2026-09-02: all 17 calls carrying
+     * meeting_type 'internal' had an external attendee on the invite, 16 of
+     * them no-shows or failed captures whose transcripts are joining noise.
+     * The one that did capture lost its follow-up draft, because the draft
+     * path skips internal meetings.
+     *
+     * The invite is not an inference. A meeting a customer was invited to is
+     * a customer meeting whether or not they turned up, so this fact
+     * OVERRIDES the transcript rather than informing it.
+     */
+    customerOnInvite?: boolean;
+  },
 ): Promise<MeetingType> {
   if (!process.env.ANTHROPIC_API_KEY || transcript.trim().length < 50) return "new_opportunity";
   // An onboarding or training session is delivery work even when the CRM
@@ -82,6 +101,13 @@ Do NOT answer existing_customer for this deal.`
       messages: [{ role: "user", content: `Transcript:\n\n${transcript.slice(0, MAX_CHARS)}` }],
     });
     const text = resp.message.content.map((b) => (b.type === "text" ? b.text : "")).join("").toLowerCase();
+    // The invite overrides the transcript on this one word. A customer who was
+    // invited and did not speak leaves the same silence as a meeting they were
+    // never part of, and only one of those is an internal meeting.
+    if (text.includes("internal") && opts?.customerOnInvite === true) {
+      console.log("[meeting-classify] model said internal, invite carried an external attendee, keeping new_opportunity");
+      return "new_opportunity";
+    }
     if (text.includes("internal")) return "internal";
     if (!tracked && text.includes("existing_customer")) return "existing_customer";
     return "new_opportunity";

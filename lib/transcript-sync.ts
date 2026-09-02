@@ -268,15 +268,39 @@ async function pingRecapSync(extracted: number): Promise<void> {
  */
 export async function retryFailedDrafts(): Promise<void> {
   const db = supabaseAdmin();
-  // Only failed and unavailable. A held draft is a decision, not a queue item,
-  // and re-running it would ask Graph the same question and get the same
-  // correct answer forever.
+  // failed, unavailable, and NEVER ATTEMPTED ON A CAPTURED CALL.
+  //
+  // A held draft is a decision, not a queue item, and re-running it would ask
+  // Graph the same question and get the same correct answer forever. Those stay
+  // out.
+  //
+  // not_attempted was also out, on the reasoning that it is the default value
+  // and means nothing happened yet. That was true until sendPostCallSummary
+  // grew a makeDraft hook three of its five callers did not pass: Landstar was
+  // captured, recapped, and left at not_attempted with no reason, because the
+  // code that writes a draft was never reached. Those are exactly retryable,
+  // and without this they would sit untouched forever, which is the same shape
+  // as the never-dispatched calls that were invisible to every view.
+  //
+  // Scoped to CAPTURED calls, and to RECENT ones.
+  //
+  // not_attempted on a future call, a no-show or an internal meeting is correct
+  // and must not be queued. Nor is an old one: without the age bound this
+  // matched every captured call back to Aug 17 and would have written about
+  // twenty drafts at once into five mailboxes, for calls the reps finished with
+  // a fortnight ago. A follow-up to a two-week-old conversation is not a
+  // recovered draft, it is noise with a stale date in it, and the same argument
+  // that keeps `held` out of this queue keeps history out too.
+  const RETRY_WINDOW_DAYS = 2;
+  const since = new Date(Date.now() - RETRY_WINDOW_DAYS * 86_400_000).toISOString();
   const rows = await db
     .from("calls")
     .select(
-      "id, deal_id, participants, scheduled_start, call_date, meeting_type, call_subtype, followup_draft_state, followup_draft_reason, followup_draft_attempts, deals!inner(account, rep_email)",
+      "id, deal_id, outcome, participants, scheduled_start, call_date, meeting_type, call_subtype, followup_draft_state, followup_draft_reason, followup_draft_attempts, deals!inner(account, rep_email)",
     )
-    .in("followup_draft_state", ["failed", "unavailable"])
+    .or(
+      `followup_draft_state.in.(failed,unavailable),and(followup_draft_state.eq.not_attempted,outcome.eq.captured,scheduled_start.gte.${since})`,
+    )
     .limit(20);
   if (rows.error) return;
 
@@ -937,9 +961,22 @@ async function processRow(
   // opportunity is not forced back into the pipeline by the tiebreaker. Without
   // it, EWI's "Onboarding & Training" classified as new_opportunity and a
   // paying customer in delivery counted as an active deal in the CRO's digest.
+  // Whether a customer was on the INVITE, which the transcript cannot tell us
+  // when they did not show. All 17 calls carrying meeting_type 'internal' on
+  // 2026-09-02 had one, and the label cost the one captured call its follow-up
+  // draft.
+  const inviteParticipants = Array.isArray(callDealRow.data?.participants)
+    ? (callDealRow.data?.participants as Array<{ email?: string | null }>)
+    : [];
+  const customerOnInvite = inviteParticipants.some((p) => {
+    const e = (p?.email ?? "").toLowerCase();
+    return e.includes("@") && !e.endsWith("@magaya.com");
+  });
+
   const meetingType = await classifyMeetingType(transcript, {
     trackedOpportunity,
     subject: callDealRow.data?.title ?? null,
+    customerOnInvite,
   });
   const callSubtype = await classifyCallSubtype({ transcript, meetingType }).catch(() => null);
   const mt = await db
