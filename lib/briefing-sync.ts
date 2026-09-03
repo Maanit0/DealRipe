@@ -13,6 +13,7 @@
  * on. Never throws mid-scan for a single bad meeting.
  */
 
+import { feedbackFooterHtml, feedbackFooterText, newFeedbackToken } from "./artifact-feedback";
 import { computeDealFlags, renderFlagsForBriefing } from "./deal-flags";
 import { assessDeal, computeBuyerSignals } from "./deal-signals-buyer";
 import { generateBriefingFromState } from "./generate-briefing";
@@ -560,9 +561,23 @@ async function processEvent(
     minutesUntil,
   });
 
+  // ASK THE REP WHETHER THIS WAS ANY USE, at the foot of the briefing.
+  //
+  // Recaps have carried this since 2026-09-02 and every one that did was voted
+  // on, which is a higher response rate than any survey would get and the
+  // reason it belongs here too. The briefing is read in the two minutes before
+  // a call, so the question is whether it helped them walk in ready, not
+  // whether the prose was good.
+  const feedbackToken = newFeedbackToken();
+  const briefingEmail = {
+    subject: email.subject,
+    html: `${email.html}${feedbackFooterHtml(feedbackToken, "Did this set you up for the call?")}`,
+    text: `${email.text}\n\n${feedbackFooterText(feedbackToken, "Did this set you up for the call?")}`,
+  };
+
   let providerId: string | null = null;
   try {
-    const res = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
+    const res = await sendEmail({ to, subject: briefingEmail.subject, html: briefingEmail.html, text: briefingEmail.text });
     providerId = res.id || null;
   } catch (err) {
     if (err instanceof MailerConfigError) {
@@ -605,10 +620,13 @@ async function processEvent(
     callId: callId,
     kind: "briefing",
     toEmail: to,
-    subject: email.subject,
-    html: email.html,
-    text: email.text,
+    subject: briefingEmail.subject,
+    // The archive is the artifact AS SENT, footer included, or the deal page
+    // shows a briefing that differs from the one in the rep's inbox.
+    html: briefingEmail.html,
+    text: briefingEmail.text,
     providerId,
+    feedbackToken,
   });
 
   // Mark sent so the next scan does not resend.

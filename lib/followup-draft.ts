@@ -24,6 +24,7 @@
  *    the rep's habits, so we do not scale one rep's ceiling to the team.
  */
 
+import { feedbackFooterHtml, feedbackFooterText, newFeedbackToken } from "./artifact-feedback";
 import { dealChangeBlock, readDealChangeHistory } from "./deal-change-history";
 import { dealMemoryBlock, readDealMemory } from "./deal-memory";
 import { draftArchiveHtml } from "./draft-archive";
@@ -1733,6 +1734,18 @@ export async function autoDraftFollowUpForCall(args: {
   //
   // Best effort. A card that cannot be built must never turn a written draft
   // into a failure: the draft is the product and this is a pointer to it.
+  // ASK THE REP WHETHER THE DRAFT WAS USABLE.
+  //
+  // It cannot go in the draft itself: that message is addressed to the customer
+  // and a "was this useful" footer would go out to them. The card at the top of
+  // the recap is the only place the rep sees this draft inside something we
+  // control, so the question rides there and the token is stored on the draft's
+  // own row rather than the recap's, keeping the two answers separate.
+  //
+  // Follows the card's existing per-rep gate. A rep without the card gets no
+  // question, which is correct: asking about something they were never shown
+  // would collect noise.
+  const draftFeedbackToken = newFeedbackToken();
   let card: { html: string; text: string } | null = null;
   try {
     // Still gated per rep. Folding the card into the recap makes it far less
@@ -1759,6 +1772,12 @@ export async function autoDraftFollowUpForCall(args: {
       internetMessageId: res.draftId ?? null,
       meetingWhen: args.callDate ? formatMeetingWhen(args.callDate) : null,
     });
+    if (card) {
+      card = {
+        html: `${card.html}${feedbackFooterHtml(draftFeedbackToken, "Was this draft usable?")}`,
+        text: `${card.text}\n\n${feedbackFooterText(draftFeedbackToken, "Was this draft usable?")}`,
+      };
+    }
   } catch (err: unknown) {
     if (!(err instanceof SkipDraftCard)) {
       console.warn(`[followup-draft] draft card failed for ${args.account}: ${err instanceof Error ? err.message : err}`);
@@ -1797,6 +1816,9 @@ export async function autoDraftFollowUpForCall(args: {
     // Until now the id was returned by createDraft and discarded one line
     // later, so adoption could only be inferred from time and recipient.
     providerId: res.draftId ?? null,
+    // Only meaningful where the card was actually shown. Stored either way so a
+    // click can always find its row.
+    feedbackToken: draftFeedbackToken,
   });
   return { created: true, card };
   } catch (err) {
