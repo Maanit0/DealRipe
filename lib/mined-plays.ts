@@ -61,9 +61,30 @@ export function minedPlaysEnabled(): boolean {
  * still gets the general pool rather than an empty block, because the fallback
  * for "no exact match" is a weaker example and never silence.
  */
+/**
+ * Spanish, near enough for this job.
+ *
+ * 18 of the first 116 mined moves are Spanish, which is Ariel's and Juan's
+ * book and real material. It is not a reason to put a Spanish sentence in an
+ * English briefing: the block is a reference the model reads, and mixing
+ * languages inside it invites Spanish phrasing into an English ask a rep then
+ * says out loud. Accented characters and inverted punctuation are enough to
+ * separate them, since the alternative is a language detector for a two-way
+ * split we already know the shape of.
+ */
+const LOOKS_SPANISH = /[áéíóúñü¿¡]/i;
+
 export function minedPlaysFor(args: {
   /** Approved rows, already loaded. See loadMinedPlays. */
   pool: ReadonlyArray<MinedPlay>;
+  /**
+   * The language this briefing will be written in.
+   *
+   * Defaults to English, which is the safe direction: a Spanish move withheld
+   * from an English briefing costs one example, and a Spanish move shown in one
+   * risks a rep reading Spanish to an English-speaking customer.
+   */
+  language?: "en" | "es";
   /** The deal's own account, excluded so a rep is not shown their own line back. */
   account?: string | null;
   /** SQL1..SQL5 where known. Same-stage moves rank first. */
@@ -79,6 +100,8 @@ export function minedPlaysFor(args: {
     // already in the briefing as history, and repeating a rep's own sentence
     // back to them as a suggested move reads as a machine with one idea.
     if (account && (p.account ?? "").trim().toLowerCase() === account) return false;
+    // Never mix languages inside one reference block.
+    if (LOOKS_SPANISH.test(p.quote) !== (args.language === "es")) return false;
     // A quote too short to carry a move is a fragment of diarized speech.
     return p.quote.length >= 40 && p.quote.length <= 420;
   });
@@ -115,6 +138,7 @@ export function minedPlaysFor(args: {
 /** The prompt block, or "" when there is nothing to say so callers can append freely. */
 export function formatMinedPlaysForBriefing(args: {
   pool: ReadonlyArray<MinedPlay>;
+  language?: "en" | "es";
   account?: string | null;
   stage?: string | null;
   limit?: number;
