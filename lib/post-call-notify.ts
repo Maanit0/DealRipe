@@ -10,6 +10,7 @@
  * The rep-to-deal mapping lives in pilot-config (PILOT_REP_EMAILS).
  */
 
+import { readCustomerPresence } from "./customer-presence";
 import type { ExtractionMap } from "./briefing-magaya";
 import { renderGeneralRecapEmail } from "./emails/general-recap";
 import { renderPostCallSummaryEmail, renderReadoutOnlyEmail } from "./emails/post-call-summary";
@@ -185,6 +186,41 @@ export async function sendPostCallSummary(args: {
       .limit(1);
     if ((existing.data ?? []).length > 0) {
       return { sent: false, to, reason: "recap already sent for this call (idempotent skip)" };
+    }
+  }
+
+  // DID THE MEETING HAPPEN?
+  //
+  // A no-show has a transcript, and the NO_CONTENT outcome filter cannot see
+  // this one: the bot joined, the rep and the BDR waited six minutes for a
+  // prospect who never arrived, and the outcome is `captured` because the bot
+  // captured them waiting. Triadcargousa on 2026-09-02 passed every length and
+  // outcome check and Juan was emailed a qualification audit reading "0
+  // captured, 12 still open" for a meeting that did not happen. He thumbed it
+  // down, which is how this was found.
+  //
+  // The follow-up draft handled it correctly on its own, because a model
+  // reading the transcript can see nobody arrived. The recap could not, because
+  // its gap audit is computed from the extraction and an empty extraction looks
+  // exactly like a call where nothing was established.
+  //
+  // Fails open: only every-speaker-is-ours suppresses. Checked across every
+  // call since 2026-08-15, it agrees with all 10 already marked no_show and
+  // finds 2 more carrying `captured`.
+  if (!args.force && args.callId) {
+    const callRow = await db.from("calls").select("participants").eq("id", args.callId).maybeSingle();
+    if (!callRow.error && callRow.data) {
+      const presence = readCustomerPresence({
+        transcript: args.transcript,
+        participants: (callRow.data as { participants: unknown }).participants,
+      });
+      if (presence.status === "silent") {
+        return {
+          sent: false,
+          to,
+          reason: `nobody from the customer joined, only ${presence.sellerSpeakers.join(" and ")} spoke, so there is no call to recap`,
+        };
+      }
     }
   }
 
