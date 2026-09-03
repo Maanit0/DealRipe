@@ -400,7 +400,7 @@ export function dealMemoryBlock(m: DealMemory): string | null {
   const unsure = lines("unknown");
   if (unsure.length > 0) {
     parts.push(
-      `EARLIER DRAFTS COMMITTED TO THIS, and we could not check whether they were sent. Do not assert either way. If you use one, phrase it so it reads correctly whether or not they already have it:\n` +
+      `WE OWE THEM THIS, and we could not check whether it was already sent. CARRY IT FORWARD, do not drop it: an open item nobody mentions again is how a deal goes quiet, and this is the most common state for a commitment made in the last few days, which is exactly when it still matters. What you must not do is assert which it is. Never write "as promised" or "as I sent over", and never re-offer it as brand new either. Give them the status and the next date, which reads correctly whether or not they already have it:\n` +
         unsure.join("\n"),
     );
   }
