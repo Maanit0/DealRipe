@@ -409,6 +409,10 @@ export async function runRecapSync(
         { tenantId: row.tenant_id, dealId: row.deal_id, callId: row.id },
         () =>
           sendPostCallSummary({
+            // This loop already inserted the recap_claim above, before
+            // generating. Without this it would be rejected by its own claim
+            // and would never send anything at all.
+            claimHeld: true,
             tenantId: row.tenant_id,
             dealExternalId: externalId,
             extraction,

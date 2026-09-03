@@ -97,6 +97,16 @@ export async function sendPostCallSummary(args: {
    *  pipeline never does, so a re-ingest can't double-send. */
   force?: boolean;
   /**
+   * The caller already holds this call's recap_claim, so do not take it again.
+   *
+   * recap-sync claims before it generates, and without this it would be
+   * rejected by its own claim and never send anything. Every other caller
+   * (transcript-sync, reextract, ingest-manual) reaches this function
+   * unclaimed, which is why 80 of 153 recapped calls have no claim row at all
+   * and why 9 calls were recapped twice inside five minutes.
+   */
+  claimHeld?: boolean;
+  /**
    * Write the follow-up draft, and hand back the card to sit at the top of this
    * recap.
    *
@@ -361,6 +371,42 @@ export async function sendPostCallSummary(args: {
     return { sent: false, to, reason: "dry-run: recap archived, email skipped", nextAction, summary: qualSummary, agreed };
   }
 
+  // RESERVE THE SEND, immediately before it and with nothing in between.
+  //
+  // The idempotency check above is a read taken minutes earlier, before a
+  // three-pass recap that takes over three minutes to generate. Two runs that
+  // both pass it both generate and both send, which is how Steven got two
+  // Folguerascb recaps 27 seconds apart on 2026-09-02 and thumbed the first
+  // one down.
+  //
+  // Deliberately placed here rather than before generation. Claiming early
+  // would save the duplicated model work, but every early return between there
+  // and here would strand the claim and block the call from ever being
+  // recapped. Here there is nothing between the claim and the send except the
+  // send, so the only failure to handle is the send itself. Duplicated
+  // generation costs tokens; a duplicated email costs a rep's trust, and a
+  // stranded claim costs the recap entirely.
+  let claimedRecapRow: string | null = null;
+  if (!args.claimHeld && args.callId) {
+    const { claimSentMessageSlot } = await import("./sent-messages");
+    const claim = await claimSentMessageSlot({
+      tenantId: args.tenantId,
+      dealId: dealRow.data.id,
+      callId: args.callId,
+      kind: "recap_claim",
+      toEmail: to,
+    });
+    if (claim.status === "raced") {
+      return { sent: false, to, reason: "another run is already sending this recap" };
+    }
+    if (claim.status === "error") {
+      // Fail closed. Not being able to reserve is not permission to send a
+      // second recap to a rep.
+      return { sent: false, to, reason: `could not establish whether this recap is already being sent: ${claim.message}` };
+    }
+    claimedRecapRow = claim.rowId;
+  }
+
   try {
     const res = await sendEmail({
       to: recipients.all,
@@ -383,6 +429,12 @@ export async function sendPostCallSummary(args: {
     });
     return { sent: true, to, reason: `resend id ${res.id}`, nextAction, summary: qualSummary, agreed, noteBody };
   } catch (err) {
+    // Nothing was sent, so give the claim back or the retry that would have
+    // worked reads as "another run is already sending this".
+    if (claimedRecapRow) {
+      const { releaseSentMessageSlot } = await import("./sent-messages");
+      await releaseSentMessageSlot(claimedRecapRow);
+    }
     if (err instanceof MailerConfigError) {
       return { sent: false, to, reason: `mailer not configured: ${err.message}` };
     }

@@ -12,6 +12,12 @@ import { supabaseAdmin } from "./supabase";
 export type SentMessageKind =
   | "briefing"
   | "recap"
+  /**
+   * The reservation taken before a recap is generated or sent, so two runs
+   * cannot both email one. Never an artifact: it carries no body and
+   * lib/activity-log.ts excludes it from anything a person reads.
+   */
+  | "recap_claim"
   | "no_show_draft"
   | "followup_draft"
   /** Asking a rep which Salesforce account a deal belongs to. */
