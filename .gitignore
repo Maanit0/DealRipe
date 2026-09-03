@@ -40,3 +40,7 @@ digest-generated.html
 
 # Design canvases carry real Magaya deal names. NDA: never committed.
 .design/
+
+# Rep feedback triage. Quotes what we sent about named accounts, so it is
+# call-derived content and Magaya is under NDA. Never commit.
+.feedback/

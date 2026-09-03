@@ -51,30 +51,47 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     const { diagnoses, errors } = await reviewNewFeedback({ tenantId, limit: 20, markReviewed: true });
     const report = diagnoses.filter(worthReporting);
 
-    if (report.length > 0 && enabled && to.length > 0) {
+    // THE QUEUE LIVES IN THE DATABASE AND IS WORKED FROM .feedback/, NOT FROM A
+    // MAILBOX. scripts/sync-feedback.ts materialises it on a machine that has
+    // this repo; Vercel's filesystem is ephemeral so this cron cannot.
+    //
+    // Mail is therefore an INTERRUPTION, not the channel, and by default only
+    // needs_you earns one: that verdict means a person has to decide something.
+    // actionable and not_the_artifact are work, and work belongs in the queue
+    // rather than in an inbox that six reps' artifacts already fill.
+    const mailVerdicts = new Set(
+      (process.env.FEEDBACK_WATCH_EMAIL_VERDICTS ?? "needs_you")
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean),
+    );
+    const toMail = report.filter((d) => mailVerdicts.has(d.verdict));
+
+    if (toMail.length > 0 && enabled && to.length > 0) {
       await sendEmail({
         to,
         subject:
-          report.length === 1
-            ? `Rep feedback: ${report[0].account ?? report[0].kind} (${report[0].verdict})`
-            : `Rep feedback: ${report.length} items need a look`,
-        html: renderHtml(report),
-        text: report
+          toMail.length === 1
+            ? `Rep feedback needs you: ${toMail[0].account ?? toMail[0].kind}`
+            : `Rep feedback: ${toMail.length} items need you`,
+        html: renderHtml(toMail),
+        text: toMail
           .map((d) => `${d.vote.toUpperCase()} ${d.kind} ${d.account ?? ""} [${d.verdict}]\n${d.diagnosis}\n${d.proposedChange ?? ""}`)
           .join("\n\n"),
       });
     }
 
     console.log(
-      `[feedback-watch] reviewed=${diagnoses.length} reportable=${report.length} ` +
-        `errors=${errors.length} sent=${report.length > 0 && enabled && to.length > 0}`,
+      `[feedback-watch] reviewed=${diagnoses.length} queued=${report.length} mailed=${toMail.length} ` +
+        `errors=${errors.length} sent=${toMail.length > 0 && enabled && to.length > 0}`,
     );
     return NextResponse.json({
       ok: true,
       reviewed: diagnoses.length,
-      reportable: report.length,
+      queued: report.length,
+      mailed: toMail.length,
       byVerdict: diagnoses.reduce<Record<string, number>>((a, d) => ({ ...a, [d.verdict]: (a[d.verdict] ?? 0) + 1 }), {}),
-      sent: report.length > 0 && enabled && to.length > 0,
+      sent: toMail.length > 0 && enabled && to.length > 0,
       errors,
     });
   } catch (err) {
