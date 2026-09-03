@@ -1090,6 +1090,8 @@ export type Database = {
           feedback: string | null;
           feedback_at: string | null;
           feedback_note: string | null;
+          feedback_reviewed_at: string | null;
+          feedback_verdict: string | null;
         };
         Insert: {
           id?: string;
@@ -1107,6 +1109,8 @@ export type Database = {
           feedback?: string | null;
           feedback_at?: string | null;
           feedback_note?: string | null;
+          feedback_reviewed_at?: string | null;
+          feedback_verdict?: string | null;
         };
         Update: {
           id?: string;
@@ -1124,6 +1128,8 @@ export type Database = {
           feedback?: string | null;
           feedback_at?: string | null;
           feedback_note?: string | null;
+          feedback_reviewed_at?: string | null;
+          feedback_verdict?: string | null;
         };
         Relationships: [];
       };

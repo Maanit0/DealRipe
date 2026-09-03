@@ -63,6 +63,10 @@
     {
       "path": "/api/cron/reengage-sweep",
       "schedule": "0 15 * * 1"
+    },
+    {
+      "path": "/api/cron/feedback-watch",
+      "schedule": "7,22,37,52 * * * *"
     }
   ]
 }
