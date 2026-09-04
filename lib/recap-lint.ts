@@ -194,6 +194,38 @@ export function describeRecapFindings(findings: ReadonlyArray<RecapFinding>): st
 }
 
 /**
+ * "Alexandra will send the recording link" becomes "Send the recording link. (Alexandra)".
+ *
+ * The recap is delivered TO the rep, so naming them in the third person reads
+ * as being talked about rather than told what to do, and on an unresolved item
+ * it reads as blame. Eduardo's own next-actions section already gets this right
+ * ("Email Garrett and Daniela the recording"), and the commitment lists did not.
+ *
+ * Fix tier rather than regenerate because the transform is exact: the only
+ * shape this fires on is "<Name> will <verb>", the name moves to the end rather
+ * than being deleted, and nothing else in the sentence is touched. The prompt
+ * asks for the imperative directly; this catches the residual.
+ *
+ * Applied to weOwe ONLY. A name in customerOwes is the customer, and the reader
+ * is chasing those people, so third person and the name are both correct there.
+ *
+ * The parenthesis is kept even on a single-seller call, where it is redundant,
+ * because a fix-tier rule may not discard information and the roster is not in
+ * scope here.
+ */
+const WILL_NOT_A_VERB = new Set(["not", "no", "never", "also", "then", "still", "likely", "probably", "either"]);
+
+export function imperativeCommitment(s: string): string {
+  const m = /^([A-Z][\w.'-]*(?:\s+(?:and|&)\s+[A-Z][\w.'-]*)*)\s+will\s+([a-z][\w'-]*)/.exec(s.trim());
+  if (!m) return s;
+  const [full, who, verb] = m;
+  if (WILL_NOT_A_VERB.has(verb)) return s;
+  const rest = s.trim().slice(full.length);
+  const body = (verb.charAt(0).toUpperCase() + verb.slice(1) + rest).replace(/\s+$/, "");
+  return `${/[.!?]$/.test(body) ? body : `${body}.`} (${who})`;
+}
+
+/**
  * Apply every `fix`-tier rule to a narrative in place of reporting it.
  *
  * Returns a copy. The structured facts keep their quotes untouched: a quote is
@@ -220,7 +252,10 @@ export function applyRecapFixes(n: Narrative): Narrative {
     })),
     nextSteps: {
       customerOwes: n.nextSteps.customerOwes.map(fixFact),
-      weOwe: n.nextSteps.weOwe.map(fixFact),
+      weOwe: n.nextSteps.weOwe.map((f) => ({
+        ...fixFact(f),
+        statement: imperativeCommitment(normalizeDashes(f.statement)),
+      })),
     },
   };
 }

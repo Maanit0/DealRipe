@@ -226,15 +226,20 @@ This document is read by a solution engineer who was not on any of the calls. Th
 HARD RULES:
 1. No em-dashes or en-dashes anywhere.
 2. Ground everything in what the customer said. Do not invent requirements, numbers or people.
+2a. NAME THE CUSTOMER IN PROSE, NEVER OUR OWN SIDE. Customer names carry information the reader needs: which stakeholder said it tells them who to convince. A Magaya name inside a sentence does not, and on anything unresolved it reads as blame on a colleague the reader has to work with. State the thing itself instead: "The AI ingestion tool does not connect to the prior notice form", not "Alexandra confirmed the AI does not connect to the prior notice form". Where the reader genuinely needs to know which of our people to go to, put the name in parentheses at the END of the item: "(Steven)". The "ourTeam" field is the roster and is where our names belong.
 3. RANK BY REPETITION. A pain raised on three calls outranks one raised once, and saying so is the point of being given every call. Where a pain recurred, the goal it becomes goes higher.
 4. If the rep already proposed a demo plan, ADOPT their structure and improve it rather than inventing a competing one. Set buildsOnRepPlan true when you did.
 5. Order sessions by what the customer weighted, never by our product's natural order.
 6. "validateInternally" is REQUIRED and is the most important field. Anything the customer asked for where our answer was uncertain, hedged or negative, and which must be resolved BEFORE the session. An empty array asserts we checked and found none.
+6a. EACH "validateInternally" ITEM IS "The open question: what was actually said, then who resolves it and before which session." Two sentences at most. Naming the session is the deadline, and without it the item is a worry rather than a task. Quote the hedge itself if there was one, because whoever resolves it needs to know how far we already went in front of the customer, but quote it without naming who said it and put that name in parentheses at the end.
 7. "skip" is what NOT to demo and why, in the customer's own terms. A demo that goes wide lands soft. If they told you something is not a priority, or asked about something "just in case", it belongs here rather than in a session.
+7a. EACH "skip" ITEM IS "The thing: why, then what to do instead." The reader scans the thing and must finish the line knowing the action, so end every item with the directive: "do not spend demo time on it", "mention it exists and move on", "show partial pallet release instead", "skip unless they ask for it". An item that gives only a reason leaves the reader deciding, which is the decision this document exists to make for them. A SKIP ITEM NEVER ALSO APPEARS AS A COVER BULLET. Now that skip items end in a directive, the directive is the whole item and it reads identically to a session bullet, so the temptation is to put it in both. Do not. "Mention air AMS exists and move on" belongs under skip once, and the reader meets it there.
 8. "strategicGoals" REFRAMES the ranked pains as initiatives the customer would fund, in their language. A pain describes what is broken ("manual re-keying across seven disconnected systems"); a goal names what they are trying to achieve ("Consolidate onto fewer, standardized systems"). Never copy a pain across unchanged.
 8a. WRITE EACH ONE AS "Short label: the evidence". The label is the goal itself in EIGHT WORDS OR FEWER and it is what a reader scans, so make it carry the meaning alone: "Replace CargoWise at materially lower cost", "Move fast", "Make one vendor decision where possible". After the colon give the evidence a reader can check: who said it, the number they gave, the phrase they used. A goal with no evidence behind it is an assertion, and a goal that is one long compound sentence cannot be scanned. "Achieve customs sophistication sufficient for their FTZ and high-volume entry workflows" is twelve words and fails; "Match or exceed CargoWise customs sophistication" is six and works. Put the qualifiers after the colon.
 8b. ORDER BY WHAT THEY WEIGHTED, and the first goal is the one they named as the primary driver. If someone said price is the number one reason they are moving, price is goal one, not goal five. Getting this order wrong misrepresents the deal to the person running the demo.
 8c. Include a goal the customer stated even when it is not about product. Timeline, vendor consolidation and decision process are goals when the customer named them, and they change how the demo is sequenced.
+8d. ONE IDEA PER GOAL. Never merge two things the customer named separately. "Go live this year on a single vendor if possible" is two goals wearing one label, a timeline and a vendor-consolidation preference, and merging them hides both and strands their evidence. Split them and give each its own line.
+8e. DO NOT FOLD A SPECIFIC GOAL INTO A CATEGORY GOAL, above all where the customer is already solving it themselves. If they described building, buying or hand-running a workaround, that is the work they most want taken off their hands and it is the sharpest goal in the document. "Eliminate manual PGA and data-conversion work" inside "Achieve customs sophistication" disappears. Give it its own line.
 9. "interests" is appetite with NO pain behind it: curiosity, a "just in case" ask, something they leaned toward because we showed it. Keep these OUT of strategicGoals. Empty array when there are none.
 10. "volumes" is hard numbers only, as stated by the customer. Users, transactions per month, shipments, dockets, offices, containers. If they did not give a number, do not estimate one.
 11. "competitive" names who we are measured against and the bar that sets. If they love an incumbent's feature, the demo must show parity or better on it, not just coverage. Empty array if no competitor was named.
@@ -247,6 +252,9 @@ HARD RULES:
 13c. Completeness beats brevity where they conflict. Never drop a real finding to be short. Drop the words around it instead.
 14. Name each session for what it covers. Do not prefix with "Session 1"; the reader's software numbers them.
 14a. "objective" is ONE sentence naming what this demo has to achieve for the deal to advance. Not a summary of the sessions. On a deal where a gate exists, name the gate.
+14b. EVERY "cover" BULLET OPENS WITH A VERB SAYING WHAT TO DO WITH IT. The solution engineer is reading instructions, not a table of contents, and a noun phrase leaves them guessing whether to demo it live, mention it in passing, or ask a question about it. "Entry types in scope: formal entries, ISF, in-bond, FTZ" is a heading. "Live demo the full entry set they file: formal entries, ISF, in-bond, FTZ receipt and transfer" is an instruction. Lead with the verb, never bury it: "The FTZ workflow should be demonstrated" is backwards.
+14c. CHOOSE THE VERB BY WHAT THE EVIDENCE SUPPORTS. Something confirmed that we can show gets "Live demo" or "Walk". Something the customer was emphatic about gets "Lead with". A known gap, a limit or a roadmap item gets "Be transparent about" or "Acknowledge". Something they mentioned once and deprioritized gets "Mention only" or "Do not dwell on". Something we have not verified gets "Confirm", and if we have not verified it internally either it belongs in validateInternally as well. Other verbs are fine where they fit: Show, Demonstrate, Ask, Close, Compare, Bring. Do not attach a confident verb to an unconfirmed capability; that is how a hedge reaches a customer.
+14d. A CAPABILITY LISTED IN "validateInternally" MAY NOT CARRY A CONFIDENT VERB IN A SESSION. If you are asking someone to confirm a thing exists before the session runs, its cover bullet says "Confirm and then show" or "Confirm before committing to show", never a bare "Show" or "Live demo". The same person reads both fields, and a bullet promising to demo what the next section calls unverified is exactly how a hedge reaches the customer. Check every cover bullet against validateInternally before you emit it.
 15. Where the customer was emphatic or emotional about something, say so in the session's "why". That is a signal about what to lead with.
 16. SESSION SHAPE FOLLOWS THE CUSTOMER. If they asked to split the evaluation across several meetings, sessions are meetings and should say so in the name. If the demo is one meeting, sessions are segments within it and the minutes should sum to something a single meeting can hold. Never impose a structure the customer did not ask for when they asked for one.
 16a. Aim for a document a solution engineer reads in one sitting. Roughly: at most 6 sessions, at most 8 items in any list, strategic goals no more than 7. Targets, not truncation. If a deal genuinely carries more, keep it.
@@ -290,6 +298,74 @@ function parseObj(raw: string): Record<string, unknown> | null {
 
 const strArr = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+
+const GOAL_LABEL_MAX_WORDS = 8;
+
+const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
+
+function splitGoal(g: string): { label: string; evidence: string } | null {
+  const i = g.indexOf(": ");
+  return i > 0 ? { label: g.slice(0, i), evidence: g.slice(i + 2) } : null;
+}
+
+/**
+ * Enforce the eight word cap on a goal's label.
+ *
+ * Rule 8a asks for it and the model ignores it on the goals that are hardest to
+ * compress, which are the ones that most need it: three of seven labels came
+ * back over the cap on the second attempt. The label is what a reader scans, so
+ * a twelve word compound sentence there defeats the section.
+ *
+ * A repair rather than a full regeneration, because the whole document costs
+ * two minutes and only the labels are wrong. Only the offending labels are sent
+ * and only a label comes back. The evidence half is never sent for rewriting
+ * and is re-attached here from the original string, so this cannot silently
+ * alter a fact.
+ *
+ * Fails open. A goal with a long label is worse than one with a short label and
+ * far better than no goal, so anything unexpected keeps the original.
+ */
+async function shortenGoalLabels(goals: string[]): Promise<string[]> {
+  const over = goals
+    .map((g, i) => ({ i, parts: splitGoal(g) }))
+    .filter((x): x is { i: number; parts: { label: string; evidence: string } } =>
+      x.parts !== null && wordCount(x.parts.label) > GOAL_LABEL_MAX_WORDS);
+  if (over.length === 0) return goals;
+
+  const ask =
+    `Each numbered line is the label of a sales goal. Every one is too long to scan.\n` +
+    `Rewrite each in ${GOAL_LABEL_MAX_WORDS} words or fewer, keeping what a reader needs to tell this goal from another one. ` +
+    `Drop qualifiers, examples and lists; the evidence sentence that follows the label already carries them. ` +
+    `Keep the customer's own vocabulary. Start with a verb where the original does.\n` +
+    `No em-dashes or en-dashes. Return JSON only, no prose: {"labels": [string]} in the same order and the same count.\n\n` +
+    over.map((x, n) => `${n + 1}. ${x.parts.label}`).join("\n");
+
+  let out: string[] = [];
+  try {
+    const res = await getAnthropicClient().messages.create({
+      model: getAnthropicModel(),
+      max_tokens: 700,
+      temperature: 0,
+      messages: [{ role: "user", content: ask }],
+    });
+    const o = parseObj(res.content.map((c) => ("text" in c ? c.text : "")).join(""));
+    out = strArr(o?.labels);
+  } catch {
+    return goals;
+  }
+  if (out.length !== over.length) return goals;
+
+  const fixed = [...goals];
+  over.forEach((x, n) => {
+    const label = out[n].trim().replace(/[.:]+$/, "");
+    // Accept only a label that is actually shorter and actually within the cap.
+    // A model that returns the input unchanged, or something longer, has not
+    // solved the problem and the original at least reads as written prose.
+    if (!label || wordCount(label) > GOAL_LABEL_MAX_WORDS || wordCount(label) >= wordCount(x.parts.label)) return;
+    fixed[x.i] = `${label}: ${x.parts.evidence}`;
+  });
+  return fixed;
+}
 
 export async function buildDemoStrategyForDeal(args: {
   dealId: string;
@@ -366,6 +442,8 @@ export async function buildDemoStrategyForDeal(args: {
         })
       : [];
 
+  const strategicGoals = await shortenGoalLabels(strArr(o.strategicGoals));
+
   return {
     status: "ok",
     sources: material.counts,
@@ -377,7 +455,7 @@ export async function buildDemoStrategyForDeal(args: {
       companyOverview: strArr(o.companyOverview),
       volumes: pairs(o.volumes, "label", "value") as DemoStrategyDoc["volumes"],
       systemLandscape: pairs(o.systemLandscape, "area", "current", "note") as DemoStrategyDoc["systemLandscape"],
-      strategicGoals: strArr(o.strategicGoals),
+      strategicGoals,
       interests: strArr(o.interests),
       competitive: strArr(o.competitive),
       sessions,
