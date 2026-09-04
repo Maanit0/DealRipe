@@ -44,3 +44,7 @@ digest-generated.html
 # Rep feedback triage. Quotes what we sent about named accounts, so it is
 # call-derived content and Magaya is under NDA. Never commit.
 .feedback/
+
+# Customer call content: transcripts, exported emails, customer documents.
+# Magaya is under NDA and derived call content is still call content.
+Context/
