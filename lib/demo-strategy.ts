@@ -92,6 +92,27 @@ export type DemoStrategyDoc = {
   recommendation: string;
   positioning: string;
   buildsOnRepPlan: boolean;
+  /**
+   * Sections this deal needs that the fields above do not hold.
+   *
+   * THE FOUR DOCUMENTS HE SENT ARE NOT ONE TEMPLATE. They share a core and then
+   * diverge, because each deal earned a different section: Kestrel has
+   * "Objections / Concerns Raised", "Competitive Intel", "Timeline" and "Deal
+   * Impact"; Aqua Gulf has "Magaya Capabilities Discussed (Mapped to TOTE's
+   * Needs)" and "Suggested Attendee List for Next Call"; ABC has a "Fit
+   * Assessment" split into Strong Fit and Gap / Caution Area. Dunavant has
+   * Volumes and Pricing Signals, which recurred often enough to become fields.
+   *
+   * A fixed schema cannot produce that, and forcing every deal through the same
+   * fifteen headings is what makes a document read as generated. The core stays
+   * fixed because those things matter on every deal and reliability there is
+   * worth more than variety. This is the tail.
+   *
+   * Capped and guarded, because the failure mode is obvious: a model given an
+   * open section list will invent headings to look thorough. A section has to
+   * carry material that does not fit above AND change what somebody does.
+   */
+  additionalSections: Array<{ title: string; items: string[] }>;
 };
 
 export type DemoStrategyResult =
@@ -218,9 +239,15 @@ HARD RULES:
 12a. "ourTeam" is the Magaya people who appeared, with what each of them answered on. The reader was on none of these calls and needs to know who to ask.
 12b. "pricingSignals" is everything said about money, marked as directional. Numbers quoted, ranges, comparisons to what they pay today, and whether the customer has asked for pricing or been given it. Empty array if money never came up.
 13. No praise, no marketing language, no adjectives about our own product.
+13a. EVERY FACT APPEARS ONCE. If a module belongs in "skip", do not also mention it inside a session. If a gap is in "validateInternally", do not restate it as a risk unless the risk is a different consequence. Repetition is the main reason a document like this stops being read, and a reader who meets the same sentence twice stops trusting the rest.
+13b. BE TERSE. A bullet is one sentence. A session "why" is at most two, and names the evidence rather than narrating the call. Do not open a bullet with scene setting ("This is the session Debra warned about"); state the thing. Cut every word that does not change what the reader does.
+13c. Completeness beats brevity where they conflict. Never drop a real finding to be short. Drop the words around it instead.
 14. Name each session for what it covers. Do not prefix with "Session 1"; the reader's software numbers them.
 14a. "objective" is ONE sentence naming what this demo has to achieve for the deal to advance. Not a summary of the sessions. On a deal where a gate exists, name the gate.
 15. Where the customer was emphatic or emotional about something, say so in the session's "why". That is a signal about what to lead with.
+16. SESSION SHAPE FOLLOWS THE CUSTOMER. If they asked to split the evaluation across several meetings, sessions are meetings and should say so in the name. If the demo is one meeting, sessions are segments within it and the minutes should sum to something a single meeting can hold. Never impose a structure the customer did not ask for when they asked for one.
+16a. Aim for a document a solution engineer reads in one sitting. Roughly: at most 6 sessions, at most 8 items in any list, strategic goals no more than 7. Targets, not truncation. If a deal genuinely carries more, keep it.
+17. "additionalSections" is for material this deal carries that the fields above have no home for. Add one ONLY when both are true: the material does not fit any field above, and a reader would do something differently for having read it. Real examples from documents written for other deals: objections raised and how to handle each, a competitive read where a named rival is in play, the decision timeline and what gates it, who should be invited to the next call, a product-by-product mapping where many modules were discussed. Do NOT restate anything already in a field above, do not add a section to look thorough, and return an empty array when the deal does not call for one. At most four.
 
 Return a single JSON object, no prose, no markdown fences:
 {
@@ -241,7 +268,8 @@ Return a single JSON object, no prose, no markdown fences:
   "strengths": [string],
   "recommendation": string,
   "positioning": string,
-  "buildsOnRepPlan": boolean
+  "buildsOnRepPlan": boolean,
+  "additionalSections": [{"title": string, "items": [string]}]
 }`;
 
 function parseObj(raw: string): Record<string, unknown> | null {
@@ -357,6 +385,17 @@ export async function buildDemoStrategyForDeal(args: {
       recommendation: typeof o.recommendation === "string" ? o.recommendation : "",
       positioning: typeof o.positioning === "string" ? o.positioning : "",
       buildsOnRepPlan: o.buildsOnRepPlan === true,
+      additionalSections: Array.isArray(o.additionalSections)
+        ? (o.additionalSections as unknown[])
+            .flatMap((x) => {
+              if (!x || typeof x !== "object") return [];
+              const r = x as Record<string, unknown>;
+              const title = typeof r.title === "string" ? r.title.trim() : "";
+              const items = strArr(r.items);
+              return title && items.length > 0 ? [{ title, items }] : [];
+            })
+            .slice(0, 4)
+        : [],
     },
   };
 }
@@ -380,23 +419,23 @@ export function renderDemoStrategy(account: string, d: DemoStrategyDoc, callDate
   out.push("");
   if (d.objective) { out.push("OBJECTIVE", d.objective, ""); }
 
-  block("WHO IS IN THE ROOM", d.attendees.map((a) => `- ${a.name}, ${a.role}. ${a.controls}`));
-  block("MAGAYA SIDE, and what each answered on", d.ourTeam.map((a) => `- ${a.name}, ${a.role}`));
-  block("COMPANY", d.companyOverview.map((s) => `- ${s}`));
+  block("CALL ATTENDEES", d.attendees.map((a) => `- ${a.name}, ${a.role}. ${a.controls}`));
+  block("MAGAYA TEAM", d.ourTeam.map((a) => `- ${a.name}, ${a.role}`));
+  block("COMPANY OVERVIEW", d.companyOverview.map((s) => `- ${s}`));
   block("VOLUMES", d.volumes.map((v) => `- ${v.label}: ${v.value}`));
   // The model ends `current` with a period about half the time, so joining with
   // ". " produced "into it.. This is the system". Trim before joining.
   block(
-    "WHAT THEY RUN TODAY",
+    "CURRENT SYSTEM LANDSCAPE",
     d.systemLandscape.map((s) => {
       const cur = s.current.replace(/\s*\.\s*$/, "");
       return `- ${s.area}: ${cur}${s.note ? `. ${s.note}` : ""}`;
     }),
   );
-  block("STRATEGIC GOALS, in their words", d.strategicGoals.map((s) => `- ${s}`));
-  block("INTERESTS, appetite with no pain behind it yet", d.interests.map((s) => `- ${s}`));
-  block("MEASURED AGAINST", d.competitive.map((s) => `- ${s}`));
-  block("PRICING SIGNALS, directional and not final", d.pricingSignals.map((s) => `- ${s}`));
+  block("STRATEGIC GOALS", d.strategicGoals.map((s) => `- ${s}`));
+  block("INTERESTS, NOT YET REQUIREMENTS", d.interests.map((s) => `- ${s}`));
+  block("COMPETITIVE POSITION", d.competitive.map((s) => `- ${s}`));
+  block("PRICING SIGNALS", d.pricingSignals.map((s) => `- ${s}`));
 
   if (d.sessions.length > 0) {
     out.push("RECOMMENDED DEMO STRATEGY");
@@ -409,11 +448,16 @@ export function renderDemoStrategy(account: string, d: DemoStrategyDoc, callDate
     out.push("");
   }
 
-  block("DO NOT DEMO", d.skip.map((s) => `- ${s}`));
-  block("RESOLVE INTERNALLY BEFORE THE SESSION", d.validateInternally.map((s) => `- ${s}`));
+  block("WHAT TO AVOID", d.skip.map((s) => `- ${s}`));
+  block("RESOLVE BEFORE THE DEMO", d.validateInternally.map((s) => `- ${s}`));
   block("RISKS", d.risks.map((s) => `- ${s}`));
-  block("WHAT IS GOING FOR THIS DEAL", d.strengths.map((s) => `- ${s}`));
+  block("DEAL STRENGTHS", d.strengths.map((s) => `- ${s}`));
   if (d.positioning) block("POSITIONING", [d.positioning]);
+  // Between the plan and the judgement: deal-specific material sits after the
+  // demo plan it informs, and before the recommendation that weighs it.
+  for (const sec of d.additionalSections) {
+    block(sec.title.toUpperCase(), sec.items.map((i) => `- ${i}`));
+  }
   if (d.recommendation) block("RECOMMENDATION", [d.recommendation]);
 
   return out.join("\n").trimEnd();
