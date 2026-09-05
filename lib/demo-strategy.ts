@@ -465,10 +465,15 @@ export async function buildDemoStrategyForDeal(args: {
     `Write the demo strategy JSON. Return JSON only.`;
 
   let text = "";
+  let stopReason: string | null = null;
   try {
     const res = await getAnthropicClient().messages.create({
       model: getAnthropicModel(),
-      max_tokens: 8000,
+      // Dunavant across all six calls is 253k characters of transcript and the
+      // document it produces does not fit in 8000. It came back truncated, and
+      // the only signal was "the response was not valid JSON", which points at
+      // the parser and not at the cause.
+      max_tokens: 16000,
       // Zero, for the reason the recap pass documents: this is pure synthesis
       // with no quote to anchor it, so run-to-run variance shows up as a
       // different demo plan. A solution engineer builds from this.
@@ -477,12 +482,24 @@ export async function buildDemoStrategyForDeal(args: {
       messages: [{ role: "user", content: user }],
     });
     text = res.content.map((c) => ("text" in c ? c.text : "")).join("");
+    stopReason = res.stop_reason ?? null;
   } catch (err) {
     return { status: "unavailable", reason: `the model call failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
   const o = parseObj(text);
-  if (!o) return { status: "unavailable", reason: "the response was not valid JSON" };
+  if (!o) {
+    // "Ran out of room" and "wrote something malformed" need different answers:
+    // the first is fixed by a bigger budget or less material, the second by a
+    // retry. Reporting both as invalid JSON sends the reader to the parser.
+    return {
+      status: "unavailable",
+      reason:
+        stopReason === "max_tokens"
+          ? `the model hit its output limit after ${text.length} characters, so the document was cut off mid-JSON`
+          : `the response was not valid JSON (stop reason: ${stopReason ?? "unknown"}, ${text.length} characters)`,
+    };
+  }
 
   const sessions: DemoSession[] = Array.isArray(o.sessions)
     ? (o.sessions as unknown[]).flatMap((x) => {
