@@ -135,6 +135,7 @@ export function renderDemoStrategyHtml(args: {
       }),
     ),
   );
+  p.push(list("Pain points", d.painPoints));
   p.push(list("Strategic goals", d.strategicGoals));
   p.push(list("Interests, not yet requirements", d.interests));
   p.push(list("Competitive position", d.competitive));

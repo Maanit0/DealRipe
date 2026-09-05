@@ -65,7 +65,20 @@ export type DemoStrategyDoc = {
   volumes: Array<{ label: string; value: string }>;
   /** What they run today, per area, and what it implies for us. */
   systemLandscape: Array<{ area: string; current: string; note: string }>;
-  /** The ranked pains, rewritten as initiatives they would fund. */
+  /**
+   * What is going wrong in their operation today, with the mechanics.
+   *
+   * Folded into strategicGoals until 2026-09-04, and that was the bug. With
+   * nothing holding the concrete detail, the goals drifted into the seller's
+   * voice: Impexx came back with "Capture value beyond entry filing" and
+   * "Act before the schedule closes", neither of which is a thing the customer
+   * wants. Two of Eduardo's three documents carry both sections separately
+   * (Kestrel has Current Systems & Pain Points then Customer Priorities, ABC
+   * has Current State / Pain Points then What They're Asking For), so the
+   * split is his structure rather than an invention.
+   */
+  painPoints: string[];
+  /** What they are trying to achieve, in their own voice. */
   strategicGoals: string[];
   /** Appetite with no pain behind it. A counterweight, never promoted to a goal. */
   interests: string[];
@@ -225,6 +238,7 @@ This document is read by a solution engineer who was not on any of the calls. Th
 
 HARD RULES:
 1. No em-dashes or en-dashes anywhere.
+1a. NO MARKDOWN IN ANY VALUE. No asterisks, no underscores, no backticks, no hash headings. The reader's software owns every visual decision including which part is bold. Emphasis you type yourself arrives on the page as literal punctuation.
 2. Ground everything in what the customer said. Do not invent requirements, numbers or people.
 2a. NAME THE CUSTOMER IN PROSE, NEVER OUR OWN SIDE. Customer names carry information the reader needs: which stakeholder said it tells them who to convince. A Magaya name inside a sentence does not, and on anything unresolved it reads as blame on a colleague the reader has to work with. State the thing itself instead: "The AI ingestion tool does not connect to the prior notice form", not "Alexandra confirmed the AI does not connect to the prior notice form". Where the reader genuinely needs to know which of our people to go to, put the name in parentheses at the END of the item: "(Steven)". The "ourTeam" field is the roster and is where our names belong.
 3. RANK BY REPETITION. A pain raised on three calls outranks one raised once, and saying so is the point of being given every call. Where a pain recurred, the goal it becomes goes higher.
@@ -235,11 +249,16 @@ HARD RULES:
 7. "skip" is what NOT to demo and why, in the customer's own terms. A demo that goes wide lands soft. If they told you something is not a priority, or asked about something "just in case", it belongs here rather than in a session.
 7a. EACH "skip" ITEM IS "The thing: why, then what to do instead." The reader scans the thing and must finish the line knowing the action, so end every item with the directive: "do not spend demo time on it", "mention it exists and move on", "show partial pallet release instead", "skip unless they ask for it". An item that gives only a reason leaves the reader deciding, which is the decision this document exists to make for them. A SKIP ITEM NEVER ALSO APPEARS AS A COVER BULLET. Now that skip items end in a directive, the directive is the whole item and it reads identically to a session bullet, so the temptation is to put it in both. Do not. "Mention air AMS exists and move on" belongs under skip once, and the reader meets it there.
 8. "strategicGoals" REFRAMES the ranked pains as initiatives the customer would fund, in their language. A pain describes what is broken ("manual re-keying across seven disconnected systems"); a goal names what they are trying to achieve ("Consolidate onto fewer, standardized systems"). Never copy a pain across unchanged.
-8a. WRITE EACH ONE AS "Short label: the evidence". The label is the goal itself in EIGHT WORDS OR FEWER and it is what a reader scans, so make it carry the meaning alone: "Replace CargoWise at materially lower cost", "Move fast", "Make one vendor decision where possible". After the colon give the evidence a reader can check: who said it, the number they gave, the phrase they used. A goal with no evidence behind it is an assertion, and a goal that is one long compound sentence cannot be scanned. "Achieve customs sophistication sufficient for their FTZ and high-volume entry workflows" is twelve words and fails; "Match or exceed CargoWise customs sophistication" is six and works. Put the qualifiers after the colon.
+8a. WRITE EACH ONE AS "Short label: the evidence". The label is the goal itself in SIX WORDS OR FEWER, and two to four is the target and it is what a reader scans, so make it carry the meaning alone: "Replace CargoWise at materially lower cost", "Move fast", "Make one vendor decision where possible". After the colon give the evidence a reader can check: who said it, the number they gave, the phrase they used. A goal with no evidence behind it is an assertion, and a goal that is one long compound sentence cannot be scanned. "Achieve customs sophistication sufficient for their FTZ and high-volume entry workflows" is twelve words and fails; "Match or exceed CargoWise customs sophistication" is six and works; "Move fast" is two and works best. This label gets set in bold and is what a reader scans and what ends up on a slide, so pick the shortest phrase that still tells this goal apart from the others. Put the qualifiers after the colon.
 8b. ORDER BY WHAT THEY WEIGHTED, and the first goal is the one they named as the primary driver. If someone said price is the number one reason they are moving, price is goal one, not goal five. Getting this order wrong misrepresents the deal to the person running the demo.
-8c. Include a goal the customer stated even when it is not about product. Timeline, vendor consolidation and decision process are goals when the customer named them, and they change how the demo is sequenced.
+8c. Include a goal the customer stated even when it is not about product, PROVIDED THEY STATED IT AS SOMETHING THEY WANT. "We want to go live this year" is a goal. "He will be busier in two to three weeks" is a fact about our selling window, not a goal, and putting it in this list tells the reader the customer wants to be sold to.
+8f. WRITE IT IN THE CUSTOMER'S VOICE, NOT THE SELLER'S. The test is whether they could put the line on their own internal slide without changing a word. These verbs are always the seller talking and may not open a goal: Capture, Support, Position, Prove, Demonstrate, Show, Win, Convert, Address, Enable, Deliver, Leverage, Drive. "Capture value beyond entry filing" is our sales objective; theirs is "Get more from the platform than we already have". "Support the tiered retainer billing model" is what WE would do; theirs is "Bill retainer tiers without counting entries by hand".
+8g. A GOAL IS SOMETHING BROKEN THEY WANT FIXED, NOT A REASON WE THINK THEY WILL BUY. A trigger for looking, a deal timing window, a switching objection and a budget constraint are all real and none of them is a strategic goal. They belong in the objective, the risks, the pricing signals or an additional section. Concretely: "Stay ahead before the incumbent becomes a liability" is NOT a goal, it is why they took the call, and a giveaway is that its own evidence has to explain that the trigger is proactive rather than a crisis. If you find yourself writing that sentence, the entry belongs somewhere else. Test every goal by naming the manual work, the cost, the risk or the lost hours behind it. If you cannot, it is not a goal.
+8h. PREFER MECHANICS TO CATEGORIES. The strongest goal in any of these documents is the one where the customer described exactly what they do by hand. "Stop tracking ISF due dates in Trello alongside the filing system" beats "Consolidate onto a single system", and it beats it because a solution engineer knows what to open.
 8d. ONE IDEA PER GOAL. Never merge two things the customer named separately. "Go live this year on a single vendor if possible" is two goals wearing one label, a timeline and a vendor-consolidation preference, and merging them hides both and strands their evidence. Split them and give each its own line.
 8e. DO NOT FOLD A SPECIFIC GOAL INTO A CATEGORY GOAL, above all where the customer is already solving it themselves. If they described building, buying or hand-running a workaround, that is the work they most want taken off their hands and it is the sharpest goal in the document. "Eliminate manual PGA and data-conversion work" inside "Achieve customs sophistication" disappears. Give it its own line.
+8i. "painPoints" USES THE SAME "Short label: the detail" SHAPE AS THE GOALS, same six word cap on the label, same bold treatment when it renders. It IS WHAT IS GOING WRONG TODAY, WITH THE MECHANICS IN IT, and it is ranked the same way the goals are. A pain describes what they have to do by hand, what breaks, what it costs, or what they cannot see. "Customs sophistication is a decision driver" is a CATEGORY and belongs nowhere near this list. "Evening entry work: the day is consumed by customer advisory work and vendor coordination, so entries get done at night" is a pain. "Invalid FDA product codes: NetCHB's generator produces codes that do not validate" is another. Quote or paraphrase them closely; this is the section where their own words matter most.
+8j. PAINS AND GOALS ARE DIFFERENT SECTIONS AND MUST NOT RESTATE EACH OTHER. The pain is the mechanics of what is broken; the goal is what they are trying to achieve. One line each, and the goal does not repeat the pain's detail. If a goal has no pain under it, the customer named an aspiration and that is fine; if a pain has no goal above it, say the pain and leave it.
 9. "interests" is appetite with NO pain behind it: curiosity, a "just in case" ask, something they leaned toward because we showed it. Keep these OUT of strategicGoals. Empty array when there are none.
 10. "volumes" is hard numbers only, as stated by the customer. Users, transactions per month, shipments, dockets, offices, containers. If they did not give a number, do not estimate one.
 11. "competitive" names who we are measured against and the bar that sets. If they love an incumbent's feature, the demo must show parity or better on it, not just coverage. Empty array if no competitor was named.
@@ -268,6 +287,7 @@ Return a single JSON object, no prose, no markdown fences:
   "ourTeam": [{"name": string, "role": string}],
   "pricingSignals": [string],
   "companyOverview": [string],
+  "painPoints": [string],
   "volumes": [{"label": string, "value": string}],
   "systemLandscape": [{"area": string, "current": string, "note": string}],
   "strategicGoals": [string],
@@ -297,10 +317,25 @@ function parseObj(raw: string): Record<string, unknown> | null {
   }
 }
 
-const strArr = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+/**
+ * Strip markdown emphasis the model was never asked for.
+ *
+ * Telling the prompt a label "gets set in bold" produced literal
+ * "**ISF due-date tracking in Trello:**" in the value. The renderer already
+ * bolds the label, so this rendered the asterisks and double-emphasised the
+ * text. Worse and much quieter: splitGoal looks for ": " and the markdown makes
+ * it ":** ", so every label parsed as having no label at all and the six word
+ * cap was skipped on all eleven of them without a word in the log.
+ */
+const stripMd = (s: string): string =>
+  s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").trim();
 
-const GOAL_LABEL_MAX_WORDS = 8;
+const strArr = (v: unknown): string[] =>
+  Array.isArray(v)
+    ? v.flatMap((x) => (typeof x === "string" && x.trim() ? [stripMd(x)] : []))
+    : [];
+
+const GOAL_LABEL_MAX_WORDS = 6;
 
 const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
@@ -326,7 +361,7 @@ function splitGoal(g: string): { label: string; evidence: string } | null {
  * Fails open. A goal with a long label is worse than one with a short label and
  * far better than no goal, so anything unexpected keeps the original.
  */
-async function shortenGoalLabels(goals: string[]): Promise<string[]> {
+async function shortenGoalLabels(goals: string[], kind = "goal"): Promise<string[]> {
   const over = goals
     .map((g, i) => ({ i, parts: splitGoal(g) }))
     .filter((x): x is { i: number; parts: { label: string; evidence: string } } =>
@@ -334,7 +369,7 @@ async function shortenGoalLabels(goals: string[]): Promise<string[]> {
   if (over.length === 0) return goals;
 
   const ask =
-    `Each numbered line is the label of a sales goal. Every one is too long to scan.\n` +
+    `Each numbered line is the label of a customer ${kind}. Every one is too long to scan.\n` +
     `Rewrite each in ${GOAL_LABEL_MAX_WORDS} words or fewer, keeping what a reader needs to tell this goal from another one. ` +
     `Drop qualifiers, examples and lists; the evidence sentence that follows the label already carries them. ` +
     `Keep the customer's own vocabulary. Start with a verb where the original does.\n` +
@@ -438,24 +473,28 @@ export async function buildDemoStrategyForDeal(args: {
           if (!x || typeof x !== "object") return [];
           const r = x as Record<string, unknown>;
           const out: Record<string, string> = {};
-          for (const k of [a, b, ...(c ? [c] : [])]) out[k] = typeof r[k] === "string" ? (r[k] as string) : "";
+          for (const k of [a, b, ...(c ? [c] : [])]) out[k] = typeof r[k] === "string" ? stripMd(r[k] as string) : "";
           return out[a] ? [out] : [];
         })
       : [];
 
-  const strategicGoals = await shortenGoalLabels(strArr(o.strategicGoals));
+  const [painPoints, strategicGoals] = await Promise.all([
+    shortenGoalLabels(strArr(o.painPoints), "pain point"),
+    shortenGoalLabels(strArr(o.strategicGoals), "goal"),
+  ]);
 
   return {
     status: "ok",
     sources: material.counts,
     doc: {
-      objective: typeof o.objective === "string" ? o.objective : "",
+      objective: typeof o.objective === "string" ? stripMd(o.objective) : "",
       attendees: pairs(o.attendees, "name", "role", "controls") as DemoStrategyDoc["attendees"],
       ourTeam: pairs(o.ourTeam, "name", "role") as DemoStrategyDoc["ourTeam"],
       pricingSignals: strArr(o.pricingSignals),
       companyOverview: strArr(o.companyOverview),
       volumes: pairs(o.volumes, "label", "value") as DemoStrategyDoc["volumes"],
       systemLandscape: pairs(o.systemLandscape, "area", "current", "note") as DemoStrategyDoc["systemLandscape"],
+      painPoints,
       strategicGoals,
       interests: strArr(o.interests),
       competitive: strArr(o.competitive),
@@ -464,8 +503,8 @@ export async function buildDemoStrategyForDeal(args: {
       validateInternally: strArr(o.validateInternally),
       risks: strArr(o.risks),
       strengths: strArr(o.strengths),
-      recommendation: typeof o.recommendation === "string" ? o.recommendation : "",
-      positioning: typeof o.positioning === "string" ? o.positioning : "",
+      recommendation: typeof o.recommendation === "string" ? stripMd(o.recommendation) : "",
+      positioning: typeof o.positioning === "string" ? stripMd(o.positioning) : "",
       buildsOnRepPlan: o.buildsOnRepPlan === true,
       additionalSections: Array.isArray(o.additionalSections)
         ? (o.additionalSections as unknown[])
@@ -514,6 +553,7 @@ export function renderDemoStrategy(account: string, d: DemoStrategyDoc, callDate
       return `- ${s.area}: ${cur}${s.note ? `. ${s.note}` : ""}`;
     }),
   );
+  block("PAIN POINTS", d.painPoints.map((x) => `- ${x}`));
   block("STRATEGIC GOALS", d.strategicGoals.map((s) => `- ${s}`));
   block("INTERESTS, NOT YET REQUIREMENTS", d.interests.map((s) => `- ${s}`));
   block("COMPETITIVE POSITION", d.competitive.map((s) => `- ${s}`));
