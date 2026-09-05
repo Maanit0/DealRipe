@@ -240,6 +240,7 @@ HARD RULES:
 1. No em-dashes or en-dashes anywhere.
 1a. NO MARKDOWN IN ANY VALUE. No asterisks, no underscores, no backticks, no hash headings. The reader's software owns every visual decision including which part is bold. Emphasis you type yourself arrives on the page as literal punctuation.
 2. Ground everything in what the customer said. Do not invent requirements, numbers or people.
+2b. IF YOU HAVE TO HEDGE IT, DELETE IT. A pain reading 'suggests entries are completed outside business hours, though not stated in those exact words' is you telling the reader you made it up, and it happened because a real pain from a different account got borrowed and applied where no evidence existed. Never write 'suggests', 'presumably', 'implies', 'can be inferred' or 'not stated in those words' about a fact concerning this customer. Either they said it and you quote it, or it is not in the document. This does not apply to the section on what to resolve before the demo, where 'nobody confirmed this' is the whole point.
 2a. NAME THE CUSTOMER IN PROSE, NEVER OUR OWN SIDE. Customer names carry information the reader needs: which stakeholder said it tells them who to convince. A Magaya name inside a sentence does not, and on anything unresolved it reads as blame on a colleague the reader has to work with. State the thing itself instead: "The AI ingestion tool does not connect to the prior notice form", not "Alexandra confirmed the AI does not connect to the prior notice form". Where the reader genuinely needs to know which of our people to go to, put the name in parentheses at the END of the item: "(Steven)". The "ourTeam" field is the roster and is where our names belong.
 3. RANK BY REPETITION. A pain raised on three calls outranks one raised once, and saying so is the point of being given every call. Where a pain recurred, the goal it becomes goes higher.
 4. If the rep already proposed a demo plan, ADOPT their structure and improve it rather than inventing a competing one. Set buildsOnRepPlan true when you did.
@@ -258,7 +259,7 @@ HARD RULES:
 8d. ONE IDEA PER GOAL. Never merge two things the customer named separately. "Go live this year on a single vendor if possible" is two goals wearing one label, a timeline and a vendor-consolidation preference, and merging them hides both and strands their evidence. Split them and give each its own line.
 8e. DO NOT FOLD A SPECIFIC GOAL INTO A CATEGORY GOAL, above all where the customer is already solving it themselves. If they described building, buying or hand-running a workaround, that is the work they most want taken off their hands and it is the sharpest goal in the document. "Eliminate manual PGA and data-conversion work" inside "Achieve customs sophistication" disappears. Give it its own line.
 8i. "painPoints" USES THE SAME "Short label: the detail" SHAPE AS THE GOALS, same six word cap on the label, same bold treatment when it renders. It IS WHAT IS GOING WRONG TODAY, WITH THE MECHANICS IN IT, and it is ranked the same way the goals are. A pain describes what they have to do by hand, what breaks, what it costs, or what they cannot see. "Customs sophistication is a decision driver" is a CATEGORY and belongs nowhere near this list. "Evening entry work: the day is consumed by customer advisory work and vendor coordination, so entries get done at night" is a pain. "Invalid FDA product codes: NetCHB's generator produces codes that do not validate" is another. Quote or paraphrase them closely; this is the section where their own words matter most.
-8j. PAINS AND GOALS ARE DIFFERENT SECTIONS AND MUST NOT RESTATE EACH OTHER. The pain is the mechanics of what is broken; the goal is what they are trying to achieve. One line each, and the goal does not repeat the pain's detail. If a goal has no pain under it, the customer named an aspiration and that is fine; if a pain has no goal above it, say the pain and leave it.
+8j. PAINS AND GOALS ARE DIFFERENT SECTIONS AND MUST NOT RESTATE EACH OTHER. The pain is the mechanics of what is broken; the goal is what they are trying to achieve. One line each, and the goal does not repeat the pain's detail. If a goal has no pain under it, the customer named an aspiration and that is fine; if a pain has no goal above it, say the pain and leave it. A pain labelled 'Match CargoWise NEO portal' sitting under a goal labelled 'Match CargoWise NEO portal for customers' is one idea printed twice, and the pain has done no work: the pain there is that customers rely on a portal owned by the vendor being replaced. A LABEL THAT WOULD READ CORRECTLY IN EITHER SECTION IS IN THE WRONG ONE. THE PAIN LABEL NAMES THE MECHANIC, NOT THE TOPIC. Two real failures to avoid: a pain labelled "Manual PGA and unit-conversion work" under a goal labelled "Eliminate manual PGA and unit-conversion work" is the same phrase with a verb bolted on, and the pain should be "PGA units recalculated on every entry". A pain labelled "Customers love CargoWise NEO portal" under a goal labelled "Match CargoWise NEO portal for customers" is the same again, and the pain there is "Portal customers rely on belongs to CargoWise". Strip the topic from the pain label and ask what is actually going wrong.
 9. "interests" is appetite with NO pain behind it: curiosity, a "just in case" ask, something they leaned toward because we showed it. Keep these OUT of strategicGoals. Empty array when there are none.
 10. "volumes" is hard numbers only, as stated by the customer. Users, transactions per month, shipments, dockets, offices, containers. If they did not give a number, do not estimate one.
 11. "competitive" names who we are measured against and the bar that sets. If they love an incumbent's feature, the demo must show parity or better on it, not just coverage. Empty array if no competitor was named.
@@ -361,20 +362,28 @@ function splitGoal(g: string): { label: string; evidence: string } | null {
  * Fails open. A goal with a long label is worse than one with a short label and
  * far better than no goal, so anything unexpected keeps the original.
  */
-async function shortenGoalLabels(goals: string[], kind = "goal"): Promise<string[]> {
-  const over = goals
-    .map((g, i) => ({ i, parts: splitGoal(g) }))
-    .filter((x): x is { i: number; parts: { label: string; evidence: string } } =>
-      x.parts !== null && wordCount(x.parts.label) > GOAL_LABEL_MAX_WORDS);
+async function shortenGoalLabels(goals: string[], kind = "goal", attempt = 1): Promise<string[]> {
+  // Two failures, one repair. A label over the cap has to be shortened; an item
+  // with no "label: detail" shape at all has to be given one. The second case
+  // was invisible until lintDemoStrategy caught it on Kestrel, because
+  // splitGoal returns null there and a filter looking only for "too long"
+  // skipped it in silence.
+  const over = goals.flatMap((g, i) => {
+    const parts = splitGoal(g);
+    if (!parts) return [{ i, parts: { label: g, evidence: g }, missing: true }];
+    return wordCount(parts.label) > GOAL_LABEL_MAX_WORDS ? [{ i, parts, missing: false }] : [];
+  });
   if (over.length === 0) return goals;
 
   const ask =
-    `Each numbered line is the label of a customer ${kind}. Every one is too long to scan.\n` +
-    `Rewrite each in ${GOAL_LABEL_MAX_WORDS} words or fewer, keeping what a reader needs to tell this goal from another one. ` +
-    `Drop qualifiers, examples and lists; the evidence sentence that follows the label already carries them. ` +
-    `Keep the customer's own vocabulary. Start with a verb where the original does.\n` +
-    `No em-dashes or en-dashes. Return JSON only, no prose: {"labels": [string]} in the same order and the same count.\n\n` +
-    over.map((x, n) => `${n + 1}. ${x.parts.label}`).join("\n");
+    `Each numbered line is a customer ${kind}. Give each one a short label a reader can scan.\n` +
+    `The label is ${GOAL_LABEL_MAX_WORDS} words or fewer and two to four is the target. It must carry the meaning ` +
+    `alone, because it is what gets set in bold and what reaches a slide. Keep the customer's own vocabulary. ` +
+    `Drop qualifiers, examples and lists; the sentence that follows the label already carries them. ` +
+    `Return the label ONLY, never the sentence, and no punctuation on the end.\n` +
+    `No markdown and no asterisks. No em-dashes or en-dashes. ` +
+    `Return JSON only, no prose: {"labels": [string]} in the same order and the same count.\n\n` +
+    over.map((x, n) => `${n + 1}. ${x.missing ? x.parts.evidence : x.parts.label}`).join("\n");
 
   let out: string[] = [];
   try {
@@ -386,20 +395,42 @@ async function shortenGoalLabels(goals: string[], kind = "goal"): Promise<string
     });
     const o = parseObj(res.content.map((c) => ("text" in c ? c.text : "")).join(""));
     out = strArr(o?.labels);
-  } catch {
+  } catch (err) {
+    console.warn(`[label-repair] ${kind} attempt ${attempt}: call failed:`, err instanceof Error ? err.message : err);
     return goals;
   }
-  if (out.length !== over.length) return goals;
+  if (out.length !== over.length) {
+    console.warn(`[label-repair] ${kind} attempt ${attempt}: asked for ${over.length} labels, got ${out.length}`);
+    return goals;
+  }
 
   const fixed = [...goals];
   over.forEach((x, n) => {
-    const label = out[n].trim().replace(/[.:]+$/, "");
-    // Accept only a label that is actually shorter and actually within the cap.
-    // A model that returns the input unchanged, or something longer, has not
-    // solved the problem and the original at least reads as written prose.
-    if (!label || wordCount(label) > GOAL_LABEL_MAX_WORDS || wordCount(label) >= wordCount(x.parts.label)) return;
+    const label = stripMd(out[n]).replace(/[.:]+$/, "").trim();
+    // Accept only a label within the cap. Where the label was merely too long,
+    // also require the rewrite to be genuinely shorter: a model returning its
+    // input has solved nothing, and the original at least reads as written
+    // prose. Where there was no label the bar is the cap alone, since there is
+    // nothing to be shorter than.
+    if (!label || wordCount(label) > GOAL_LABEL_MAX_WORDS) {
+      console.warn(`[label-repair] ${kind} attempt ${attempt}: rejected "${label}" (${wordCount(label)}w)`);
+      return;
+    }
+    if (!x.missing && wordCount(label) >= wordCount(x.parts.label)) {
+      console.warn(`[label-repair] ${kind} attempt ${attempt}: not shorter, kept "${x.parts.label}"`);
+      return;
+    }
     fixed[x.i] = `${label}: ${x.parts.evidence}`;
   });
+
+  // One retry over whatever is still over the cap. Failing open on the first
+  // miss left an eight word label on a shipped Dunavant document, and a single
+  // extra small call is far cheaper than the two minutes a full regeneration
+  // costs. Bounded at two attempts so a label that genuinely cannot be
+  // compressed does not loop.
+  if (attempt < 2 && fixed.some((g) => { const p = splitGoal(g); return !p || wordCount(p.label) > GOAL_LABEL_MAX_WORDS; })) {
+    return shortenGoalLabels(fixed, kind, attempt + 1);
+  }
   return fixed;
 }
 
