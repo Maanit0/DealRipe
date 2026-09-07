@@ -353,7 +353,12 @@ export function computeDealFlags(args: {
       flags.push({
         id: "expect_without_engagement",
         severity: "warning",
-        title: `Expect on a deal with no contact in ${quiet} days`,
+        // "No contact" overclaims: quiet measures CAPTURED CONVERSATIONS and
+        // says so in the evidence line directly below, but the title asserted
+        // silence across every channel. GHY printed "no contact in 26 days"
+        // while the customer had emailed 3 days earlier, which is the one
+        // sentence in the digest a rep can disprove from their own inbox.
+        title: `Expect on a deal with no captured conversation in ${quiet} days`,
         evidence: `the rep has this at Expect, the last captured conversation was ${quiet} days ago, and nothing is booked`,
         move: "an Expect carries a number this quarter; get a conversation on the calendar or move it down",
         audience: ["rep", "leader"],

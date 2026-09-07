@@ -291,7 +291,11 @@ function headlineOf(c: Omit<ForecastChange, "headline" | "evidence">): string {
       : `${c.actor} pulled the close date in ${Math.abs(days)} days, ${c.from} to ${c.to}`;
   }
   if (c.field === "Amount") {
-    return `${c.actor} changed the amount from ${amountStr(c.from)} to ${amountStr(c.to)}`;
+    // Name the field. The digest header carries the annualised value ($245k/yr
+    // on GHY) and this line carries the CRM opportunity amount ($47,450), and
+    // calling both "the amount" invited the narrative to report an 83 percent
+    // cut on a deal whose headline number never moved.
+    return `${c.actor} changed the CRM opportunity amount from ${amountStr(c.from)} to ${amountStr(c.to)}`;
   }
   return `${c.actor} moved the ${c.fieldLabel} from ${c.from ?? "blank"} to ${c.to ?? "blank"}`;
 }

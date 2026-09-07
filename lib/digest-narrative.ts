@@ -42,6 +42,7 @@
  */
 
 import { runModel } from "./model-run";
+import { meetingFacts } from "./meeting-state";
 import { supabaseAdmin } from "./supabase";
 
 export type DealNarrative = {
@@ -95,7 +96,7 @@ export async function buildDealNarrative(args: {
       .order("sent_at", { ascending: true }),
     db
       .from("calls")
-      .select("scheduled_start, title, outcome, call_subtype")
+      .select("id, scheduled_start, call_date, title, outcome, call_subtype, capture_class")
       .eq("tenant_id", args.tenantId)
       .eq("deal_id", args.dealId)
       .order("scheduled_start", { ascending: true }),
@@ -108,11 +109,28 @@ export async function buildDealNarrative(args: {
   if (recaps.length === 0) return null;
 
   const calls = (callsRes.data ?? []) as Array<{
+    id: string;
     scheduled_start: string | null;
+    call_date: string | null;
     title: string | null;
     outcome: string | null;
     call_subtype: string | null;
+    capture_class: string | null;
   }>;
+
+  // Resolve each call to what it actually establishes before the model sees it.
+  // Handing over the raw outcome string meant "capture_failed" reached the page
+  // as "the September 3rd call failed to capture", when the record says a human
+  // denied our bot entry, which is evidence the meeting RAN. The model was
+  // repeating what it was given; the fix belongs here, not in the prompt.
+  const callChars = new Map<string, number>();
+  if (calls.length > 0) {
+    const { data: tx } = await supabaseAdmin()
+      .from("transcripts")
+      .select("call_id, body")
+      .in("call_id", calls.map((c) => c.id));
+    for (const t of tx ?? []) callChars.set(t.call_id, String(t.body ?? "").length);
+  }
   const msgs = (msgsRes.data ?? []) as Array<{ sent_at: string | null; customer_side: boolean | null }>;
 
   const inbound = msgs.filter((m) => m.customer_side).length;
@@ -133,7 +151,7 @@ export async function buildDealNarrative(args: {
     `CALLS ON THIS DEAL:`,
     ...calls.map(
       (c) =>
-        `  ${String(c.scheduled_start ?? "").slice(0, 10)}  ${c.call_subtype ?? c.outcome ?? "call"}${c.title ? `  "${c.title.slice(0, 70)}"` : ""}`,
+        `  ${String(c.scheduled_start ?? "").slice(0, 10)}  ${c.call_subtype ?? "call"}${c.title ? `  "${c.title.slice(0, 70)}"` : ""}\n       ${meetingFacts({ ...c, transcriptChars: callChars.get(c.id) ?? 0 }).phrase}`,
     ),
     ``,
     `EMAIL SHAPE (no content is stored; this is who wrote and when):`,
