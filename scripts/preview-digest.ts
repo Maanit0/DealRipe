@@ -23,10 +23,7 @@ config({ path: ".env.local" });
 
 import { writeFileSync } from "node:fs";
 
-import { attachDoThis } from "../lib/digest-synthesis";
-import { renderPipelineDigestEmail } from "../lib/emails/weekly-digest";
-import { getPipelineChanges } from "../lib/pipeline-changes";
-import { recordAllDealSnapshots } from "../lib/snapshot";
+import { buildWeeklyDigest } from "../lib/digest-build";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
 
 const TENANT_SLUG = "magaya";
@@ -43,31 +40,15 @@ async function main(): Promise<void> {
 
   const tenantId = await resolveTenantId(TENANT_SLUG);
 
-  if (!skipSnapshot) {
-    try {
-      const snapped = await recordAllDealSnapshots(tenantId);
-      console.log(`refreshed ${snapped} snapshots (the cron does this too)`);
-    } catch (e) {
-      console.error(`snapshot refresh failed, continuing: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  const untilIso = new Date().toISOString();
-  const sinceIso = new Date(Date.now() - days * 86_400_000).toISOString();
-  const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
-  await attachDoThis(pc.deals);
-
-  const weekLabel = new Date().toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    timeZone: "America/Chicago",
-  });
-
-  const email = renderPipelineDigestEmail({
-    pc,
-    weekLabel,
+  // Identical sequence to app/api/cron/digest/route.ts, because it is the same
+  // function. Ranking, flags, narratives, forecast-why and the doThis synthesis
+  // all happen inside it.
+  const { email, pc, why, priority, snapshot } = await buildWeeklyDigest({
+    tenantId,
+    days,
     recipientName: process.env.DIGEST_TO_NAME ?? "Mark Buman",
     baseUrl: process.env.DEALRIPE_APP_URL,
+    refreshSnapshots: !skipSnapshot,
   });
 
   writeFileSync(outPath, email.html, "utf8");
@@ -80,12 +61,21 @@ async function main(): Promise<void> {
   console.log(`Window:    last ${days} days`);
   console.log(`To:        ${to.join(", ") || "(DIGEST_TO not set, the cron would send nothing)"}`);
   console.log(`Bcc:       ${bcc.join(", ") || "(none)"}`);
+  console.log(`Snapshot:  ${JSON.stringify(snapshot)}`);
   console.log("");
-  console.log(`Deals:            ${pc.deals.length}`);
-  console.log(`Needing attention:${String(pc.headline.dealsNeedingAttention).padStart(4)}`);
-  console.log(`Changed:          ${String(pc.headline.dealsChanged).padStart(4)}`);
+  console.log(`Deals:             ${pc.deals.length}`);
+  console.log(`Needing attention: ${pc.headline.dealsNeedingAttention}`);
+  console.log(`Changed:           ${pc.headline.dealsChanged}`);
+  console.log(`Closed out:        ${pc.closedOut?.length ?? 0}`);
+  console.log(`Printed (ranked):  ${priority.ranked.length}`);
+  console.log(`Forecast changes:  ${why ? why.changes.length : "section unavailable"}`);
   console.log("");
-  console.log(`Written to ${outPath}. This is byte-for-byte what the cron renders.`);
+  for (const r of priority.ranked) {
+    const f = (r.flags ?? []).map((x) => `${x.id}(${x.severity})`).join(", ");
+    console.log(`  ${(r.deal.account ?? "?").padEnd(24)} ${f || "(no flags)"}`);
+  }
+  console.log("");
+  console.log(`Written to ${outPath}. Same builder the cron calls.`);
   console.log("");
 }
 

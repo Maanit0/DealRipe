@@ -1176,7 +1176,16 @@ export async function buildActivityReport(args: {
       };
     });
 
-  const when = new Date(now).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  // Chicago, matching the digest's own week label. These two mails land five
+  // minutes apart in the same inbox, and at 11:00 UTC they happen to agree, so
+  // a difference here would only ever appear if the cron time moved. Pinning
+  // both to the customer's timezone means they cannot disagree at all.
+  const when = new Date(now).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "America/Chicago",
+  });
   const dot = (t: string) => `<span class="dot ${t}"></span>`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"/>

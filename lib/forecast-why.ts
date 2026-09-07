@@ -271,6 +271,15 @@ function directionOf(field: WatchedField, from: string | null, to: string | null
   return "neutral";
 }
 
+/** Salesforce stores Amount as a float, so it arrives as 47449.999993. */
+function amountStr(v: string | number | null | undefined): string {
+  if (v === null || v === undefined || v === "") return "blank";
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n)
+    ? `$${Math.round(n).toLocaleString("en-US")}`
+    : String(v);
+}
+
 function headlineOf(c: Omit<ForecastChange, "headline" | "evidence">): string {
   const days =
     c.field === "CloseDate" && c.from && c.to
@@ -282,7 +291,7 @@ function headlineOf(c: Omit<ForecastChange, "headline" | "evidence">): string {
       : `${c.actor} pulled the close date in ${Math.abs(days)} days, ${c.from} to ${c.to}`;
   }
   if (c.field === "Amount") {
-    return `${c.actor} changed the amount from ${c.from ?? "blank"} to ${c.to ?? "blank"}`;
+    return `${c.actor} changed the amount from ${amountStr(c.from)} to ${amountStr(c.to)}`;
   }
   return `${c.actor} moved the ${c.fieldLabel} from ${c.from ?? "blank"} to ${c.to ?? "blank"}`;
 }
@@ -430,7 +439,7 @@ function evidenceFor(
       if (mailDays !== null && mailDays <= 7) {
         return {
           verdict: "contradicts",
-          text: `closed lost, and the customer wrote ${mailDays} day(s) ago. Worth asking before this counts as a loss.`,
+          text: `closed lost, and the customer wrote ${mailDays} day${mailDays === 1 ? "" : "s"} ago. Worth asking before this counts as a loss.`,
         };
       }
 

@@ -12,7 +12,10 @@ import type { DealChangeRecord } from "./pipeline-changes";
 function dstr(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+    // UTC. A close date is a calendar date, and this one is fed to a model:
+    // a date shifted back a day here reaches the reader inside generated prose,
+    // where it cannot be traced back to a formatter.
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   } catch {
     return "";
   }

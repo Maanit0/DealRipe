@@ -197,7 +197,11 @@ function money(n: number): string {
 function dstr(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+    // UTC, deliberately. A close date is a calendar date rather than an
+    // instant, and rendering 2027-02-19T00:00:00Z in Chicago yields Feb 18.
+    // The card header used Chicago and the forecast line above used UTC, so a
+    // single deal printed two different close dates in one email.
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   } catch {
     return "";
   }

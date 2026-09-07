@@ -2,14 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { envValue } from "@/lib/env-value";
 
-import { attachFlags, attachNarratives, rankForDigest } from "@/lib/digest-priority";
-import { attachDoThis } from "@/lib/digest-synthesis";
-import { renderPipelineDigestEmail } from "@/lib/emails/weekly-digest";
-import { getForecastWhy } from "@/lib/forecast-why";
-import { getPipelineChanges } from "@/lib/pipeline-changes";
+import { buildWeeklyDigest } from "@/lib/digest-build";
 import { sendEmail } from "@/lib/mailer";
 import { recordDigestSend } from "@/lib/sent-messages";
-import { recordAllDealSnapshots } from "@/lib/snapshot";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
 
 export const runtime = "nodejs";
@@ -68,62 +63,16 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
   try {
     const tenantId = await resolveTenantId(PILOT_TENANT_SLUG);
-    // Refresh snapshots first so the digest reads current Rolldog, not the last
-    // daily snapshot. This makes the "what changed" and the rep-move line reflect
-    // any category the rep changed since the overnight run. Fail-soft: a snapshot
-    // error should not block the digest, so we log and send with existing history.
-    try {
-      const snapped = await recordAllDealSnapshots(tenantId);
-      console.log(`[cron/digest] refreshed ${snapped} snapshots before building`);
-    } catch (snapErr) {
-      console.error("[cron/digest] pre-digest snapshot failed, continuing:", snapErr);
-    }
-    // Trailing 7 days: "what changed this week" before Mark's pipeline review.
-    const untilIso = new Date().toISOString();
-    const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const pc = await getPipelineChanges(tenantId, { sinceIso, untilIso });
-    // Rank ONCE, then spend the model calls on exactly what the email prints.
-    // Until 2026-08-20 attachDoThis took the first 8 of pc.deals, which is
-    // sorted by attention score, while the email re-sorted by annual value and
-    // printed 6. On the live pilot that meant 4 of the 6 deals Mark reads had
-    // only fallback text, including the two largest, and 6 of 8 model calls
-    // went to deals he never saw.
-    // Who moved the forecast this week and whether the calls back it. Runs in
-    // parallel with the ranking and fails soft: the digest sends without the
-    // section rather than not sending.
-    const whyPromise = getForecastWhy({ tenantId, sinceIso, untilIso }).catch((err) => {
-      console.error("[cron/digest] forecast why failed, sending without it:", err);
-      return null;
-    });
-    const priority = rankForDigest(pc.deals);
-    // DealRipe's own flags on exactly the deals that will print. Fills
-    // priority.ranked[].flags; best effort, so a flag read that fails costs the
-    // section and never the digest.
-    await attachFlags(priority, tenantId);
-    // Where each printed deal actually stands, read from its history. Runs
-    // after the ranking so it only costs six model calls, and after the why so
-    // it can name what the rep changed. Best effort per deal.
-    const why = await whyPromise;
-    const changesByDeal = new Map<string, string[]>();
-    for (const c of why?.changes ?? []) {
-      (changesByDeal.get(c.dealId) ?? changesByDeal.set(c.dealId, []).get(c.dealId)!).push(c.headline);
-    }
-    await attachNarratives(priority, tenantId, changesByDeal);
-    await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
-    const weekLabel = new Date().toLocaleDateString("en-US", {
-      month: "long",
-      day: "numeric",
-      timeZone: "America/Chicago",
-    });
-    const email = renderPipelineDigestEmail({
-      pc,
-      why,
-      // The same object the synthesis was given, so the two sets cannot drift.
-      priority,
-      weekLabel,
+    // Every build step lives in lib/digest-build.ts so the preview script runs
+    // the identical sequence. It drifted once, silently, and the preview then
+    // showed a digest with no ranking, flags, narratives or forecast-why.
+    const { email, pc, snapshot } = await buildWeeklyDigest({
+      tenantId,
       recipientName: process.env.DIGEST_TO_NAME ?? "Mark Buman",
       baseUrl: process.env.DEALRIPE_APP_URL,
+      refreshSnapshots: true,
     });
+    console.log("[cron/digest] snapshot:", JSON.stringify(snapshot));
     const res = await sendEmail({
       to,
       subject: email.subject,

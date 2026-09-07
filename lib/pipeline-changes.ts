@@ -350,7 +350,12 @@ function concise(a: string | null | undefined, max = 170): string {
 function dateShort(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+    // UTC, for the same reason as dstr in lib/emails/weekly-digest.ts: a close
+    // date is a calendar date, not an instant, and Chicago moves it back a day.
+    // This is the third of three date renderers in the digest and the last to
+    // be corrected; GHY printed "Close pushed Dec 30 → Feb 18" beside a card
+    // header reading "closes Feb 19" and a narrative reading February 19, 2027.
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   } catch {
     return "";
   }
