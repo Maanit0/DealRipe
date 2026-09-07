@@ -16,6 +16,7 @@ import {
   type ActivityRead,
 } from "./deal-activity";
 import { getPipelineChanges, type DealChangeRecord } from "./pipeline-changes";
+import { isMachineSender, meetingFacts } from "./meeting-state";
 import { supabaseAdmin } from "./supabase";
 
 const esc = (s: unknown) =>
@@ -59,15 +60,23 @@ async function lastCustomerEmailByDeal(
     const slice = dealIds.slice(i, i + CHUNK);
     const res = await db
       .from("deal_messages")
-      .select("deal_id, customer_side, sent_at")
+      .select("deal_id, customer_side, sent_at, from_email")
       .eq("tenant_id", tenantId)
       .eq("is_calendar_response", false)
       .in("deal_id", slice)
       .order("sent_at", { ascending: false });
     if (res.error) throw new Error(`deal_messages read failed: ${res.error.message}`);
-    for (const r of (res.data ?? []) as Array<{ deal_id: string; customer_side: boolean; sent_at: string | null }>) {
+    for (const r of (res.data ?? []) as Array<{ deal_id: string; customer_side: boolean; sent_at: string | null; from_email: string | null }>) {
       dealsWithAnyMail.add(r.deal_id);
       if (!r.customer_side || !r.sent_at) continue;
+      // customer_side is domain-based: not magaya.com therefore the customer.
+      // That counted echosign@echosign.com as the customer writing to you, on
+      // 52 messages across 39 deals, and on 8 of them it was the most recent
+      // customer-side contact. Master Cargo's row read "One reply July 22, then
+      // silence" and that reply is a robot: no human has ever replied there.
+      // A signature platform's notification is not the customer re-engaging,
+      // and counting it resets the silence clock this report exists to run.
+      if (isMachineSender(r.from_email)) continue;
       const prev = byDeal.get(r.deal_id);
       if (!prev || Date.parse(r.sent_at) > Date.parse(prev)) byDeal.set(r.deal_id, r.sent_at);
     }
@@ -86,6 +95,50 @@ type NextMeeting = { at: string; title: string | null; who: string[] };
  * it is read rather than inferred from the last conversation, which would be
  * wrong on every deal that has had a call since.
  */
+/**
+ * Meetings that actually occurred after the next step was agreed, per deal.
+ *
+ * Occurrence, not capture. A refused bot proves a human was in the room, so the
+ * meeting happened even though nothing was recorded; a lobby timeout proves
+ * nothing and is deliberately excluded here, because "we could not tell" must
+ * not discharge a commitment.
+ */
+async function meetingsSinceAgreed(
+  tenantId: string,
+  dealIds: string[],
+  agreedAtByDeal: Map<string, string>,
+  now: number,
+): Promise<Map<string, { at: string; occurrence: string; phrase: string }>> {
+  const out = new Map<string, { at: string; occurrence: string; phrase: string }>();
+  const withCommitment = dealIds.filter((id) => agreedAtByDeal.get(id));
+  if (withCommitment.length === 0) return out;
+  const db = supabaseAdmin();
+  for (let i = 0; i < withCommitment.length; i += 60) {
+    const slice = withCommitment.slice(i, i + 60);
+    const { data: calls } = await db
+      .from("calls")
+      .select("id, deal_id, scheduled_start, call_date, outcome, capture_class")
+      .eq("tenant_id", tenantId)
+      .in("deal_id", slice);
+    const ids = (calls ?? []).map((c) => c.id);
+    const chars = new Map<string, number>();
+    for (let j = 0; j < ids.length; j += 100) {
+      const { data: tx } = await db.from("transcripts").select("call_id, body").in("call_id", ids.slice(j, j + 100));
+      for (const t of tx ?? []) chars.set(t.call_id, String(t.body ?? "").length);
+    }
+    for (const c of calls ?? []) {
+      const agreed = agreedAtByDeal.get(c.deal_id);
+      const at = c.call_date ?? c.scheduled_start;
+      if (!agreed || !at || Date.parse(at) < Date.parse(agreed)) continue;
+      const f = meetingFacts({ ...c, transcriptChars: chars.get(c.id) ?? 0 }, now);
+      if (f.occurrence !== "ran" && f.occurrence !== "no_show") continue;
+      const prev = out.get(c.deal_id);
+      if (!prev || at > prev.at) out.set(c.deal_id, { at, occurrence: f.occurrence, phrase: f.phrase });
+    }
+  }
+  return out;
+}
+
 async function nextStepAgreedAt(tenantId: string, dealIds: string[]): Promise<Map<string, string>> {
   const db = supabaseAdmin();
   const out = new Map<string, string>();
@@ -122,6 +175,16 @@ type Row = {
   lastChaseAbout?: string | null;
   /** A captured call or a real inbound email has happened at least once. */
   engaged?: boolean;
+  /**
+   * A meeting on this deal actually occurred after the next step was agreed.
+   *
+   * Without this, a commitment agreed on Aug 27 and discharged by a meeting on
+   * Sep 3 still reported "Agreed, never booked", because the only question
+   * asked was whether a FUTURE event exists. The validator found seven of these
+   * in one run, including two where the evidence of occurrence is that a human
+   * denied our bot entry.
+   */
+  metSinceAgreed?: { at: string; occurrence: string; phrase: string };
 };
 
 /**
@@ -381,6 +444,11 @@ function commitmentState(r: Row): NextStepState {
   if (r.deal.nextMeetingBooked) return "booked";
   const owed = r.deal.repOwedMeeting && r.deal.agreedNextStep ? r.deal.agreedNextStep : null;
   if (owed) {
+    // RESOLVE THE COMMITMENT BEFORE AGEING IT. A meeting that has already
+    // occurred since the agreement discharges it, whether or not DealRipe
+    // captured what was said. Calling that "never booked" is a statement about
+    // our capture, not about the rep.
+    if (r.metSinceAgreed) return "none";
     const aged = r.agreedAt ? Math.floor((Date.now() - Date.parse(r.agreedAt)) / 86_400_000) : null;
     return aged !== null && aged > 7 ? "overdue" : "agreed";
   }
@@ -531,6 +599,42 @@ const MALFORMED = [
  * than rewritten, since the row already carries the fact a few centimetres to
  * the left and repeating it was never worth a line.
  */
+/**
+ * Drop sentences a stored read cannot stand behind at render time.
+ *
+ * Reads are generated once and rendered on later Mondays, so two things rot:
+ * relative time words freeze at the moment of generation ("today" written on
+ * Aug 31 is still "today" on Sep 7), and a silence figure computed then is
+ * contradicted when the customer writes afterwards.
+ *
+ * Suppressing the sentence rather than regenerating the read is the same
+ * judgement lintBriefing makes: no sentence beats a wrong one, and a
+ * three-minute regeneration to fix one clause on a weekly report is not worth
+ * the spend. The rest of the read is still true.
+ */
+function dropUnsupportedSentences(
+  read: string | null,
+  facts: { customerQuietDays: number | null },
+): string | null {
+  if (!read) return read;
+  const STALE = /\b(today|tomorrow|yesterday|this (?:morning|afternoon|evening|Friday|week)|next morning|tonight|last night)\b/i;
+  const kept = read
+    .split(/(?<=[.;])\s+/)
+    .filter((sentence) => {
+      if (STALE.test(sentence)) return false;
+      // "no reply in 11 days" beside a customer message from 3 days ago.
+      const m = sentence.match(/(?:no reply|no response|silent|silence)[^.;]*?(\d+)\s*(?:d\b|days)/i);
+      if (m && facts.customerQuietDays !== null) {
+        const claimed = Number(m[1]);
+        if (Number.isFinite(claimed) && facts.customerQuietDays + 2 < claimed) return false;
+      }
+      return true;
+    })
+    .join(" ")
+    .trim();
+  return kept.length > 0 ? kept : null;
+}
+
 function dropRestatedFacts(read: string | null | undefined, r: Row): string | null {
   let t = String(read ?? "").trim();
   if (!t) return null;
@@ -775,7 +879,10 @@ function coherentRow(r: Row, now: number): RowView {
   // Appended only when the read does not already mention the booking, and only
   // when the booking is the reason: a deal moving on a real customer commitment
   // needs no explanation because its read already carries one.
-  let read = sane(dropRestatedFacts(r.read, r));
+  const quietDays = r.lastContact?.at
+    ? Math.floor((Date.now() - Date.parse(r.lastContact.at)) / 86_400_000)
+    : null;
+  let read = sane(dropUnsupportedSentences(dropRestatedFacts(r.read, r), { customerQuietDays: quietDays }));
   if (status === "moving" && cs === "booked" && r.next) {
     const mentionsIt = /\b(booked|scheduled|on the calendar|next (meeting|session|call)|checkpoint)\b/i.test(read ?? "");
     if (!mentionsIt) {
@@ -813,7 +920,12 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
   // carried "Aug 31 demo still on the books" here, not in the read. Its
   // specificity is preserved, which is the point of the column; only claims the
   // live calendar contradicts are removed.
-  const changed = sane(dropRestatedFacts(r.headline, r));
+  const changedQuietDays = r.lastContact?.at
+    ? Math.floor((Date.now() - Date.parse(r.lastContact.at)) / 86_400_000)
+    : null;
+  const changed = sane(
+    dropUnsupportedSentences(dropRestatedFacts(r.headline, r), { customerQuietDays: changedQuietDays }),
+  );
 
   return `<tr class="main">
     <td class="acct"><b>${esc(r.deal.account)}</b><i>${dealMeta(r)}</i></td>
@@ -987,12 +1099,14 @@ export async function buildActivityReport(args: {
   const agreedAtByDeal = await nextStepAgreedAt(tenantId, dealIds);
   const contactByDeal = await contactHistory(tenantId, dealIds);
   const capturedDeals = await capturedCallDeals(tenantId, dealIds);
+  const metSince = await meetingsSinceAgreed(tenantId, dealIds, agreedAtByDeal, now);
 
   let rows: Row[] = deals.map((deal) => ({
     deal,
     next: nextByDeal.get(deal.dealId),
     agreedAt: agreedAtByDeal.get(deal.dealId),
     engaged: capturedDeals.has(deal.dealId) || Boolean(contactByDeal.get(deal.dealId)?.lastInbound),
+    metSinceAgreed: metSince.get(deal.dealId),
     chases: contactByDeal.get(deal.dealId)?.chases,
     lastChaseAbout: contactByDeal.get(deal.dealId)?.lastChaseAbout ?? null,
     lastContact: (() => {
@@ -1038,7 +1152,13 @@ export async function buildActivityReport(args: {
         closeDate: r.deal.closeDate,
         missing: r.deal.missing ?? [],
       });
-      r.changed = ev.changedThisWeek;
+      // Same rot as the read: "a third is scheduled today" was written when a
+      // call was pending and is still saying "today" a week later. The changed
+      // lines are generated too, so they need the same guard.
+      r.changed = (ev.changedThisWeek ?? []).flatMap((line) => {
+        const kept = dropUnsupportedSentences(line, { customerQuietDays: null });
+        return kept ? [kept] : [];
+      });
       r.lastLearned = ev.lastLearned;
       const stored = await refreshDealRead({ tenantId, dealId: r.deal.dealId, evidence: ev, readOnly: args.readOnly });
       r.read = stored?.text;
