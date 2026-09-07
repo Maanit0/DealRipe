@@ -578,7 +578,10 @@ export function renderPipelineDigestEmail(args: {
       // call it promised is actually on the calendar. When no step was agreed,
       // say so rather than hiding the section.
       let agreedBlock = "";
-      if (d.lastConversationAt && !d.isNoShow) {
+      // Attribution requires CONTENT, not merely a meeting having occurred.
+      // Heading this block with a date whose call was never captured put an
+      // Aug 11 commitment under "On the Sep 3 call" on GHY.
+      if (d.lastCapturedConversationAt && !d.isNoShow) {
         let body: string;
         if (d.agreedNextStep) {
           const booking = d.nextStepIsMeeting
@@ -590,7 +593,7 @@ export function renderPipelineDigestEmail(args: {
         } else {
           body = `<span style="color:${RED};font-weight:600;">No next step was agreed on this call.</span>`;
         }
-        agreedBlock = `<div style="${LABEL}margin-top:15px;">On the ${esc(dstr(d.lastConversationAt) || "last")} call</div>
+        agreedBlock = `<div style="${LABEL}margin-top:15px;">On the ${esc(dstr(d.lastCapturedConversationAt) || "last")} call</div>
            <div style="${VALUE}">${body}</div>`;
       }
       return `
@@ -679,7 +682,7 @@ export function renderPipelineDigestEmail(args: {
     whyHtml
       ? `${spacer}<tr><td style="background:${CARD};border:1px solid ${BORDER};border-radius:12px;padding:20px 22px;">
     <div style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${AMBER};margin:0 0 6px 0;">What moved the number, and what changed on the deal</div>
-    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">Stage, band, amount and close-date changes your reps made this week, each with what actually happened on the deal since the last time that value was set. DealRipe does not know why a rep moved a number and does not guess; this is the record between the two changes.${hoisted ? ` On ${sharedN} of them, <strong style="color:${NAVY};">${esc(hoisted.toLowerCase())}</strong>.` : ""}${whyAgreed > 0 ? ` ${whyAgreed} other change${whyAgreed === 1 ? " is" : "s are"} backed by what the calls show and are not listed.` : ""}</div>
+    <div style="font-family:${SANS};font-size:14px;line-height:22px;color:${MUTED};margin:0 0 12px 0;">Stage, band, amount and close-date changes your reps made this week, each with what actually happened on the deal since the last time that value was set. DealRipe does not know why a rep moved a number and does not guess; this is the record between the two changes.${hoisted ? ` On ${sharedN} of them, <strong style="color:${NAVY};">${esc(hoisted)}</strong>.` : ""}${whyAgreed > 0 ? ` ${whyAgreed} other change${whyAgreed === 1 ? " is" : "s are"} backed by what the calls show and are not listed.` : ""}</div>
     ${whyHtml}
   </td></tr>`
       : ""
@@ -746,7 +749,7 @@ export function renderPipelineDigestEmail(args: {
     t.push("", "WHAT MOVED THE NUMBER, AND WHAT CHANGED ON THE DEAL");
     t.push("Changes your reps made this week, each with what actually happened on the deal since");
     t.push("the last time that value was set. DealRipe does not guess at why; this is the record.");
-    if (hoisted) t.push(`On ${sharedN} of them, ${hoisted.toLowerCase()}.`);
+    if (hoisted) t.push(`On ${sharedN} of them, ${hoisted}.`);
     for (const c of whyShown) {
       t.push(`- ${c.account}. ${c.headline}.`);
       const own = hoisted && tail(c.evidence.text) === hoisted ? head(c.evidence.text) : c.evidence.text;

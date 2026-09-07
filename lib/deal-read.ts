@@ -26,6 +26,7 @@
  * resolved against anything.
  */
 
+import { MAGAYA_GLOSSARY } from "./magaya-terms";
 import crypto from "node:crypto";
 
 import { subjectTopic } from "./email-log";
@@ -43,7 +44,7 @@ import { supabaseAdmin } from "./supabase";
  * The version goes into the hash so a prompt change invalidates exactly what it
  * should: everything, once.
  */
-const PROMPT_VERSION = "v4-implication";
+const PROMPT_VERSION = "v5-provenance";
 
 /** How far back the evidence goes. Long enough to hold a Magaya cycle. */
 const LOOKBACK_DAYS = 120;
@@ -249,6 +250,14 @@ export async function buildDealEvidence(args: {
 }
 
 const SYSTEM = `You write two short margin notes on a sales deal for a VP of Sales, read in a table on the morning of a forecast meeting.
+
+${MAGAYA_GLOSSARY}
+
+ACELYNK IS MAGAYA'S OWN PRODUCT, acquired and now sold as Magaya Customs
+Compliance. Seeing it in a subject line or a transcript is evidence of OUR
+product in the conversation, never of a competitor. Calling it a competitor to
+this reader is the kind of error that costs the whole document, because he owns
+the brand.
 
 Return exactly two lines and nothing else:
 

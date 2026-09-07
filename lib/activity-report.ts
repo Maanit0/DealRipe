@@ -541,6 +541,23 @@ function actionOf(r: Row, status: StatusKey): { text: string; hard: boolean } | 
     return status === "stalled" ? { text: "Make sure this one holds", hard: false } : null;
   }
   if (ns === "waiting_customer") return { text: "Waiting on customer", hard: false };
+  // A no-show that a later meeting has already superseded is history, not the
+  // current blocker. Perez read "Ask why they no-showed" beside a row saying a
+  // live demo ran on September 1: the Aug 26 miss was real and was answered by
+  // the deal itself a week later.
+  const capturedSince = r.deal.lastCapturedConversationAt
+    ? Date.now() - Date.parse(r.deal.lastCapturedConversationAt) < 21 * 86_400_000
+    : false;
+  if (top?.kind === "no_show" && (r.metSinceAgreed || capturedSince)) {
+    const rest = [...r.deal.flags]
+      .filter((f) => f.kind !== "no_show")
+      .sort((a, b) => sev(b.severity) - sev(a.severity))[0];
+    if (rest) {
+      const alt = ACTION_BY_FLAG[rest.kind];
+      if (alt) return { text: alt, hard: false };
+    }
+    return { text: "Get the next meeting booked", hard: false };
+  }
   if (status === "never") return { text: "Confirm this is real", hard: false };
   if (status === "silent") return { text: "Confirm it is still live", hard: true };
 
@@ -614,19 +631,79 @@ const MALFORMED = [
  */
 function dropUnsupportedSentences(
   read: string | null,
-  facts: { customerQuietDays: number | null },
+  facts: {
+    customerQuietDays: number | null;
+    meetingRanSince?: string | null;
+    hasFutureMeeting?: boolean;
+    /** A no-show is established by attendance evidence, never by a missing transcript. */
+    hasVerifiedNoShow?: boolean;
+    /** The booked next meeting, which is authoritative over any date in prose. */
+    bookedAt?: string | null;
+  },
 ): string | null {
   if (!read) return read;
   const STALE = /\b(today|tomorrow|yesterday|this (?:morning|afternoon|evening|Friday|week)|next morning|tonight|last night)\b/i;
+  // A sentence asserting a meeting is BOOKED or SCHEDULED for a date that has
+  // already passed. "Demo booked Sep 3" and "a second attempt is scheduled
+  // Sep 1" are stale future-state, and unlike "today" they carry a real date,
+  // so they read as current fact rather than as obviously rotten language.
+  const FUTURE_STATE =
+    /\b(?:booked|scheduled|set|planned|arranged|targeted)\b[^.;]{0,40}?\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i;
+  const MONTHS: Record<string, number> = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  };
+  const nowMs = Date.now();
+  const assertsPastAsFuture = (sentence: string): boolean => {
+    const m = sentence.match(FUTURE_STATE);
+    if (!m) return false;
+    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    const day = Number(m[2]);
+    if (mo === undefined || !Number.isFinite(day)) return false;
+    const y = new Date(nowMs).getUTCFullYear();
+    // Pick the reading nearest now, so a December date read in January is not
+    // mistaken for eleven months in the future.
+    const cands = [Date.UTC(y - 1, mo, day), Date.UTC(y, mo, day), Date.UTC(y + 1, mo, day)];
+    const at = cands.reduce((a, b) => (Math.abs(b - nowMs) < Math.abs(a - nowMs) ? b : a));
+    return at < nowMs - 86_400_000;
+  };
   const kept = read
     .split(/(?<=[.;])\s+/)
     .filter((sentence) => {
       if (STALE.test(sentence)) return false;
+      if (assertsPastAsFuture(sentence)) return false;
       // "no reply in 11 days" beside a customer message from 3 days ago.
       const m = sentence.match(/(?:no reply|no response|silent|silence)[^.;]*?(\d+)\s*(?:d\b|days)/i);
       if (m && facts.customerQuietDays !== null) {
         const claimed = Number(m[1]);
         if (Number.isFinite(claimed) && facts.customerQuietDays + 2 < claimed) return false;
+      }
+      // Dateless claims that no meeting has happened, or that one is booked,
+      // carry no pattern to age. The deal's own record settles them: Perez read
+      // "No demo has landed yet" with a stored Sep 1 transcript, and Beyond
+      // Pegasus read "demo booked" a week after that demo ran.
+      // "Customer missed the September call" on a row whose capture_evidence is
+      // not_checked asserts absence from a meeting nobody looked at.
+      if (!facts.hasVerifiedNoShow &&
+          /\b(?:missed|did not (?:join|attend|show)|didn't (?:join|attend|show)|no.?showed)\b/i.test(sentence)) {
+        return false;
+      }
+      // A date in prose that disagrees with the booked calendar event. The
+      // calendar is authoritative for a booking, so the sentence that says
+      // otherwise goes rather than sitting beside it.
+      if (facts.bookedAt) {
+        const m = sentence.match(/\b(?:scheduled|booked|set)\b[^.;]{0,30}?\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i);
+        if (m) {
+          const booked = new Date(facts.bookedAt);
+          const sameDay =
+            booked.getUTCDate() === Number(m[2]) &&
+            booked.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }).toLowerCase() ===
+              m[1].slice(0, 3).toLowerCase();
+          if (!sameDay) return false;
+        }
+      }
+      if (facts.meetingRanSince) {
+        if (/\bno\s+(?:demo|meeting|call|session)\b[^.;]{0,40}?\b(?:has\s+)?(?:landed|happened|taken place|occurred|been held)/i.test(sentence)) return false;
+        if (!facts.hasFutureMeeting && /\b(?:demo|meeting|call|session)\b[^.;]{0,30}?\bbooked\b/i.test(sentence)) return false;
       }
       return true;
     })
@@ -882,7 +959,15 @@ function coherentRow(r: Row, now: number): RowView {
   const quietDays = r.lastContact?.at
     ? Math.floor((Date.now() - Date.parse(r.lastContact.at)) / 86_400_000)
     : null;
-  let read = sane(dropUnsupportedSentences(dropRestatedFacts(r.read, r), { customerQuietDays: quietDays }));
+  let read = sane(
+    dropUnsupportedSentences(dropRestatedFacts(r.read, r), {
+      customerQuietDays: quietDays,
+      meetingRanSince: r.metSinceAgreed?.at ?? r.deal.lastCapturedConversationAt ?? null,
+      hasFutureMeeting: Boolean(r.deal.nextMeetingBooked),
+      hasVerifiedNoShow: Boolean(r.deal.isNoShow),
+      bookedAt: r.next?.at ?? null,
+    }),
+  );
   if (status === "moving" && cs === "booked" && r.next) {
     const mentionsIt = /\b(booked|scheduled|on the calendar|next (meeting|session|call)|checkpoint)\b/i.test(read ?? "");
     if (!mentionsIt) {
@@ -924,7 +1009,13 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
     ? Math.floor((Date.now() - Date.parse(r.lastContact.at)) / 86_400_000)
     : null;
   const changed = sane(
-    dropUnsupportedSentences(dropRestatedFacts(r.headline, r), { customerQuietDays: changedQuietDays }),
+    dropUnsupportedSentences(dropRestatedFacts(r.headline, r), {
+      customerQuietDays: changedQuietDays,
+      meetingRanSince: r.metSinceAgreed?.at ?? r.deal.lastCapturedConversationAt ?? null,
+      hasFutureMeeting: Boolean(r.deal.nextMeetingBooked),
+      hasVerifiedNoShow: Boolean(r.deal.isNoShow),
+      bookedAt: r.next?.at ?? null,
+    }),
   );
 
   return `<tr class="main">

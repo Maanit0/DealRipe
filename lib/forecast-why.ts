@@ -443,7 +443,10 @@ function evidenceFor(
       if (mailDays !== null && mailDays <= 7) {
         return {
           verdict: "contradicts",
-          text: `closed lost, and the customer wrote ${mailDays} day${mailDays === 1 ? "" : "s"} ago. Worth asking before this counts as a loss.`,
+          // A FRAGMENT, not a sentence. The digest renders it as "On 3 of
+          // them, <text>." so a trailing sentence here produced "…counts as a
+          // loss. ." in a document a CRO reads.
+          text: `the deal moved to Closed Lost while the customer was still active within the last ${mailDays} day${mailDays === 1 ? "" : "s"}, which is worth verifying before the loss is accepted`,
         };
       }
 

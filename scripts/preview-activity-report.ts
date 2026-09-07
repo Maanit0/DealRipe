@@ -27,7 +27,8 @@ import { resolveTenantId } from "../lib/tenant-deal-lookup";
 async function main(): Promise<void> {
   const tenantId = await resolveTenantId("magaya");
   console.log("\n  Building the pipeline review. Same builder as the cron.\n");
-  const report = await buildActivityReport({ tenantId, readOnly: true });
+  const generate = process.argv.includes("--generate");
+  const report = await buildActivityReport({ tenantId, readOnly: !generate });
 
   mkdirSync(".previews", { recursive: true });
   const htmlPath = resolve(".previews/monday-activity.html");

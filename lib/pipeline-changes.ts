@@ -180,6 +180,8 @@ export type DealChangeRecord = {
   // The last actual conversation, and the next step agreed on it, so the digest
   // is anchored in what happened and reasons about follow-up correctly.
   lastConversationAt: string | null;
+  /** Last call whose CONTENT was captured. Required to attribute a statement to a call. */
+  lastCapturedConversationAt: string | null;
   agreedNextStep: string | null;
   // True when the agreed next step is the customer's move (they respond / board
   // meeting), so the rep is not overdue on a meeting. followUpBy is the date to
@@ -691,7 +693,7 @@ export async function getPipelineChanges(
       .eq("tenant_id", tenantId),
     db.from("field_extractions").select("deal_id, framework_field_key, status, answer, last_updated_from_call_id").eq("tenant_id", tenantId),
     db.from("contacts").select("deal_id, name, role, relationship, last_contacted_at").eq("tenant_id", tenantId),
-    db.from("calls").select("id, deal_id, outcome, scheduled_start, call_date, meeting_type, title, participants").eq("tenant_id", tenantId),
+    db.from("calls").select("id, deal_id, outcome, scheduled_start, call_date, meeting_type, title, participants, capture_class, capture_evidence").eq("tenant_id", tenantId),
     db.from("deal_signal_snapshots").select("deal_id, snapshot_date, signals").eq("tenant_id", tenantId).gte("snapshot_date", opts.sinceIso.slice(0, 10)).order("snapshot_date", { ascending: true }),
     loadFramework(tenantId).catch(() => null as Framework | null),
   ]);
@@ -706,6 +708,19 @@ export async function getPipelineChanges(
   const feBy = group((feRes.data ?? []) as Array<Row & { deal_id: string }>);
   const contactsBy = group((contactsRes.data ?? []) as Array<Row & { deal_id: string }>);
   const callsBy = group((callsRes.data ?? []) as Array<Row & { deal_id: string }>);
+  // Transcript sizes, so "was this call captured" is a lookup rather than a
+  // guess. Under 2000 characters is joining noise, not a conversation.
+  const transcriptChars = new Map<string, number>();
+  {
+    const allCallIds = (callsRes.data ?? []).map((c) => String((c as { id: string }).id));
+    for (let i = 0; i < allCallIds.length; i += 200) {
+      const { data: tx } = await supabaseAdmin()
+        .from("transcripts")
+        .select("call_id, body")
+        .in("call_id", allCallIds.slice(i, i + 200));
+      for (const t of tx ?? []) transcriptChars.set(String(t.call_id), String(t.body ?? "").length);
+    }
+  }
   const snapsBy = group((snapsRes.data ?? []) as Array<Row & { deal_id: string }>);
 
   const allDeals = ((dealsRes.data ?? []) as Array<{
@@ -894,6 +909,24 @@ export async function getPipelineChanges(
       .filter((t) => Number.isFinite(t) && t <= Date.now());
     const lastConversationAt = callMs.length ? new Date(Math.max(...callMs)).toISOString() : null;
 
+    // The date of the last call whose CONTENT was captured, which is a stricter
+    // fact than lastConversationAt and the only one that may be used to say
+    // "on the <date> call, the customer said X".
+    //
+    // GHY's most recent call is Sep 3, where our bot was denied entry, so the
+    // meeting ran and nothing was recorded. The digest headed a block "On the
+    // Sep 3 call" and printed a commitment extracted from the Aug 11 call
+    // underneath it. Both facts were individually true and the attribution was
+    // invented by putting them together.
+    const capturedMs = (callsBy[d.id] ?? [])
+      .filter((c) => !NO_SHOW_OUTCOMES.has(String(c.outcome ?? "")))
+      .filter((c) => transcriptChars.get(String(c.id)) ?? 0 >= 2000)
+      .map((c) => Date.parse(String(c.scheduled_start ?? c.call_date ?? "")))
+      .filter((t) => Number.isFinite(t) && t <= Date.now());
+    const lastCapturedConversationAt = capturedMs.length
+      ? new Date(Math.max(...capturedMs)).toISOString()
+      : null;
+
     // Main customer contact on the calls: the champion, else the most-engaged
     // person. Used to name "the customer" in the agreed next step.
     const champion = cts.find((c) => String(c.relationship) === "champion");
@@ -943,6 +976,13 @@ export async function getPipelineChanges(
     // verdict and the "what changed" story, not only the flags.
     const noShowCall = (callsBy[d.id] ?? []).find((c) => {
       if (!c.outcome || !NO_SHOW_OUTCOMES.has(String(c.outcome))) return false;
+      // Same evidence bar as currentNoShow below. A row nobody checked cannot
+      // establish that a named person failed to attend.
+      const attended =
+        String(c.capture_class ?? "") === "no_show" ||
+        String(c.outcome ?? "") === "no_show" ||
+        String((c as { capture_evidence?: string }).capture_evidence ?? "") === "observed";
+      if (!attended) return false;
       const t = Date.parse(String(c.scheduled_start ?? c.call_date ?? ""));
       return Number.isFinite(t) && t >= sinceMs && t <= Date.now();
     });
@@ -954,7 +994,22 @@ export async function getPipelineChanges(
       .map((c) => ({ t: Date.parse(String(c.scheduled_start ?? c.call_date ?? "")), row: c }))
       .filter((x) => Number.isFinite(x.t) && x.t <= Date.now())
       .sort((a, b) => b.t - a.t)[0]?.row;
-    const currentNoShow = !!latestCall && NO_SHOW_OUTCOMES.has(String(latestCall.outcome ?? ""));
+    // A NO-SHOW CLAIM NEEDS ATTENDANCE EVIDENCE.
+    //
+    // outcome "no_conversation" only says no transcript came back, which is
+    // also what an unchecked row looks like. Vivot's Sep 3 row carries
+    // outcome=no_conversation, capture_class=null and capture_evidence=
+    // not_checked, and the digest printed "the meeting was a no-show;
+    // raven@vivot.vi did not join" beside a narrative correctly saying the call
+    // was unconfirmed. Naming a customer as absent on a row we never checked is
+    // the worst version of this failure, because it is checkable by the rep.
+    const hasAttendanceEvidence = (c: Row | undefined): boolean =>
+      !!c &&
+      (String(c.capture_class ?? "") === "no_show" ||
+        String(c.outcome ?? "") === "no_show" ||
+        String((c as { capture_evidence?: string }).capture_evidence ?? "") === "observed");
+    const currentNoShow =
+      !!latestCall && NO_SHOW_OUTCOMES.has(String(latestCall.outcome ?? "")) && hasAttendanceEvidence(latestCall);
     const anyNoShow = isNoShow || currentNoShow;
     const noShowRow = noShowCall ?? (currentNoShow ? latestCall : null);
     const noShowTitle = noShowRow ? String(noShowRow.title ?? "").trim() || null : null;
@@ -1305,6 +1360,7 @@ export async function getPipelineChanges(
       primaryContact,
       nextMeetingBooked: !!hasUpcoming.get(d.id),
       lastConversationAt,
+      lastCapturedConversationAt,
       agreedNextStep,
       nextStepIsCustomerWait,
       nextStepIsMeeting: meetingAgreed,
