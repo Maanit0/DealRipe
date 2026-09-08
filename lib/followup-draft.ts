@@ -614,6 +614,15 @@ function learnedSignOff(signature: string | null): string | null {
   return first && SIGNOFF_RE.test(first) ? first : null;
 }
 
+/**
+ * Lines that end a signature block rather than belong to it: calendar
+ * boilerplate pasted under a sign-off, image alt text, and separator rules.
+ */
+const MOBILE_FOOTER_RE = /^sent from (my )?(iphone|ipad|android|mobile|outlook for)/i;
+
+const NOT_SIGNATURE_RE =
+  /^(?:when|where|join|meeting id|passcode|subject|to|from|cc)\s*:|^\[|^_{4,}|^-{4,}|microsoft teams meeting|description automatically generated|^\s*<https?:/i;
+
 export function learnSignature(
   samples: ReadonlyArray<string>,
   repDisplayName?: string | null,
@@ -630,11 +639,23 @@ export function learnSignature(
     // sending that"), and only the last one closes the message.
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!SIGNOFF_RE.test(lines[i].trim())) continue;
-      const block = lines
-        .slice(i)
+      // Everything from the sign-off down, but STOPPING at the first line that
+      // is plainly not signature. A meeting invite pasted under a signature put
+      // "When: Thursday, September 10, 2026 1:00 PM-1:30 PM. Where: Microsoft
+      // Teams Meeting" into every draft Ariel Rodriguez received, because the
+      // sort below prefers the block with the most lines and the noise is what
+      // made it longest. Truncating beats filtering: a signature is contiguous,
+      // so the first foreign line ends it.
+      const after = lines.slice(i);
+      const stop = after.findIndex((l, k) => k > 0 && NOT_SIGNATURE_RE.test(l.trim()));
+      const block = (stop > 0 ? after.slice(0, stop) : after)
         // A long line after the sign-off is prose from a quoted reply, not part
         // of the block.
-        .filter((l) => l.trim().length <= 60 && !l.includes("[...]"))
+        // Mobile footers are dropped rather than truncated at, because the
+        // real signature sits underneath them: Eduardo's samples are largely
+        // phone-sent, so "Sent from Iphone" was landing above his name on
+        // drafts he sends from a desktop.
+        .filter((l) => l.trim().length <= 60 && !l.includes("[...]") && !MOBILE_FOOTER_RE.test(l.trim()))
         .join("\n")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
@@ -733,14 +754,14 @@ Non-negotiable:
 7e. ONE HUMAN LINE, IF THE CALL GAVE YOU ONE. A rep who heard the customer is travelling next week, or covering for someone, or waiting on a birth, writes one short line about it and it is often the only part of the email that is unmistakably from a person. Take it VERBATIM from what they said. Never infer it, never generalise it, and never manufacture rapport: no line at all is better than a warm sentence about something they did not say.
 
 8. Any proposed time carries a TIMEZONE. "Thursday, August 13th at 10:00 AM ET", never a bare "10:00 AM". These customers span Canada, Latin America, Europe and Asia, and an unqualified time is how a booked meeting turns into a no-show. When the customer's own timezone is given below, state the time in THEIRS, then the rep's in brackets: "10:00 AM ET (9:00 AM CT my time)". Writing a time only in the seller's zone quietly makes the buyer do the conversion.
-9. Distinguish what is IN THIS EMAIL from what will be REVIEWED at the meeting. A recording, a datasheet or a video is in this email: write "here's the recording", present tense. A proposal, pricing or an implementation estimate is walked through live, because emailing it ahead removes the reason for the meeting and lets the buyer evaluate it alone. Unless the transcript shows the rep explicitly promising to email a proposal ahead, do NOT say it is coming. Do not lump them together: "the proposal, recording and estimate are on their way" is wrong when only the recording is going now.
+9. Distinguish what is IN THIS EMAIL from what will be REVIEWED at the meeting. A datasheet or a video LINK from the collateral list is in this email, and present tense is correct for those. A RECORDING IS NOT: DealRipe never has one, so it is never in this email. A proposal, pricing or an implementation estimate is walked through live, because emailing it ahead removes the reason for the meeting and lets the buyer evaluate it alone. Unless the transcript shows the rep explicitly promising to email a proposal ahead, do NOT say it is coming. Do not lump them together: "the proposal, recording and estimate are on their way" is wrong when only the recording is going now.
 9a. NAME WHO OWES WHAT. Where the call left work on both sides, say whose each piece is: "Steven is checking internally on the PCIT integration", "once you've forwarded one of the draft airway bills to the carrier". A list of things that will happen with nobody attached to them reads as a summary; the same list with owners reads as a plan, and the customer can see their half.
 
 10. SHAPE FOLLOWS THE CALL. There is no fixed skeleton, because the job of the email changes with what happened: a discovery that surfaced five things needs a recap, a short check-in needs two lines, a proposal review needs the terms. Decide the shape from the call, then write it. Formatting rules that always hold: short standalone lines with a blank line between them, never a dense paragraph, because a rep reads this on a phone between calls. Where the call produced several distinct points, a labelled block is correct and is what these reps write. Eduardo's shape, when the call earns it: a one line opener naming something specific, "Quick recap of what we covered:" with a bulleted line per point, "Next steps:" numbered with an owner on each, then one line inviting correction. Use it when it fits and ignore it when it does not. A two line email after a two minute call is a good email.
 10b. NEVER REFER TO SOMETHING THIS EMAIL DOES NOT CONTAIN. The ABC Cargo draft closed with "Let me know if anything looks off from the recap below" and there was no recap below: the model wrote the pointer and skipped the section. If you promise a recap, write the recap. If you do not write one, close on something else. The same applies to "see below", "as attached" and "the summary above".
 10c. WHEN THE CALL PRODUCED SEVERAL DISTINCT FINDINGS, WRITE THE RECAP. A discovery that surfaced their volumes, their current process, a scope limit and a commercial preference has four things worth confirming in writing, and a four line email that mentions none of them is the dry draft reps rewrite. Judge it by content, not by call type: if you can write three or more lines that each carry a number, a constraint, a correction or the customer's own words, the recap earns its place. If you cannot, do not pad one.
 10a. STOP AFTER THE LAST CONTENT LINE. Do NOT write a closing line, a sign-off, a name, a title or a phone number. The rep's signature is appended automatically and is not yours to write. End the body on the final sentence of substance.
-11. For anything going out WITH this email, use present tense and stay neutral about the mechanism: "Here's the recording from Friday's session." That stays true once the rep attaches it.
+11. For anything going out WITH this email, use present tense and stay neutral about the mechanism: "Here's the datasheet from Friday's session." That stays true once the rep attaches it. This applies to bundle files only, never to a recording.
 11a. NEVER PROMISE ANOTHER EMAIL. Do not write "in a separate email", "in a follow-up email", "I'll send that shortly", or any other future correspondence. You are writing the email the rep sends; a second one does not exist unless the rep decides to write it, and inventing it creates an obligation they did not make and a promise to the customer they may not keep. The Orvia draft said "the questionnaire is on its way in a separate email", which is DealRipe committing Ariel to homework nobody agreed to. A COMMITMENT THE REP ACTUALLY MADE IS NOT AN INVENTION. Eduardo writes "I'll send over a mutual NDA shortly, once signed we can share more detail on pricing", and that is honest because he said it on the call and he is the one who sends it. What rule 11a forbids is a promise nobody made and any claim about a SEPARATE EMAIL carrying it. Restate the rep's own commitment in the rep's own words, with whatever timeframe they gave. If the rep committed on the call to send something, there are exactly two honest ways to write it: name it in attachmentsToAdd and, ONLY IF IT IS ONE OF THE COLLATERAL BUNDLE'S OWN FILES, refer to it in the present tense because DealRipe attaches those before the rep opens the draft; or, for anything else, state the commitment with the date the rep gave, in the rep's control, as "I'll get the questionnaire to you by Monday morning". Never a promise about a message.
    ONLY THE BUNDLE FILES ARE ACTUALLY ATTACHED. Everything else you name in attachmentsToAdd is a note to the rep, and the draft that went to Departure Pets on 2026-08-31 proves what happens when that is forgotten: its body said "The barcode cargo label PDF and the help.magaya.com link covering airway bill field configuration and document templates are attached" while the card above it said "Nothing is attached yet". Two claims about the same email, in the same email, and the customer only sees the false one.
    A LINK IS NEVER AN ATTACHMENT. A help.magaya.com page goes in the body as a URL. Never name a link in attachmentsToAdd and never describe one as attached.
@@ -768,11 +789,19 @@ anything else, so rule 3's "as long as the call earns" is bounded here.
 
 - DEMO: they saw the product, so they do not need it described back. Short, and
   the measured range for these reps is 60 to 110 words. Alexandra Suntrup's demo
-  follow-ups lead with the RECORDING LINK every time, name the one thing that
-  visibly landed ("great to hear that our milestones and timestamped notes should
-  fill some current auditing gaps"), and list what SHE owes as numbered action
-  items. Do not recap the modules shown. If a recording link is available, it is
-  the most useful thing in the email.
+  follow-ups name the one thing that visibly landed ("great to hear that our
+  milestones and timestamped notes should fill some current auditing gaps") and
+  list what SHE owes as numbered action items. Do not enumerate the modules
+  shown, which is an agenda; DO name the one that landed and why, which is a
+  topic.
+  ALEXANDRA ALSO ATTACHES THE MEETING RECORDING, AND DEALRIPE CANNOT. Her
+  recording links come from her own Teams and OneDrive, which DealRipe does not
+  read, and the Recall source recording is deleted once the transcript is
+  pulled. So never write a recording URL, never write "here's the recording",
+  and never say it is attached. Where the rep said on the call that they would
+  send it, put "meeting recording" in attachmentsToAdd as a note to the rep and
+  write it as something they are sending, not as something already in this
+  email.
 
 - Juan Lopez's shape, for a call whose next step is the customer reviewing
   materials, about 90 words: "As discussed, here's the rate management video
