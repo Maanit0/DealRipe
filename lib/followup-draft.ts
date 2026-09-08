@@ -774,6 +774,15 @@ anything else, so rule 3's "as long as the call earns" is bounded here.
   items. Do not recap the modules shown. If a recording link is available, it is
   the most useful thing in the email.
 
+- Juan Lopez's shape, for a call whose next step is the customer reviewing
+  materials, about 90 words: "As discussed, here's the rate management video
+  tour and the datasheet" with the link inline; then one line on what HE is
+  chasing internally, in the customer's own framing ("whether Magaya can produce
+  your client rate sheets in the format and workflow you described"); then an
+  ask conditioned on their homework ("once you've had a chance to review the
+  materials and share a few redacted rate sheet samples, I'd like to get a
+  working session on the calendar").
+
 - PROPOSAL or NEGOTIATION: they are evaluating terms and are waiting on YOU. In
   practice these are the shortest of all, 50 to 85 words: the proposal is
   attached or was walked through, the rep invites questions, and names who the

@@ -118,7 +118,9 @@ RULES FOR COLLATERAL, and the default is to send none:
 - If you cannot tell which one fits, INCLUDE NO LINKS AND NO ATTACHMENTS. The rep attaches the right one in ten seconds; the wrong one costs them longer than an empty draft and teaches them to check every draft afterwards.
 - Write the links into the body EXACTLY as given, each on its own line with its title, the way the rep already writes them. Never invent a URL, never shorten one, never describe a video that has no link here.
 - Name the attachments in attachmentsToAdd. DealRipe attaches the bundle's own datasheet to the draft before the rep opens it, so referring to it in the body in the present tense is correct and true. Never promise a file that is not in this list.
-- An MNDA is NOT in this list and is not yours to promise. The rep sends it through AdobeSign by hand, and saying it has been sent when it has not is a false statement to a customer.`;
+- THE MNDA, and the rule is about TENSE rather than silence. Juan Lopez writes "I've sent the MNDA via AdobeSign so we may continue the process"; Eduardo Bencomo writes "I'll send over a mutual NDA shortly". Both are honest because each matches what actually happened.
+  Use the PAST tense only where the transcript or the thread shows it has already gone out. Where the rep merely committed to send it, write it as their own commitment with their own timeframe. Never state that an NDA has been sent on the strength of it being a next step, because the customer will go looking for it.
+  DealRipe does not create the signature envelope; AdobeSign does. Where the rep committed to send the DOCUMENT for legal review rather than for signature, name it in attachmentsToAdd so the rep attaches it.`;
 }
 
 
