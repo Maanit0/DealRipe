@@ -747,11 +747,18 @@ function isPreDemoStage(stageKey: string | null | undefined): boolean {
 }
 
 /**
- * How much of the call goes into the draft prompt. A 36k-character transcript
- * is the measured worst case, so this is effectively all of it, capped so one
- * unusually long call cannot crowd out the checked detail underneath.
+ * How much of the call goes into the draft prompt.
+ *
+ * The old value was 30,000 on the belief that 36k was the worst case. Measured
+ * across all 208 stored transcripts on 2026-09-08: 71 of them, 34%, exceed
+ * 30,000, and the longest is 90,336. So a third of drafts were written from a
+ * truncated call.
+ *
+ * 120,000 clears the longest by a third and is roughly 30k tokens, which is
+ * nothing next to the cost of a draft the rep rewrites. The cap exists now only
+ * so a runaway transcript cannot blow the request, not to ration context.
  */
-const TRANSCRIPT_CHARS = 30_000;
+const TRANSCRIPT_CHARS = 120_000;
 
 function buildUserMessage(
   input: FollowUpDraftInput,
@@ -775,7 +782,16 @@ function buildUserMessage(
     customer: "EXISTING CUSTOMER",
     internal: "INTERNAL",
   };
-  const transcript = (input.transcript ?? "").trim().slice(0, TRANSCRIPT_CHARS);
+  // KEEP THE END, NOT THE BEGINNING.
+  //
+  // The direction was the real bug. slice(0, N) discarded the close of every
+  // call over the cap, and the close is where next steps are agreed, dates are
+  // named and commitments are made. On the longest call that threw away 60,336
+  // characters ending at the exact moment the email is about. The beginning
+  // holds introductions; lib/demo-strategy.ts already slices this way.
+  const rawTranscript = (input.transcript ?? "").trim();
+  const transcript =
+    rawTranscript.length > TRANSCRIPT_CHARS ? rawTranscript.slice(-TRANSCRIPT_CHARS) : rawTranscript;
   return [
     `TODAY: ${today}`,
     `CUSTOMER (DealRipe's internal label, NOT necessarily how they spell it. Take the company's own name from the call, and the people's names from WRITING TO below, never from the transcript, which mishears them): ${input.account}`,
