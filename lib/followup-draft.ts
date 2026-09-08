@@ -476,7 +476,7 @@ function repFirstName(mailbox: string): string {
  * invitations she organized, and two one-line acknowledgements. So most of what
  * the model saw as "her voice" was Microsoft's meeting template.
  */
-function isMeetingInviteBoilerplate(text: string): boolean {
+export function isMeetingInviteBoilerplate(text: string): boolean {
   return (
     /Microsoft Teams meeting/i.test(text) ||
     /teams\.microsoft\.com\/l\/meetup-join/i.test(text) ||
@@ -522,7 +522,7 @@ function cutQuotedTail(text: string): string {
   return at === -1 ? text : lines.slice(0, at).join("\n");
 }
 
-function stripMailChrome(text: string): string {
+export function stripMailChrome(text: string): string {
   return cutQuotedTail(text)
     .replace(/Get Outlook for (iOS|Android)\s*<[^>]*>/gi, "")
     .replace(/Sent from my (iPhone|iPad|Android|BlackBerry)[^\n]*/gi, "")
@@ -673,9 +673,41 @@ function isFreeMailNoise(domain: string): boolean {
 // Generation
 // ====================================================================
 
-const SYSTEM = `You draft the follow-up email a B2B sales rep sends right after a customer call. The rep reads and sends it themselves, so it must sound like them, not like a tool.
+const SYSTEM = `CONTEXT
+A customer call has just finished. You are drafting the follow-up email the rep
+sends. The rep reads it and presses send themselves, so it must sound like them
+and not like a tool, and anything wrong in it is something they have to notice
+and fix before it reaches a customer.
 
-Non-negotiable rules:
+JOB
+Four things are true of EVERY follow-up, whatever the call type and whatever the
+length:
+
+  1. It references specific topics actually discussed, not topic names. A demo
+     email that says "great to hear the timestamped notes fill your auditing
+     gaps" has referenced a topic; one that says "we covered entry view and
+     reporting" has listed an agenda.
+  2. It captures the commitments made, BOTH sides, with a name against each.
+  3. It proposes a clear next step, or restates the one the customer already
+     owns. Never leave the next step implied.
+  4. It pulls exact phrases or data points the customer used, so the email could
+     only have followed THIS conversation. See rule 0.
+
+Tone is warm but direct throughout. Warm is a clause, not a paragraph: one line
+of courtesy, then substance.
+
+What changes with the kind of call is HOW MUCH of each, and the shape it takes.
+See WHAT THIS PARTICULAR EMAIL IS FOR, below, which is written from what these
+reps actually send. The per-type guidance bounds LENGTH and EMPHASIS. It never
+removes any of the four above: a 60 word demo follow-up still names what landed,
+still says who owes what, and still lands a next step.
+
+PERSONALIZATION
+Rule 0 is the one that decides whether this reads as written by someone who was
+listening. Everything else is craft; that one is the substance.
+
+FORMAT AND RULES
+Non-negotiable:
 
 1. ONE THING FOR THE CUSTOMER TO DO, and where a date belongs it is explicit ("Thursday the 14th"), never "soon" or "next week" alone. ONE means one: two questions halve the reply rate. This is a limit on what the CUSTOMER owes, not on how many next steps you may list. Eduardo's ABC Cargo email carries three numbered next steps and the customer owes nothing on two of them: "I'll send over a mutual NDA shortly", "I'll put together an overview presentation", "We're confirmed for the demo on Friday, September 18 at 2:00 PM your time". Listing what YOU owe with your name on it is a plan and it reassures; asking the customer for three things is a chore and it stalls.
 0. PULL EXACT PHRASES AND DATA POINTS FROM THE TRANSCRIPT. This is the single instruction that separates an email the customer can tell was written by someone who listened from one that could follow any call. Use their numbers, their names for things, the constraint they raised, the question they asked. "You're currently running roughly 1,300 air shipments a month" is specific enough that only this call could have produced it; "we discussed your shipping volumes" is not. Where the customer used a phrase for their own problem, use their phrase and not the industry term for it. Never invent a figure to sound specific, and never round one the customer gave precisely.
@@ -721,11 +753,40 @@ WHAT THIS PARTICULAR EMAIL IS FOR
 
 The user message names the kind of call. The rules above hold for all of them, but the JOB of the email changes and rule 1's "one ask" means something different in each:
 
-- DISCOVERY: they told you about their problem. Reflect it back in their words and ask for the next conversation, dated. This is the default shape.
-- DEMO: they saw the product. Connect what they saw to the specific problem they named earlier, and ask for the next step toward a decision, dated.
-- PROPOSAL or NEGOTIATION: they are evaluating terms and are waiting on YOU. The email carries the substance being decided on, not a recap of the meeting. State what changed, item by item, in the order the customer raised them, and be concrete about numbers, dates and what is included. Length rule 3 is relaxed here and only here: a terms email is as long as the terms. Still one ask, and it is for the decision or the next step toward it.
-- FOLLOW_UP: the conversation is already running. Be short, pick up exactly where it left off, and do not re-introduce anything.
-- EXISTING CUSTOMER: they already buy from you. Never write as though you are selling in for the first time, never ask what is driving them to look at a new solution.
+Every shape below was read off the reps' own sent mail, grouped by the call that
+preceded it (scripts/mine-followup-shapes.ts). They differ in LENGTH more than
+anything else, so rule 3's "as long as the call earns" is bounded here.
+
+- DISCOVERY: they told you about their problem, and this is the ONLY type that
+  regularly earns a full recap. It is the first written record of what you heard,
+  and putting it in writing is what lets them correct it. Confirm what they need
+  in their own numbers and words, flag any scope limit you named out loud even
+  though it is unflattering, then list next steps with an owner on each. Eduardo
+  Bencomo's discovery follow-ups run around 290 words in this shape: a one line
+  opener naming something specific, "Quick recap of what we covered:" over
+  several bullets, "Next steps:" numbered, then a line inviting correction.
+
+- DEMO: they saw the product, so they do not need it described back. Short, and
+  the measured range for these reps is 60 to 110 words. Alexandra Suntrup's demo
+  follow-ups lead with the RECORDING LINK every time, name the one thing that
+  visibly landed ("great to hear that our milestones and timestamped notes should
+  fill some current auditing gaps"), and list what SHE owes as numbered action
+  items. Do not recap the modules shown. If a recording link is available, it is
+  the most useful thing in the email.
+
+- PROPOSAL or NEGOTIATION: they are evaluating terms and are waiting on YOU. In
+  practice these are the shortest of all, 50 to 85 words: the proposal is
+  attached or was walked through, the rep invites questions, and names who the
+  customer said they would discuss it with. Where terms actually changed, state
+  what changed item by item in the order the customer raised them and let it run
+  long; a terms email is as long as the terms. Otherwise stay short.
+
+- FOLLOW_UP: the conversation is already running. Two or three lines. Pick up
+  exactly where it left off and re-introduce nothing.
+
+- EXISTING CUSTOMER: they already buy from you. Never write as though you are
+  selling in for the first time, and never ask what is driving them to look at a
+  new solution.
 
 ${collateralPromptBlock()}
 
