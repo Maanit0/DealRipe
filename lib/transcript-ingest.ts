@@ -50,6 +50,7 @@
 import { getAnthropicModel } from "./anthropic";
 import { runModel } from "./model-run";
 import { mergeExtraction } from "./extraction-merge";
+import { recordGateTransitions, transitionsFrom } from "./field-extraction-events";
 import { buildExtractionSystemPrompt } from "./extraction-prompt";
 import { enforceGrounding } from "./grounding";
 import {
@@ -874,6 +875,25 @@ async function writeAuditTrail(args: {
       `field_extractions upsert failed (rows=${upsertRows.length}, dealId=${dealUuid}): ${upsert.error.message}`,
     );
   }
+  // GATE TRANSITIONS, beside the row rather than in it.
+  //
+  // field_extractions is upserted, so it holds what is true and not when it
+  // became true. This records the flip with the call that produced it, which
+  // last_updated_from_call_id cannot: that column is refreshed by every later
+  // call that touches the field, so on a six-call deal every gate points at
+  // the most recent one. Best effort, after the write it describes, and read by
+  // nothing yet.
+  if (changedIds.length > 0) {
+    const written = await recordGateTransitions({
+      tenantId,
+      dealId: dealUuid,
+      frameworkId: framework.id,
+      callId: callUuid,
+      transitions: transitionsFrom({ changedIds, prior: priorExtraction, merged }),
+    });
+    if (written > 0) console.log(`[gate-events] recorded ${written} transition(s) dealId=${dealUuid}`);
+  }
+
   const returnedCount = upsert.data?.length ?? 0;
   if (returnedCount === 0) {
     throw new AuditPersistError(

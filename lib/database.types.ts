@@ -392,6 +392,54 @@ export type Database = {
         };
         Relationships: [];
       };
+      field_extraction_events: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          framework_field_key: string;
+          framework_id: string | null;
+          from_status: string | null;
+          to_status: string;
+          from_answer: string | null;
+          to_answer: string | null;
+          evidence: string | null;
+          confidence: number | null;
+          source_call_id: string | null;
+          observed_at: string;
+          occurred_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          framework_field_key: string;
+          framework_id?: string | null;
+          from_status?: string | null;
+          to_status: string;
+          from_answer?: string | null;
+          to_answer?: string | null;
+          evidence?: string | null;
+          confidence?: number | null;
+          source_call_id?: string | null;
+          observed_at?: string;
+          occurred_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          from_status?: string | null;
+          to_status?: string;
+          from_answer?: string | null;
+          to_answer?: string | null;
+          evidence?: string | null;
+          confidence?: number | null;
+          source_call_id?: string | null;
+          observed_at?: string;
+          occurred_at?: string | null;
+        };
+        Relationships: [];
+      };
       field_extractions: {
         Row: {
           id: string;
