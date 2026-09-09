@@ -309,23 +309,36 @@ export async function fillMissingBodies(args: {
   const db = supabaseAdmin();
   const out: BodyFillResult = { considered: 0, stored: 0, truncated: 0, empty: 0, gone: 0, unavailable: 0 };
 
-  let q = db
-    .from("deal_messages")
-    .select("id, graph_message_id, mailbox, sent_at")
-    .eq("tenant_id", args.tenantId)
-    .in("body_status", ["not_fetched", "unavailable"])
-    .order("sent_at", { ascending: false })
-    .limit(args.limit ?? BODY_FETCH_DEFAULT_LIMIT);
-  if (args.mailbox) q = q.eq("mailbox", args.mailbox.toLowerCase());
-  if (args.since) q = q.gte("sent_at", args.since.toISOString());
+  // PAGED, because PostgREST caps a plain select at 1000 rows no matter what
+  // .limit() asks for. A caller requesting 2000 silently got 1000 and was told
+  // it had considered 1000, which reads as "that is all there was". The point
+  // of a limit is "do at most this much work"; quietly doing half of it is the
+  // bug this whole module's status column exists to prevent.
+  const want = args.limit ?? BODY_FETCH_DEFAULT_LIMIT;
+  type Backlog = { id: string; graph_message_id: string; mailbox: string; sent_at: string | null };
+  const rows: Backlog[] = [];
+  for (let offset = 0; rows.length < want; offset += 1000) {
+    const take = Math.min(1000, want - rows.length);
+    let q = db
+      .from("deal_messages")
+      .select("id, graph_message_id, mailbox, sent_at")
+      .eq("tenant_id", args.tenantId)
+      .in("body_status", ["not_fetched", "unavailable"])
+      .order("sent_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + take - 1);
+    if (args.mailbox) q = q.eq("mailbox", args.mailbox.toLowerCase());
+    if (args.since) q = q.gte("sent_at", args.since.toISOString());
 
-  const res = await q;
-  // A failed read here is not "nothing to do". Returning zeros would report a
-  // successful pass that fetched nothing, which is how a broken backfill
-  // survives for weeks looking like a finished one.
-  if (res.error) throw new Error(`body backlog read failed: ${res.error.message}`);
-
-  const rows = res.data ?? [];
+    const res = await q;
+    // A failed read here is not "nothing to do". Returning zeros would report a
+    // successful pass that fetched nothing, which is how a broken backfill
+    // survives for weeks looking like a finished one.
+    if (res.error) throw new Error(`body backlog read failed: ${res.error.message}`);
+    const page = (res.data ?? []) as Backlog[];
+    rows.push(...page);
+    if (page.length < take) break;
+  }
   out.considered = rows.length;
   if (args.dryRun || rows.length === 0) return out;
 

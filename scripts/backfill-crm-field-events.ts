@@ -50,7 +50,12 @@ async function main(): Promise<void> {
   console.log(`\n  accounts asked:     ${r.accountsAsked}`);
   console.log(`  changes read:       ${r.rowsRead}`);
   console.log(`    linked to a deal: ${r.rowsLinked}`);
-  console.log(`    unlinked:         ${r.rowsUnlinked}   <- kept: this is the pre-pilot baseline`);
+  // NOT evidence of anything. Only accounts that already carry a DealRipe deal
+  // are queried, so this is 0 by construction and an earlier version of this
+  // line called it "the pre-pilot baseline", which it is not. The real baseline
+  // is changes that predate our FIRST CAPTURED CALL on the deal, which is a
+  // different quantity and lives in scripts/trajectory-coverage.ts.
+  console.log(`    unlinked:         ${r.rowsUnlinked}   (always 0: only linked accounts are queried)`);
   console.log(`  span:               ${(r.oldest ?? "?").slice(0, 10)} -> ${(r.newest ?? "?").slice(0, 10)}`);
   console.log(`  by field:`);
   for (const [f, n] of Object.entries(r.byField).sort((a, b) => b[1] - a[1])) {
