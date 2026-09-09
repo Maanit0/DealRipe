@@ -415,6 +415,26 @@ export type ContextChange = { path: string; was: unknown; now: unknown };
  * differed always and 47 "changes" across 48 days were really 8. A field we
  * write ourselves is not a fact about the company.
  */
+/**
+ * JSON with object keys sorted, at every depth.
+ *
+ * WHY THIS IS NOT PARANOIA. Postgres jsonb does not preserve key order: it
+ * normalises on write. So an object stored as {from, to, count} comes back as
+ * {count, from, to}, and a plain JSON.stringify comparison reports every array
+ * of objects as changed on every single run.
+ *
+ * The first run of diffContext did exactly that: three "changes" whose values
+ * were byte-identical and whose keys had simply been reordered by the database.
+ * That is deal_signal_snapshots' 47-changes-in-48-days in a new costume, and it
+ * is the same lesson: compare the FACT, never the encoding of the fact.
+ */
+function stable(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  const keys = Object.keys(v as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stable((v as Record<string, unknown>)[k])}`).join(",")}}`;
+}
+
 export function diffContext(prev: CompanyContext, next: CompanyContext): ContextChange[] {
   const out: ContextChange[] = [];
   const walk = (a: unknown, b: unknown, path: string): void => {
@@ -431,7 +451,7 @@ export function diffContext(prev: CompanyContext, next: CompanyContext): Context
     }
     // Arrays and scalars are compared whole. An ordered list that reordered is
     // a change worth seeing, and pretending otherwise hides a motion shift.
-    if (JSON.stringify(a) !== JSON.stringify(b)) out.push({ path, was: a, now: b });
+    if (stable(a) !== stable(b)) out.push({ path, was: a, now: b });
   };
   walk(prev as unknown, next as unknown, "");
   return out;

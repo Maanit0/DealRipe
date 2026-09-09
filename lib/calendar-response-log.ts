@@ -80,10 +80,31 @@ export function diffResponses(args: {
     }
   }
 
+  // CUSTOMER SIDE ONLY, and this is a bug fix rather than a scoping preference.
+  //
+  // Shipped 2026-09-08 without it and measured the next morning: 817 events
+  // across TEN distinct (call, person) pairs, three of them flapping
+  // none -> removed -> none -> removed several hundred times.
+  //
+  // The cause is the trap this module's own comment already names. The
+  // ORGANIZER IS NOT IN participants, and who the organizer is depends on whose
+  // calendar the meeting was read from: Alexandra is absent from the attendee
+  // list on her own meeting and present when the same meeting is read from
+  // another rep's mailbox. calendar-sync runs every five minutes across six
+  // calendars, so the stored roster alternates and the diff calls each swap a
+  // removal.
+  //
+  // Restricting to the customer side removes the whole class, because a
+  // customer's presence does not depend on which of our mailboxes we happened
+  // to read. It also matches what this log is FOR: "the economic buyer declined
+  // the demo" is the signal. A colleague joining is already covered by
+  // newColleagues in lib/attendee-context.ts, which reads the roster directly
+  // and never diffs it.
   const seen = new Set<string>();
   for (const p of args.incoming) {
     const n = normalise(p);
     if (!n) continue;
+    if (domainSide(n.email) !== true) continue;
     seen.add(n.email);
     const was = before.get(n.email);
     if (was && was.response === n.response) continue;
@@ -101,6 +122,7 @@ export function diffResponses(args: {
   // demo invite is invisible in every other table we keep.
   for (const [email, was] of before) {
     if (seen.has(email)) continue;
+    if (domainSide(email) !== true) continue;
     out.push({
       email,
       displayName: was.name,
