@@ -143,6 +143,54 @@ ${contractFor(shape)}
 "ask" and "why" are shown to the rep; "targetFields" and "targetLabel" link the question to the gap it closes for the system to track. Return ONLY the keys listed above. A key you were not asked for is noise on a page a rep reads while a call is connecting.`;
 }
 
+
+/**
+ * What this company's own book says about which gaps are worth the question.
+ *
+ * ORDERING GUIDANCE, NOT COPY. Rule 17a forbids a count, a ratio or a tally
+ * anywhere in a briefing, so no number reaches this block: the brain's job here
+ * is to change WHICH gap gets asked about, not to lecture the rep about rates.
+ *
+ * WHAT THE MEASUREMENT DOES NOT COVER, and the wording below is careful about
+ * it: the outcome is whether a NEXT MEETING got booked. A gate can fail that
+ * test and still matter enormously. Knowing who signs the contract does not
+ * book a meeting and is not optional, so the inert list is phrased as "prefer
+ * the others where both are open", never as "skip these". Telling six reps to
+ * stop identifying the economic buyer, on evidence that only ever measured
+ * meeting-booking, is exactly the kind of confident wrong advice this product
+ * cannot afford.
+ *
+ * Only gates the evidence actually supports appear. At current sample sizes
+ * most report insufficient, and a gate with no verdict is simply absent rather
+ * than listed as unknown, because a list of things we cannot say is noise on a
+ * page a rep reads while a call is connecting.
+ *
+ * THE MEASUREMENT BEHIND IT, so the next person does not have to rediscover it:
+ * a gate counts as worth asking only where raising it preceded a NEXT MEETING
+ * being booked. Scoring against our own extraction instead was tautological,
+ * because asking a question is what makes the answer appear in the transcript
+ * our extractor then reads.
+ */
+function priorBlock(
+  priors: ReadonlyArray<{ gate: string; verdict: string }> | undefined,
+  gaps: ReadonlyArray<Gap>,
+): string[] {
+  if (!priors || priors.length === 0) return [];
+  const open = new Set(gaps.map((g) => g.fieldKey));
+  const worth = priors.filter((p) => p.verdict === "asking_helped" && open.has(p.gate)).map((p) => p.gate);
+  const inert = priors.filter((p) => p.verdict !== "asking_helped" && p.verdict !== "insufficient" && open.has(p.gate)).map((p) => p.gate);
+  if (worth.length === 0 && inert.length === 0) return [];
+
+  return [
+    ``,
+    `WHAT HAS ACTUALLY WORKED ON THIS BOOK. Use this to choose WHICH gap to build the ask around. NEVER mention it, quote it, or refer to past calls' rates in the output; it is not something the rep should read.`,
+    worth.length ? `Raising these has preceded a next meeting getting booked, so prefer them: ${worth.join(", ")}` : "",
+    inert.length
+      ? `Raising these has not moved what happens NEXT on this book, so prefer one from the line above where both are open. This is NOT a reason to skip them when they are the genuine blocker: the measurement is whether a next meeting followed, and knowing who signs matters to closing whether or not it books a meeting. Gates measured: ${inert.join(", ")}`
+      : "",
+  ].filter(Boolean);
+}
+
 export function buildMagayaBriefingUserMessage(args: {
   account: string;
   stage: string;
@@ -154,6 +202,21 @@ export function buildMagayaBriefingUserMessage(args: {
    * a database round trip by calling a function that renders a prompt.
    */
   minedPlays?: ReadonlyArray<MinedPlay>;
+  /**
+   * What this company's own book says about each gap, from lib/sales-brain.ts.
+   *
+   * USED TO ORDER THE ASKS, NEVER PRINTED. Rule 17a already forbids a count, a
+   * ratio or a tally anywhere in a briefing: those are leader numbers and they
+   * read as an accusation in a rep's inbox. So these numbers change WHICH gap
+   * gets the question, and never appear in the output.
+   *
+   * Passed in rather than fetched here, for the same reason minedPlays is: this
+   * stays a pure string builder called from a cron, a script and a test.
+   */
+  gatePriors?: ReadonlyArray<{
+    gate: string;
+    verdict: "insufficient" | "no_measurable_effect" | "asking_helped" | "asking_did_not_help";
+  }>;
   nextStage: string | null;
   closeDate?: string;
   attendees: string;
@@ -301,6 +364,7 @@ export function buildMagayaBriefingUserMessage(args: {
     ``,
     `OPEN GAPS, NEXT STAGE (${args.nextStage ?? "n/a"}):`,
     args.nextGaps.length ? args.nextGaps.map(gapLine).join("\n") : "- none",
+    ...priorBlock(args.gatePriors, [...args.currentGaps, ...args.nextGaps]),
   ];
 
   if (behind.length) {

@@ -227,3 +227,31 @@ export function priorLine(p: GatePrior): string | null {
   }
   return `No measurable difference to what happened next, whether this was asked or not (n=${p.n}).`;
 }
+
+
+/**
+ * The priors, memoised for six hours.
+ *
+ * briefing-sync fires every five minutes across every rep's calendar and this
+ * is a full scan of prescribed_actions. The window is the same six hours
+ * readCustomerStanding uses, for the same reason.
+ *
+ * A FAILURE IS NEVER CACHED and never throws to the caller: a briefing that
+ * loses its prior block is worse than a briefing, but a briefing that fails to
+ * generate is worse than both. An empty array means "no guidance", and
+ * priorBlock renders nothing for it, which is the correct silent behaviour.
+ */
+let cache: { at: number; priors: GatePrior[] } | null = null;
+const TTL_MS = 6 * 3600_000;
+
+export async function loadGatePriors(tenantId: string): Promise<GatePrior[]> {
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.priors;
+  try {
+    const priors = await computeGatePriors(tenantId);
+    cache = { at: Date.now(), priors };
+    return priors;
+  } catch (err) {
+    console.error(`[sales-brain] priors unavailable, briefing continues without them: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}

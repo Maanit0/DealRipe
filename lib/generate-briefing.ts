@@ -206,9 +206,20 @@ export async function generateBriefingFromState(
   // person has approved rows. Never throws: see loadMinedPlays.
   const minedPlays = state.tenantId ? await loadMinedPlays(state.tenantId) : [];
 
+  // WHAT HAS ACTUALLY WORKED ON THIS BOOK, from lib/sales-brain.ts. This is the
+  // loop's return leg: until now nothing DealRipe learned changed what it said
+  // next time. It orders which gap gets the ask and never appears in the copy,
+  // because rule 17a forbids a rate or a tally on a page a rep reads.
+  //
+  // Memoised for six hours and never throws: a briefing without priors is worse
+  // than one with them, and no briefing at all is worse than both.
+  const { loadGatePriors } = await import("./sales-brain");
+  const gatePriors = state.tenantId ? await loadGatePriors(state.tenantId) : [];
+
   const userMessage = buildMagayaBriefingUserMessage({
     account: state.account,
     minedPlays,
+    gatePriors,
     stage: stageKey,
     nextStage: next,
     closeDate: state.closeDate,
