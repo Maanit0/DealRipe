@@ -1142,6 +1142,10 @@ export type Database = {
           has_attachments: boolean | null;
           /** none|listed|not_listed|unavailable. Null = predates the column. */
           attachment_status: string | null;
+          /** Untrimmed body, customer-side inbound only. Null = not kept, NOT empty. */
+          body_raw: string | null;
+          /** customer_inbound | not_in_scope | too_large. Null = predates the column. */
+          body_raw_scope: string | null;
         };
         Insert: {
           id?: string;
@@ -1171,6 +1175,8 @@ export type Database = {
           is_machine_sender?: boolean;
           has_attachments?: boolean | null;
           attachment_status?: string | null;
+          body_raw?: string | null;
+          body_raw_scope?: string | null;
         };
         Update: {
           id?: string;
@@ -1200,6 +1206,8 @@ export type Database = {
           is_machine_sender?: boolean;
           has_attachments?: boolean | null;
           attachment_status?: string | null;
+          body_raw?: string | null;
+          body_raw_scope?: string | null;
         };
         Relationships: [];
       };

@@ -270,6 +270,13 @@ const BODY_FETCH_DEFAULT_LIMIT = 150;
 const BODY_FETCH_CONCURRENCY = 4;
 /** Storage cap. Generous on purpose: Graph eventually 404s the message. */
 export const BODY_STORE_CAP = 4000;
+/**
+ * Ceiling on a retained RAW body. Above this a message is almost always a long
+ * quoted thread rather than long prose, and the trimmed copy plus the preview
+ * already carry the new content. Recorded as 'too_large' rather than dropped
+ * silently.
+ */
+export const RAW_BODY_MAX = 60_000;
 
 export type BodyFillResult = {
   considered: number;
@@ -278,6 +285,12 @@ export type BodyFillResult = {
   empty: number;
   gone: number;
   unavailable: number;
+  /** Raw customer-inbound bodies retained. */
+  rawKept: number;
+  /** Customer-inbound but over RAW_BODY_MAX, so metadata only. */
+  rawTooLarge: number;
+  /** The quoted-tail cut removed everything and the uncut text was used. */
+  cutFellThrough: number;
 };
 
 /**
@@ -307,7 +320,10 @@ export async function fillMissingBodies(args: {
   dryRun?: boolean;
 }): Promise<BodyFillResult> {
   const db = supabaseAdmin();
-  const out: BodyFillResult = { considered: 0, stored: 0, truncated: 0, empty: 0, gone: 0, unavailable: 0 };
+  const out: BodyFillResult = {
+    considered: 0, stored: 0, truncated: 0, empty: 0, gone: 0, unavailable: 0,
+    rawKept: 0, rawTooLarge: 0, cutFellThrough: 0,
+  };
 
   // PAGED, because PostgREST caps a plain select at 1000 rows no matter what
   // .limit() asks for. A caller requesting 2000 silently got 1000 and was told
@@ -315,13 +331,16 @@ export async function fillMissingBodies(args: {
   // of a limit is "do at most this much work"; quietly doing half of it is the
   // bug this whole module's status column exists to prevent.
   const want = args.limit ?? BODY_FETCH_DEFAULT_LIMIT;
-  type Backlog = { id: string; graph_message_id: string; mailbox: string; sent_at: string | null };
+  type Backlog = {
+    id: string; graph_message_id: string; mailbox: string; sent_at: string | null;
+    customer_side: boolean | null; direction: string; is_machine_sender: boolean | null;
+  };
   const rows: Backlog[] = [];
   for (let offset = 0; rows.length < want; offset += 1000) {
     const take = Math.min(1000, want - rows.length);
     let q = db
       .from("deal_messages")
-      .select("id, graph_message_id, mailbox, sent_at")
+      .select("id, graph_message_id, mailbox, sent_at, customer_side, direction, is_machine_sender")
       .eq("tenant_id", args.tenantId)
       .in("body_status", ["not_fetched", "unavailable"])
       .order("sent_at", { ascending: false })
@@ -365,6 +384,33 @@ export async function fillMissingBodies(args: {
         patch.body_status = t.truncated ? "truncated" : "stored";
         if (t.truncated) out.truncated += 1;
         else out.stored += 1;
+        if (t.cutFellThrough) out.cutFellThrough += 1;
+
+        // THE FIRST 255 RAW CHARACTERS, always. add-message-capture.sql called
+        // body_preview the safety net for an over-aggressive trim, and it was
+        // populated on 0 of 2,075 rows because it comes from the LIST call and
+        // this path only ever touched the message endpoint. Derived from the
+        // raw body here so a backfilled row gets one too.
+        patch.body_preview = r.text.slice(0, 255);
+
+        // THE RAW BODY, for customer-side inbound only. That is what the
+        // customer actually said, which the draft and the stakeholder work need
+        // and cannot reconstruct. Our own outbound is already in sent_messages
+        // and a machine sender's body links into a signing session.
+        if (row.customer_side === true && row.direction === "inbound" && row.is_machine_sender !== true) {
+          if (r.text.length <= RAW_BODY_MAX) {
+            patch.body_raw = r.text;
+            patch.body_raw_scope = "customer_inbound";
+            out.rawKept += 1;
+          } else {
+            // Recorded rather than silently dropped: "we chose not to" and "we
+            // never looked" are different facts.
+            patch.body_raw_scope = "too_large";
+            out.rawTooLarge += 1;
+          }
+        } else {
+          patch.body_raw_scope = "not_in_scope";
+        }
       } else if (r.status === "empty") {
         patch.body_status = "empty";
         patch.body_chars = 0;

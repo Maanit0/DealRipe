@@ -95,6 +95,12 @@ export type TrimmedBody = {
   originalChars: number;
   /** True only when the cap cut it. Trimming away chrome is not truncation. */
   truncated: boolean;
+  /**
+   * True when the quoted-tail cut removed everything and the uncut text was
+   * used instead. The caller holds MORE than usual, including the quoted
+   * thread, and the boundary detection failed on this message.
+   */
+  cutFellThrough: boolean;
 };
 
 /**
@@ -106,20 +112,46 @@ export type TrimmedBody = {
  */
 export function trimMessageBody(body: string, opts?: { cap?: number }): TrimmedBody {
   const originalChars = body.length;
-  const cleaned = stripMailChrome(body.replace(/\r/g, ""))
-    .split("\n")
-    .filter((l) => !NOISE_LINE_RE.test(l) && !NOISE_CONTAINS_RE.test(l))
-    .join("\n")
-    // Safelinks wraps every URL in ~900 characters of tracking, which drowns
-    // the prose it is attached to and burns the cap on nothing.
-    .replace(/<https?:\/\/[^>]{60,}>/g, "")
-    .replace(/https?:\/\/\S{120,}/g, "[long link]")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const raw = body.replace(/\r/g, "");
+
+  const scrub = (s: string) =>
+    s
+      .split("\n")
+      .filter((l) => !NOISE_LINE_RE.test(l) && !NOISE_CONTAINS_RE.test(l))
+      .join("\n")
+      // Safelinks wraps every URL in ~900 characters of tracking, which drowns
+      // the prose it is attached to and burns the cap on nothing.
+      .replace(/<https?:\/\/[^>]{60,}>/g, "")
+      .replace(/https?:\/\/\S{120,}/g, "[long link]")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+  let cleaned = scrub(stripMailChrome(raw));
+  let cutFellThrough = false;
+
+  // IF THE CUT REMOVED EVERYTHING, THE CUT WAS WRONG.
+  //
+  // Measured over 2,075 stored bodies: 195 trimmed to an empty string while
+  // recording body_status 'stored', and 160 more had a raw body over 5,000
+  // characters and kept under 120. The cause is the quoted-tail boundary firing
+  // on the FIRST line: a forward whose note sits below the quote, a reply typed
+  // underneath, or a message whose opening line happens to start "From:".
+  //
+  // Returning nothing is the worst available answer, because every caller then
+  // records an empty body as successfully stored. Falling back to the
+  // chrome-stripped but uncut text keeps the quoted thread, which is noisy and
+  // is unambiguously better than silence.
+  if (cleaned.length === 0) {
+    const uncut = scrub(raw);
+    if (uncut.length > 0) {
+      cleaned = uncut;
+      cutFellThrough = true;
+    }
+  }
 
   const cap = opts?.cap;
   if (cap === undefined || cleaned.length <= cap) {
-    return { text: cleaned, originalChars, truncated: false };
+    return { text: cleaned, originalChars, truncated: false, cutFellThrough };
   }
-  return { text: cleaned.slice(0, cap).trimEnd(), originalChars, truncated: true };
+  return { text: cleaned.slice(0, cap).trimEnd(), originalChars, truncated: true, cutFellThrough };
 }

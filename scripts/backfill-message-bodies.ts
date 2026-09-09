@@ -75,6 +75,7 @@ async function statuses(tenantId: string): Promise<Record<string, number>> {
 
 async function main(): Promise<void> {
   const apply = process.argv.includes("--apply");
+  const reprocess = process.argv.includes("--reprocess");
   const limit = Number(arg("--limit") ?? 200);
   const days = arg("--days") ? Number(arg("--days")) : undefined;
   const mailbox = arg("--mailbox");
@@ -82,6 +83,27 @@ async function main(): Promise<void> {
 
   console.log("\n  body_status before:");
   for (const [k, v] of Object.entries(await statuses(tenantId))) console.log(`    ${k.padEnd(34)} ${v}`);
+
+  // REPROCESS. Rows fetched before 2026-09-08 hold a trimmed body and nothing
+  // else: no body_preview, no raw customer text, and 195 of them were trimmed
+  // to an empty string by a quoted-tail cut that fired on the first line.
+  // Re-fetching is the only way to recover any of that, because the raw text
+  // was never kept. Only 'stored' and 'truncated' are reset: 'gone' is
+  // permanent, 'skipped' is deliberate, and walking either back would undo a
+  // decision rather than repair one.
+  if (reprocess) {
+    if (!apply) {
+      console.log("\n  --reprocess needs --apply. Nothing reset.\n");
+    } else {
+      const r = await supabaseAdmin()
+        .from("deal_messages")
+        .update({ body_status: "not_fetched" })
+        .eq("tenant_id", tenantId)
+        .in("body_status", ["stored", "truncated"])
+        .select("id");
+      console.log(`\n  reset ${r.data?.length ?? 0} row(s) to not_fetched for reprocessing${r.error ? ` (ERROR ${r.error.message})` : ""}`);
+    }
+  }
 
   const r = await fillMissingBodies({
     tenantId,
@@ -99,6 +121,9 @@ async function main(): Promise<void> {
     console.log(`  empty:        ${r.empty}       <- Graph returned the message, body genuinely empty`);
     console.log(`  gone:         ${r.gone}        <- 404/410, PERMANENT, never retried`);
     console.log(`  unavailable:  ${r.unavailable} <- transient, will be retried`);
+    console.log(`  raw kept:     ${r.rawKept}     <- customer-side inbound, untrimmed`);
+    console.log(`  raw too big:  ${r.rawTooLarge}  <- over the ceiling, recorded not dropped`);
+    console.log(`  cut fell through: ${r.cutFellThrough}  <- quoted-tail cut removed everything, uncut text used`);
     console.log("\n  body_status after:");
     for (const [k, v] of Object.entries(await statuses(tenantId))) console.log(`    ${k.padEnd(34)} ${v}`);
     console.log("\n  Re-run until 'not_fetched' reaches 0. 'gone' will not shrink.\n");
