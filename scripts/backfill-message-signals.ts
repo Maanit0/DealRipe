@@ -130,7 +130,26 @@ async function main(): Promise<void> {
       } else written += slice.length;
     }
   }
-  console.log(`\n  wrote ${written} row(s)${failed > 0 ? `, ${failed} FAILED` : ""}.\n`);
+  console.log(`\n  wrote ${written} row(s)${failed > 0 ? `, ${failed} FAILED` : ""}.`);
+
+  // ENQUEUE THE REST FOR THE BODY BACKFILL.
+  //
+  // NULL body_status means "this row predates the column and has never been
+  // considered". fillMissingBodies looks for 'not_fetched' or 'unavailable', so
+  // without this step every historical row stays invisible to it and the body
+  // backfill reports "considered: 0" and looks finished. That is a silent
+  // no-op wearing the costume of a completed job.
+  //
+  // Filtered on body_status IS NULL so it can never walk back a row that is
+  // already 'stored', 'gone' or 'skipped'.
+  const enq = await db
+    .from("deal_messages")
+    .update({ body_status: "not_fetched" })
+    .eq("tenant_id", tenantId)
+    .is("body_status", null)
+    .select("id");
+  if (enq.error) console.error(`  enqueue failed: ${enq.error.message}`);
+  else console.log(`  enqueued ${enq.data?.length ?? 0} row(s) as not_fetched for the body backfill.\n`);
 }
 
 main().catch((e) => {

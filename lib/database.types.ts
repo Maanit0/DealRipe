@@ -440,6 +440,52 @@ export type Database = {
         };
         Relationships: [];
       };
+      crm_field_events: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          /** Null = the opportunity is not linked to a deal. Row still kept. */
+          deal_id: string | null;
+          source_system: string;
+          opportunity_id: string;
+          account_id: string | null;
+          field: string;
+          /** Null is ambiguous: no prior value OR the field was cleared. */
+          old_value: string | null;
+          new_value: string | null;
+          /** CloseDate only. Positive = pushed out. */
+          days_moved: number | null;
+          /** Salesforce user name, deliberately not mapped to a DealRipe rep. */
+          changed_by: string | null;
+          /** When it happened, per Salesforce. */
+          changed_at: string;
+          /** When we copied it. */
+          observed_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id?: string | null;
+          source_system?: string;
+          opportunity_id: string;
+          account_id?: string | null;
+          field: string;
+          old_value?: string | null;
+          new_value?: string | null;
+          days_moved?: number | null;
+          changed_by?: string | null;
+          changed_at: string;
+          observed_at?: string;
+        };
+        Update: {
+          deal_id?: string | null;
+          old_value?: string | null;
+          new_value?: string | null;
+          days_moved?: number | null;
+          changed_by?: string | null;
+        };
+        Relationships: [];
+      };
       calendar_response_events: {
         Row: {
           id: string;
