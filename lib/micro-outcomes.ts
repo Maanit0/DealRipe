@@ -38,6 +38,16 @@ export type MicroOutcomeKind =
   | "quote_executed"
   /** A meeting was scheduled that had not been scheduled before. */
   | "meeting_booked"
+  /**
+   * The same, split by what KIND of meeting it was. A second discovery call
+   * usually means the first did not land; a demo is an advance; a proposal call
+   * is late stage. One label averages a retreat with an advance.
+   */
+  | "meeting_booked_discovery"
+  | "meeting_booked_demo"
+  | "meeting_booked_proposal"
+  | "meeting_booked_follow_up"
+  | "meeting_booked_customer"
   /** A demo followed a discovery call on the same deal. */
   | "demo_after_discovery"
   /** Silence of 14+ days, then a meeting or an inbound reply. */
@@ -166,15 +176,36 @@ export async function detectMicroOutcomes(tenantId: string): Promise<MicroOutcom
     // Every meeting after the first is one that got booked while the deal was
     // already running, which is the thing worth counting. The first meeting is
     // the BDR's work, not the deal's progression.
+    //
+    // AND THE TYPE MATTERS. A second discovery call, a demo, and a proposal
+    // call are three different events wearing one label: the first often means
+    // the first call did not land, the second is the step a Magaya briefing
+    // most often asks for, the third is late-stage. Collapsing them into
+    // "meeting_booked" averages a retreat with an advance. Both the generic
+    // kind and the specific one are emitted, so a caller can ask either
+    // question without re-deriving the sequence.
     for (let i = 1; i < sorted.length; i++) {
       const c = sorted[i];
+      const at = String(c.call_date ?? c.scheduled_start);
       out.push({
         dealId,
         kind: "meeting_booked",
-        occurredAt: String(c.call_date ?? c.scheduled_start),
+        occurredAt: at,
         evidence: `meeting ${i + 1} on the deal${c.call_subtype ? ` (${c.call_subtype})` : ""}`,
         source: { table: "calls", id: c.id },
       });
+      // call_subtype is written by transcript-sync AFTER capture, so a meeting
+      // that has not happened yet, or whose bot never got in, has none. That is
+      // "unclassified", never a category of its own invention.
+      if (c.call_subtype && c.call_subtype !== "internal") {
+        out.push({
+          dealId,
+          kind: `meeting_booked_${c.call_subtype}` as MicroOutcomeKind,
+          occurredAt: at,
+          evidence: `a ${c.call_subtype} call was the next meeting`,
+          source: { table: "calls", id: c.id },
+        });
+      }
     }
 
     // A demo that follows a discovery call. Named separately because it is the
