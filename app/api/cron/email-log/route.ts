@@ -126,13 +126,32 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       bodies = { failed: msg };
     }
 
+    // THE ATTACHMENT GAP PASS, for the same reason as the body one above. The
+    // ingest marks a message not_listed and cannot enumerate its attachments
+    // inline: that is one Graph GET per message against a 300s ceiling. Without
+    // this, deal_attachments is whatever the backfill script last saw and every
+    // message since arrives with attachment_status null, which is "never
+    // considered" and decays into a table that looks complete.
+    //
+    // Bounded at 150 a run and never throws: attachments are instrumentation
+    // beside the log, not the log.
+    let attachments: unknown = null;
+    try {
+      const { ingestAttachments } = await import("@/lib/deal-attachments");
+      attachments = await ingestAttachments({ tenantId, graphTenant: GRAPH_TENANT, limit: 150 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`attachments: ${msg}`);
+      attachments = { failed: msg };
+    }
+
     console.log(
       `[email-log] ${mailboxes.length} mailbox(es), ${days}d: read=${totals.read} written=${totals.written} ` +
         `noDeal=${totals.noDeal} freeMail=${totals.freeMail} errors=${errors.length}` +
         (skipped.length > 0 ? ` skippedNotAllowed=${skipped.length}` : "") +
-        ` bodies=${JSON.stringify(bodies)}`,
+        ` bodies=${JSON.stringify(bodies)} attachments=${JSON.stringify(attachments)}`,
     );
-    return NextResponse.json({ ok: errors.length === 0, days, mailboxes: mailboxes.length, ...totals, bodies, errors });
+    return NextResponse.json({ ok: errors.length === 0, days, mailboxes: mailboxes.length, ...totals, bodies, attachments, errors });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[email-log] failed: ${message}`);
