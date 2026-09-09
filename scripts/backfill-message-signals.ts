@@ -104,14 +104,31 @@ async function main(): Promise<void> {
     return;
   }
 
+  // GROUPED, not one request per row. The first version issued 2,495 sequential
+  // updates and took minutes; almost every row gets the identical patch
+  // (no agreement, not a machine sender), so grouping by patch shape turns it
+  // into a handful of requests. Chunked at 200 ids because a URL carrying 2,000
+  // uuids in an `in.(...)` filter is rejected.
+  const byShape = new Map<string, { patch: Patch; ids: string[] }>();
+  for (const u of updates) {
+    const key = JSON.stringify(u.patch);
+    const g = byShape.get(key) ?? { patch: u.patch, ids: [] };
+    g.ids.push(u.id);
+    byShape.set(key, g);
+  }
+  console.log(`\n  ${byShape.size} distinct patch shape(s) across ${updates.length} rows`);
+
   let written = 0;
   let failed = 0;
-  for (const u of updates) {
-    const res = await db.from("deal_messages").update(u.patch).eq("id", u.id);
-    if (res.error) {
-      failed += 1;
-      if (failed <= 5) console.error(`  update failed (${u.id}): ${res.error.message}`);
-    } else written += 1;
+  for (const g of byShape.values()) {
+    for (let i = 0; i < g.ids.length; i += 200) {
+      const slice = g.ids.slice(i, i + 200);
+      const res = await db.from("deal_messages").update(g.patch).in("id", slice);
+      if (res.error) {
+        failed += slice.length;
+        console.error(`  update failed (${slice.length} rows): ${res.error.message}`);
+      } else written += slice.length;
+    }
   }
   console.log(`\n  wrote ${written} row(s)${failed > 0 ? `, ${failed} FAILED` : ""}.\n`);
 }

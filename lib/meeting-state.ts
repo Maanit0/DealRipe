@@ -162,17 +162,78 @@ export function isMachineSender(email: string | null | undefined): boolean {
 }
 
 /**
- * Adobe EchoSign puts the state in the subject: an envelope out for signature
- * carries the document name, and a fully executed one is prefixed "Completed:".
- * Deterministic, and currently unread by anything.
+ * Adobe Sign state, read off the subject line.
+ *
+ * MEASURED AGAINST 2,495 REAL MESSAGES ON 2026-09-08, which corrected three
+ * things the first version got wrong. It matched a bare \bagreement\b and read
+ * "executed" only from a leading "Completed:", and both were wrong in the
+ * direction that matters.
+ *
+ * 1. IT MISSED MOST EXECUTIONS. Adobe Sign announces completion four different
+ *    ways: "Completed: ...", "... is Signed and Filed!", "You signed: ..." and
+ *    "Completed: You're copied on ...". Only the first was recognised, so a
+ *    signed NDA was reported as still out for signature. That is the dangerous
+ *    direction: documentStateLine would tell a rep to chase a document the
+ *    customer had already signed.
+ *
+ * 2. IT MATCHED HUMANS TALKING. "Following up - NDA and demo next steps",
+ *    "Best Group and Magaya Agreement Discussion" and "Magaya Agreement for
+ *    Approval" are people writing email, not envelope notifications. Counting
+ *    them puts a document state on a deal that has no document.
+ *
+ * 3. IT MATCHED THREADS THAT INHERITED THE SUBJECT. "Customs ABI Session -
+ *    Agenda & Storyboard | ... Re: Completed: ..." is a human replying on a
+ *    thread whose subject happens to carry the notification, and "Automatic
+ *    reply: Completed: ..." is an out-of-office. Neither is an envelope event.
+ *
+ * So this now requires the NOTIFICATION SHAPE, not the noun. A message only
+ * counts when the subject looks like something an e-signature platform emits.
  */
+
+/** Out-of-office and other auto-responses that merely quote a notification. */
+const NOT_AN_ENVELOPE = /^\s*(automatic reply|out of office|undeliverable|delivery status)/i;
+
+/**
+ * The document was signed by everyone. Four shapes, all observed in the pilot.
+ * "Completed:" is anchored so a quoted "Re: ... Completed:" mid-subject does not
+ * count, but "signed and filed" is Adobe's own sentence and is safe anywhere.
+ */
+const EXECUTED = [
+  /^\s*(re:\s*)?completed:/i,
+  /\bis signed and filed\b/i,
+  /^\s*you signed:/i,
+];
+
+/**
+ * The envelope is in flight. These are Adobe's own phrasings; a human writing
+ * "I'll send the NDA over" matches none of them.
+ */
+const IN_FLIGHT = [
+  /\bsignature requested on\b/i,
+  /\bhas been sent out for signature\b/i,
+  /\bhas copied you on\b/i,
+  /\bis out for signature\b/i,
+  /\bplease (?:review and )?sign\b/i,
+  /\bbetween .+ and .+ is\b/i,
+];
+
 export function agreementSignal(subject: string | null | undefined): {
   kind: "nda" | "quote" | "agreement";
   executed: boolean;
 } | null {
   const s = String(subject ?? "");
+  if (!s || NOT_AN_ENVELOPE.test(s)) return null;
+  // The document has to be named. This is necessary but no longer sufficient.
   if (!/\b(NDA|non-?disclosure|quote agreement|agreement)\b/i.test(s)) return null;
-  const executed = /^\s*(Re:\s*)?Completed:/i.test(s);
+
+  const executed = EXECUTED.some((re) => re.test(s));
+  const inFlight = IN_FLIGHT.some((re) => re.test(s));
+  // Neither shape means a person wrote this and mentioned a document.
+  if (!executed && !inFlight) return null;
+
   const kind = /NDA|non-?disclosure/i.test(s) ? "nda" : /quote/i.test(s) ? "quote" : "agreement";
+  // Executed wins over in-flight: "Completed: ... has been sent out for
+  // signature" is a completion notice quoting the original envelope, and
+  // walking a signed document back to pending is the error worth avoiding.
   return { kind, executed };
 }

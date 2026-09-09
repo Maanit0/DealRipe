@@ -39,12 +39,37 @@ function arg(n: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/**
+ * PAGINATED. PostgREST caps a plain select at 1000 rows and says nothing about
+ * it, so the first version of this reported a tidy status table covering the
+ * first 1000 of 2,495 messages and looked completely plausible. That is the
+ * third time today the same cap has produced a confident wrong number; assume
+ * any select without a range() here is lying about the tail.
+ */
 async function statuses(tenantId: string): Promise<Record<string, number>> {
   const db = supabaseAdmin();
   const out: Record<string, number> = {};
-  const res = await db.from("deal_messages").select("body_status").eq("tenant_id", tenantId);
-  if (res.error) throw new Error(`status read failed: ${res.error.message}`);
-  for (const r of res.data ?? []) out[r.body_status ?? "(null, predates the column)"] = (out[r.body_status ?? "(null, predates the column)"] ?? 0) + 1;
+  let seen = 0;
+  for (let from = 0; ; from += 1000) {
+    const res = await db
+      .from("deal_messages")
+      .select("body_status")
+      .eq("tenant_id", tenantId)
+      .order("id", { ascending: true })
+      .range(from, from + 999);
+    if (res.error) throw new Error(`status read failed: ${res.error.message}`);
+    for (const r of res.data ?? []) {
+      const k = r.body_status ?? "(null, predates the column)";
+      out[k] = (out[k] ?? 0) + 1;
+    }
+    seen += (res.data ?? []).length;
+    if ((res.data ?? []).length < 1000) break;
+  }
+
+  const { count } = await db.from("deal_messages").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId);
+  if (typeof count === "number" && count !== seen) {
+    throw new Error(`counted ${seen} rows but the table reports ${count}; the status table would be wrong`);
+  }
   return out;
 }
 
