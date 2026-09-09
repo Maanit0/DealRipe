@@ -38,6 +38,8 @@ export type AttachmentIngestResult = {
 };
 
 const DEFAULT_LIMIT = 400;
+/** Concurrent Graph GETs. Graph 504s on this mailbox API when pushed harder. */
+const CONCURRENCY = 4;
 
 export async function ingestAttachments(args: {
   tenantId: string;
@@ -57,24 +59,57 @@ export async function ingestAttachments(args: {
     dealsTouched: 0,
   };
 
-  const res = await db
-    .from("deal_messages")
-    .select("id, deal_id, graph_message_id, mailbox, direction, agreement_state, sent_at")
-    .eq("tenant_id", args.tenantId)
-    .eq("attachment_status", "not_listed")
-    .order("sent_at", { ascending: false })
-    .limit(args.limit ?? DEFAULT_LIMIT);
-  // A failed read is not an empty backlog. Reporting zero here would look like
-  // a finished job, which is how a broken backfill survives for weeks.
-  if (res.error) throw new Error(`attachment backlog read failed: ${res.error.message}`);
-
-  const rows = res.data ?? [];
+  // NULL IS PART OF THE BACKLOG, and leaving it out is why the first run of
+  // this reported "messages to list: 0" and looked finished.
+  //
+  // attachment_status is written by the INGEST, and has_attachments was added
+  // after every one of the 2,501 existing rows already existed. So historical
+  // rows carry NULL in both columns: not "no attachments", never considered.
+  // Selecting only 'not_listed' matched nothing at all.
+  //
+  // has_attachments is deliberately NOT used as a precondition here either. It
+  // is null on exactly the rows this needs to walk, and listMessageAttachments
+  // returns ok with an empty list when there is nothing, so asking is both
+  // cheaper to reason about and definitive.
+  //
+  // PAGED, because PostgREST caps a plain select at 1000 however large the
+  // limit asks for.
+  const want = args.limit ?? DEFAULT_LIMIT;
+  type Backlog = {
+    id: string; deal_id: string | null; graph_message_id: string; mailbox: string;
+    direction: string | null; agreement_state: string | null; sent_at: string | null;
+  };
+  const rows: Backlog[] = [];
+  for (let offset = 0; rows.length < want; offset += 1000) {
+    const take = Math.min(1000, want - rows.length);
+    const res = await db
+      .from("deal_messages")
+      .select("id, deal_id, graph_message_id, mailbox, direction, agreement_state, sent_at")
+      .eq("tenant_id", args.tenantId)
+      .or("attachment_status.is.null,attachment_status.eq.not_listed")
+      .order("sent_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + take - 1);
+    // A failed read is not an empty backlog. Reporting zero here would look
+    // like a finished job, which is how a broken backfill survives for weeks.
+    if (res.error) throw new Error(`attachment backlog read failed: ${res.error.message}`);
+    const page = (res.data ?? []) as Backlog[];
+    rows.push(...page);
+    if (page.length < take) break;
+  }
   out.messagesConsidered = rows.length;
   if (args.dryRun || rows.length === 0) return out;
 
   const deals = new Set<string>();
 
-  for (const m of rows) {
+  // CONCURRENT, at the same width the body backfill uses. This is one Graph GET
+  // per message and the backlog is every message we hold; sequential would take
+  // most of an hour. Graph 504s on this mailbox API when pushed harder.
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+  for (;;) {
+    const m = rows[cursor++];
+    if (!m) return;
     const listed = await listMessageAttachments({
       tenantIdOrDomain: args.graphTenant,
       mailbox: m.mailbox,
@@ -140,6 +175,8 @@ export async function ingestAttachments(args: {
     }
     await db.from("deal_messages").update({ attachment_status: "listed" }).eq("id", m.id);
   }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker));
 
   out.dealsTouched = deals.size;
   return out;
