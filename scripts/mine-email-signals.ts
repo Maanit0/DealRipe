@@ -198,13 +198,38 @@ async function main(): Promise<void> {
     console.log(`  (all segments; use --segment new|existing|unknown to split)`);
   }
 
-  // PROGRESSION, not victory. A deal advanced if Salesforce recorded a
-  // StageName change on it at any point we hold. Deliberately not the outcome
-  // label: 9 won and 17 lost is too small, and 5 of the losses are one sweep.
-  const advanced = new Set<string>();
-  for (const e of crm) {
-    if (e.deal_id && e.field === "StageName" && e.new_value && e.new_value !== e.old_value) advanced.add(e.deal_id);
+  // PROGRESSION, not victory. Deliberately not the outcome label: 9 won and 17
+  // lost is too small and 5 of the losses are one sweep.
+  //
+  // THE STAGE MOVE MUST COME AFTER THE EMAIL. The first version asked only
+  // whether a deal had EVER moved stage, with no date filter, while
+  // crm_field_events reaches back to 2025-03-09 and the email we hold starts
+  // 2026-06-22. So a deal that moved stage fifteen months before the first
+  // message counted as "advanced", and every feature was being scored against
+  // movement its own evidence could not possibly have caused.
+  //
+  // The window opens at the deal's FIRST STORED MESSAGE. Anything earlier is
+  // Magaya's history, not a response to anything we can see.
+  const firstMsgAt = new Map<string, string>();
+  for (const m of msgs) {
+    if (!m.body_trimmed || !m.sent_at) continue;
+    const cur = firstMsgAt.get(m.deal_id);
+    if (!cur || m.sent_at < cur) firstMsgAt.set(m.deal_id, m.sent_at);
   }
+  const advanced = new Set<string>();
+  let ignoredPreEmail = 0;
+  for (const e of crm) {
+    if (!e.deal_id || e.field !== "StageName") continue;
+    if (!e.new_value || e.new_value === e.old_value) continue;
+    const from = firstMsgAt.get(e.deal_id);
+    if (!from) continue;
+    if (e.changed_at <= from) {
+      ignoredPreEmail += 1;
+      continue;
+    }
+    advanced.add(e.deal_id);
+  }
+  console.log(`\n  stage moves ignored as pre-dating the email we hold: ${ignoredPreEmail}`);
 
   const deals = [...byDeal.keys()];
   const adv = deals.filter((d) => advanced.has(d));
