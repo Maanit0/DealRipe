@@ -328,10 +328,26 @@ const MAGAYA_FIELDS: MagayaFieldSeed[] = [
 
   // ----- Bucket B: cross-stage briefing-only, no Rolldog write target -----
   {
+    // TIGHTENED 2026-09-09. The old wording already asked for a step "explicitly
+    // agreed to (with a what and a when)" and still answered Yes on 63 of 69
+    // deals with a captured discovery: 91%. A gate that fires on nine tenths of
+    // the book cannot discriminate, which is the same failure
+    // emailing_without_reply had at 60%.
+    //
+    // A blind comparison of 7 discovery calls that produced another meeting
+    // against 7 that did not found the real split, and it is TWO HALVES: the rep
+    // proposes a NAMED action, and the customer AUDIBLY ACCEPTS. 6 of 7 against
+    // 0 of 7. The failure shapes below are quoted from the calls that stalled,
+    // because naming them is the only thing that stops a model being generous.
     field_key: "next_step_confirmed",
     label: "Next Step",
     question:
-      "Did the call end with a specific next step that the customer explicitly agreed to (with a what and a when)?",
+      "Did the rep propose a SPECIFIC NAMED next action out loud, AND did the customer audibly accept it? BOTH halves are required and the second is the one usually missing. " +
+      "Yes ONLY if you can quote two things: the rep naming the action (a demo, an NDA, a proposal review, a technical session, a named date), and the customer agreeing in their own words. ANSWER WITH THE CUSTOMER'S ASSENT QUOTED. " +
+      "Real examples of Yes: rep says 'the next step is I would put together a demo for you guys, tailored to your needs' and the customer says 'Yeah, that's fine'. Rep says 'you'll sign the NDA and then we can do the demo' and the customer says 'you're speaking my language'. " +
+      "Answer NO for all of these, which are the shapes that actually stall: a CONDITIONAL offer the rep never asks a question about ('if you want, once we have that NDA in place'); a step the rep states with no reply from the customer at all; a timeline or a plan described without a meeting attached; 'we will be in touch', 'let's find time', 'I'll send something over'; the call simply ending mid-topic. " +
+      "The rep speaking is not agreement. Silence is not agreement. A customer saying 'okay' to a summary of what was discussed is not agreement to a NEXT ACTION. " +
+      "THE ONLY TWO VALID STATUSES ARE Yes AND No: every captured call either ended this way or did not, so Unknown is not available here.",
     stage_key: "SQL1",
     write_target: null,
   },
