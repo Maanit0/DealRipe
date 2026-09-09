@@ -440,6 +440,47 @@ export type Database = {
         };
         Relationships: [];
       };
+      deal_attachments: {
+        Row: {
+          id: string; tenant_id: string; deal_id: string | null; message_id: string;
+          direction: string | null; filename: string; content_type: string | null;
+          size_bytes: number | null; is_inline: boolean;
+          /** static | customized | unclassified. Null = not yet classified. */
+          classification: string | null;
+          classification_basis: string | null;
+          content_sha256: string | null;
+          storage_status: string | null;
+          graph_attachment_id: string | null; mailbox: string | null; first_seen_at: string;
+        };
+        Insert: {
+          id?: string; tenant_id: string; deal_id?: string | null; message_id: string;
+          direction?: string | null; filename: string; content_type?: string | null;
+          size_bytes?: number | null; is_inline?: boolean;
+          classification?: string | null; classification_basis?: string | null;
+          content_sha256?: string | null; storage_status?: string | null;
+          graph_attachment_id?: string | null; mailbox?: string | null; first_seen_at?: string;
+        };
+        Update: {
+          classification?: string | null; classification_basis?: string | null;
+          content_sha256?: string | null; storage_status?: string | null;
+        };
+        Relationships: [];
+      };
+      artifact_blobs: {
+        Row: {
+          content_sha256: string; size_bytes: number | null; content_type: string | null;
+          /** NULL = we know the file and deliberately hold no copy. */
+          storage_path: string | null;
+          is_stock_collateral: boolean; collateral_file: string | null; first_seen_at: string;
+        };
+        Insert: {
+          content_sha256: string; size_bytes?: number | null; content_type?: string | null;
+          storage_path?: string | null; is_stock_collateral?: boolean;
+          collateral_file?: string | null; first_seen_at?: string;
+        };
+        Update: { storage_path?: string | null; is_stock_collateral?: boolean; collateral_file?: string | null };
+        Relationships: [];
+      };
       crm_activities: {
         Row: {
           id: string;

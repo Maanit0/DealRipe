@@ -141,6 +141,53 @@ const CUSTOMER_SPECIFIC =
 const DATASHEET = /\b(data ?sheet|product overview|solution sheet)\b/i;
 const RATES = /\brates? (management|solution|sheet|datasheet|data sheet)\b|\brate management\b/i;
 
+
+/**
+ * Classify a file that ACTUALLY WENT OUT, for storage rather than for attaching.
+ *
+ * The outbound draft path asks "which stock bundle did the model mean"; this
+ * asks the opposite question about a file already sent: is this a stock file we
+ * already hold, or an artifact built for one customer that exists nowhere else?
+ * Losing the first costs nothing. Losing the second loses the artifact.
+ *
+ * THE NDA IS THE SUBTLETY AND IT IS WHY agreementState IS A PARAMETER. It sits
+ * in CUSTOMER_SPECIFIC because the draft path must not auto-attach stock
+ * collateral when the rep asked for the NDA. But for STORAGE the template is
+ * stock and the EXECUTED copy is a customer artifact: same filename, different
+ * lifecycle stage. Classification is (name pattern) x (agreement state), never
+ * name alone.
+ *
+ * Rules are ordered and the first match wins. It ABSTAINS rather than guessing,
+ * and an abstained OUTBOUND file is still treated as worth keeping, because
+ * losing something unique costs more than keeping a spare brochure.
+ */
+export function classifyAttachmentForStorage(args: {
+  filename: string;
+  direction?: "inbound" | "outbound" | null;
+  /** deal_messages.agreement_state on the carrying message, if any. */
+  agreementState?: string | null;
+}): { class: "static" | "customized" | "unclassified"; basis: string } {
+  const name = (args.filename ?? "").trim();
+  if (!name) return { class: "unclassified", basis: "no filename" };
+
+  // Stock named as the thing it is. "Supply chain" in a filename is a topic;
+  // "data sheet" is the document.
+  if ((DATASHEET.test(name) || RATES.test(name)) && !CUSTOMER_SPECIFIC.test(name)) {
+    return { class: "static", basis: "datasheet_pattern" };
+  }
+
+  if (CUSTOMER_SPECIFIC.test(name)) {
+    const isNda = /\b(nda|mnda|non-?disclosure)\b/i.test(name);
+    // An NDA that has not come back executed is the blank template going out.
+    if (isNda && args.agreementState !== "executed") {
+      return { class: "static", basis: "nda_template" };
+    }
+    return { class: "customized", basis: isNda ? "nda_executed" : "customer_specific_pattern" };
+  }
+
+  return { class: "unclassified", basis: "abstained" };
+}
+
 /**
  * The bundle whose named attachments the model asked for, or null.
  *

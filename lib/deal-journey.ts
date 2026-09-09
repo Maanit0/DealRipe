@@ -236,6 +236,19 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     ),
   ]);
 
+  // Documents that actually rode along. Read tolerantly: this table lands after
+  // the others, so a deal built before the migration renders the rest.
+  let attachments: Array<{ id: string; message_id: string; filename: string; classification: string | null; classification_basis: string | null; direction: string | null; size_bytes: number | null }> = [];
+  try {
+    attachments = await rows(
+      "deal_attachments",
+      "id, message_id, filename, classification, classification_basis, direction, size_bytes",
+      [["deal_id", dealId]],
+    );
+  } catch {
+    attachments = [];
+  }
+
   // Rep-logged activity from the CRMs. Read separately and tolerantly: this
   // table lands after the others, so a deal built before the migration should
   // render the rest of its journey rather than failing whole.
@@ -305,6 +318,26 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
       // the journey is being able to read what was actually said.
       detail: m.body_trimmed ? clip(m.body_trimmed, 600) : m.body_status === "gone" ? "(body permanently unavailable: message deleted)" : null,
       source: { table: "deal_messages", id: m.id },
+    });
+  }
+
+  // Attached to the message that carried them, so a file appears at the moment
+  // it was actually sent rather than as a separate undated fact.
+  const sentAtByMessage = new Map(msgs.map((m) => [m.id, m.sent_at]));
+  for (const a of attachments) {
+    const at = sentAtByMessage.get(a.message_id);
+    if (!at) continue;
+    events.push({
+      at,
+      channel: "email",
+      // Whoever sent the message authored the file going out. A customer
+      // sending us a signed document is the buyer acting.
+      authorship: a.direction === "outbound" ? "seller" : "buyer",
+      kind: `attachment:${a.classification ?? "unclassified"}`,
+      summary:
+        `${a.direction === "outbound" ? "we sent" : "they sent"} ${a.filename}` +
+        `${a.classification === "customized" ? "   [built for this customer]" : a.classification === "static" ? "   [stock collateral]" : ""}`,
+      source: { table: "deal_attachments", id: a.id },
     });
   }
 
