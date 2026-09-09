@@ -16,7 +16,7 @@
  *     Must NOT grow across two runs 24h apart with no ticks in between. An
  *     event log that fires on every read is a read log.
  *
- *   select count(*) from crm_access_log where allowed = false and at > '<start>';
+ *   select count(*) from crm_access_log where allowed = false and created_at > '<start>';
  *     Must be 0. Zero refused reads over a run is the only proof the scope
  *     wrapper is actually on the path, which is how all five unwrapped reads
  *     were verified on 2026-08-16.
@@ -48,17 +48,22 @@ async function main(): Promise<void> {
     respectRateGate: !now,
   });
 
-  const by = (s: string) => results.filter((r) => r.status === s).length;
-  const skipped = results.filter((r) => r.skippedRecentlyRead).length;
+  // Count only what was actually READ this run. A throttled deal reports its
+  // PRIOR status, so folding those into the same buckets double-counts and,
+  // when subtracted, prints a negative.
+  const read = results.filter((r) => !r.skippedRecentlyRead);
+  const by = (s: string) => read.filter((r) => r.status === s).length;
+  const skipped = results.length - read.length;
   const changed = results.filter((r) => r.changes.length > 0);
   const seeds = changed.filter((r) => r.changes.every((c) => c.fromTicked === null));
 
   console.log(`\n  deals considered:        ${results.length}`);
-  console.log(`  present:                 ${by("present") - skipped}`);
   console.log(`  skipped (read <12h ago): ${skipped}`);
-  console.log(`  no_opportunity:          ${by("no_opportunity")}`);
-  console.log(`  no_checklist:            ${by("no_checklist")}`);
-  console.log(`  unavailable:             ${by("unavailable")}   <- could NOT read, not "empty"`);
+  console.log(`  read this run:           ${read.length}`);
+  console.log(`    present:               ${by("present")}`);
+  console.log(`    no_opportunity:        ${by("no_opportunity")}`);
+  console.log(`    no_checklist:          ${by("no_checklist")}`);
+  console.log(`    unavailable:           ${by("unavailable")}   <- could NOT read, not "empty"`);
   console.log(`  deals with changes:      ${changed.length}`);
   console.log(`  ...of which first sight: ${seeds.length}   <- from_ticked null, the honest floor`);
 
@@ -78,13 +83,24 @@ async function main(): Promise<void> {
   if (apply) {
     // The verification that matters, run automatically rather than left to a
     // human to remember.
+    //
+    // THE COLUMN IS created_at, NOT at. The first version of this filtered on a
+    // column that does not exist, so the query errored, count came back null,
+    // and `count ?? 0` printed "0 refused reads (wrapper is on the path)". A
+    // failed check reporting success is worse than no check, and it is the
+    // exact bug this whole line exists to detect. The error is surfaced now
+    // rather than defaulted away.
     const refused = await supabaseAdmin()
       .from("crm_access_log")
       .select("id", { count: "exact", head: true })
       .eq("allowed", false)
-      .gte("at", startedAt);
-    const n = refused.count ?? 0;
-    console.log(`\n  refused reads during this run: ${n}${n === 0 ? "  (wrapper is on the path)" : "  <- INVESTIGATE"}`);
+      .gte("created_at", startedAt);
+    if (refused.error || refused.count === null) {
+      console.log(`\n  refused-read check FAILED, this run is unverified: ${refused.error?.message ?? "count came back null"}`);
+    } else {
+      const n = refused.count;
+      console.log(`\n  refused reads during this run: ${n}${n === 0 ? "  (wrapper is on the path)" : "  <- INVESTIGATE"}`);
+    }
   } else {
     console.log("\n  Dry run. Re-run with --apply to write.\n");
   }

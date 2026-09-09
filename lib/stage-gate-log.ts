@@ -140,22 +140,31 @@ export async function sweepDealChecklist(args: {
   const dealId = args.deal.id;
   const oppId = opportunityFor(args.deal);
 
-  if (!oppId) {
-    if (args.apply) await recordRead(args.tenantId, dealId, null, "no_opportunity", null);
-    return { dealId, opportunityId: null, status: "no_opportunity", tickedCount: null, totalCount: null, changes: [], skippedRecentlyRead: false };
+  // THE RATE GATE COMES FIRST, before the no-opportunity branch.
+  //
+  // It used to sit after it, so the 107 deals with no Rolldog opportunity wrote
+  // a read row on every single run: 642 rows a day, all saying the same thing,
+  // against 71 deals that were correctly throttled. An event log that grows
+  // without anything happening is a read log, which is the thing this table was
+  // built not to be.
+  const lastRead = await mostRecentRead(dealId);
+  if (args.respectRateGate !== false && lastRead) {
+    const age = Date.now() - Date.parse(lastRead.readAt);
+    if (Number.isFinite(age) && age < RESWEEP_AFTER_HOURS * 3600_000) {
+      return { dealId, opportunityId: oppId, status: lastRead.status, tickedCount: null, totalCount: null, changes: [], skippedRecentlyRead: true };
+    }
   }
 
-  if (args.respectRateGate !== false) {
-    const since = new Date(Date.now() - RESWEEP_AFTER_HOURS * 3600_000).toISOString();
-    const recent = await db
-      .from("rolldog_checklist_reads")
-      .select("id")
-      .eq("deal_id", dealId)
-      .gte("read_at", since)
-      .limit(1);
-    if ((recent.data ?? []).length > 0) {
-      return { dealId, opportunityId: oppId, status: "present", tickedCount: null, totalCount: null, changes: [], skippedRecentlyRead: true };
+  if (!oppId) {
+    // Only when it CHANGED. "This deal still has no opportunity" is the normal
+    // state of a new deal here (Magaya does not create the opportunity until
+    // after the discovery call), so repeating it is noise. Recording only the
+    // transition means the row that does exist is the useful one: the day a
+    // deal gained an opportunity.
+    if (args.apply && lastRead?.status !== "no_opportunity") {
+      await recordRead(args.tenantId, dealId, null, "no_opportunity", null);
     }
+    return { dealId, opportunityId: null, status: "no_opportunity", tickedCount: null, totalCount: null, changes: [], skippedRecentlyRead: false };
   }
 
   let raw: RolldogStageRequirements | null;
@@ -221,6 +230,25 @@ export async function sweepDealChecklist(args: {
   }
 
   return { dealId, opportunityId: oppId, status: "present", tickedCount, totalCount: items.length, changes, skippedRecentlyRead: false };
+}
+
+/**
+ * The most recent read for a deal, or null if we have never read it.
+ *
+ * THROWS on a failed read for the same reason lastKnown does: an error
+ * presented as "never read" restarts the rate gate and re-seeds the status
+ * history, so a bad database moment would look identical to a new deal.
+ */
+async function mostRecentRead(dealId: string): Promise<{ status: ChecklistReadStatus; readAt: string } | null> {
+  const res = await supabaseAdmin()
+    .from("rolldog_checklist_reads")
+    .select("status, read_at")
+    .eq("deal_id", dealId)
+    .order("read_at", { ascending: false })
+    .limit(1);
+  if (res.error) throw new Error(`checklist read history unreadable for deal ${dealId}: ${res.error.message}`);
+  const row = res.data?.[0];
+  return row ? { status: row.status as ChecklistReadStatus, readAt: row.read_at } : null;
 }
 
 async function recordRead(
