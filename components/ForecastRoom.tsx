@@ -63,9 +63,23 @@ function draftEmail(a: ForecastRoomAction): { to: string; subject: string; body:
   return { to: `${a.account} contact`, subject: `Following up, ${a.account}`, body };
 }
 // 4 proposed weekday slots over the coming days, for the calendar broker.
-function proposeSlots(): Array<{ label: string; se: boolean }> {
+// SYNTHETIC SLOTS. These times come from a hardcoded array and no calendar is
+// read: there is no free/busy call behind this component. Two claims that used
+// to sit on top of it were removed on 2026-09-09 because they were not merely
+// unimplemented, they were false to a reader:
+//
+//   "your solutions engineer is free"  came from `se: added % 2 === 0`, an
+//     alternating boolean. There is no SE identity anywhere in this codebase
+//     and CLAUDE.md records the concept as investigated and unsourced, so the
+//     line asserted the availability of a person we cannot name.
+//   "DealRipe checked both calendars"  nothing was checked.
+//
+// ForecastRoomView renders on /review, which is the authenticated route the
+// customer's CRO reads, so these were shipping to him. Do not restore either
+// line without a real free/busy read and a real SE roster behind it.
+function proposeSlots(): Array<{ label: string }> {
   const times = ["10:00 AM PT", "1:30 PM PT", "9:00 AM PT", "3:00 PM PT"];
-  const out: Array<{ label: string; se: boolean }> = [];
+  const out: Array<{ label: string }> = [];
   const d = new Date();
   let added = 0;
   while (added < 4) {
@@ -73,7 +87,7 @@ function proposeSlots(): Array<{ label: string; se: boolean }> {
     const dow = d.getDay();
     if (dow === 0 || dow === 6) continue;
     const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-    out.push({ label: `${day} · ${times[added]}`, se: added % 2 === 0 });
+    out.push({ label: `${day} · ${times[added]}` });
     added += 1;
   }
   return out;
@@ -329,11 +343,9 @@ function Room({ data, tenant, onStart }: { data: ForecastRoom; tenant: string; o
                         className={`text-left px-3.5 py-2.5 rounded-lg border text-[13px] font-medium transition flex items-center justify-between gap-3 ${slot === s.label ? "border-ink bg-ink text-white" : "border-line text-ink hover:border-ink/40"}`}
                       >
                         <span>{s.label}</span>
-                        {s.se && <span className={`text-[10.5px] ${slot === s.label ? "text-white/80" : "text-muted"}`}>your solutions engineer is free</span>}
                       </button>
                     ))}
                   </div>
-                  <p className="text-[12px] text-muted leading-snug">DealRipe checked both calendars. Pick a slot and it sends the invite.</p>
                 </div>
               )}
             </div>
