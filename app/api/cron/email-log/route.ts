@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { ingestMailbox } from "@/lib/email-log";
+import { fillMissingBodies, ingestMailbox } from "@/lib/email-log";
 import { allowedMailboxes } from "@/lib/graph-mail";
 import { autoJoinRepEmails } from "@/lib/pilot-config";
 import { resolveTenantId } from "@/lib/tenant-deal-lookup";
@@ -34,9 +34,14 @@ const SELLER_DOMAIN = "magaya.com";
  * so overlap costs a no-op rather than a duplicate row.
  *
  * NO GATE, deliberately, unlike activity-report. This writes to one table we
- * own, stores no message body, sends nothing and touches no CRM. Gating it
- * behind a flag someone has to remember to set is how it came to be eleven days
- * stale in the first place.
+ * own, sends nothing and touches no CRM. Gating it behind a flag someone has to
+ * remember to set is how it came to be eleven days stale in the first place.
+ *
+ * SINCE 2026-09-08 IT DOES STORE BODIES, trimmed and capped, which this comment
+ * previously said it did not. The accepted risk and its mitigations are written
+ * out in lib/email-log.ts and supabase/add-message-capture.sql; the sentence
+ * that matters here is that the blast radius did not change, because
+ * allowedMailboxes() is still the only boundary and is still applied below.
  *
  * `allowedMailboxes()` remains the only boundary between this and every mailbox
  * in Magaya's tenant, because the Application Access Policy was declined. Rep
@@ -102,12 +107,32 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // THE BODY GAP PASS. The ingest marks rows not_fetched rather than fetching
+    // a body per message, because listMailboxMessages can return 500 messages
+    // per mailbox and this route has a 300s ceiling. This drains the backlog a
+    // bounded slice at a time, so a busy day self-heals over the next few runs
+    // instead of needing scripts/backfill-message-bodies.ts by hand.
+    //
+    // 'unavailable' rows are retried here; 'gone' rows never are. That is the
+    // whole reason readMessageBody distinguishes them.
+    let bodies: unknown = null;
+    try {
+      bodies = await fillMissingBodies({ tenantId, graphTenant: GRAPH_TENANT });
+    } catch (err) {
+      // Reported, not swallowed. A body backlog that silently stops draining
+      // looks exactly like one that has finished.
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`body fill: ${msg}`);
+      bodies = { failed: msg };
+    }
+
     console.log(
       `[email-log] ${mailboxes.length} mailbox(es), ${days}d: read=${totals.read} written=${totals.written} ` +
         `noDeal=${totals.noDeal} freeMail=${totals.freeMail} errors=${errors.length}` +
-        (skipped.length > 0 ? ` skippedNotAllowed=${skipped.length}` : ""),
+        (skipped.length > 0 ? ` skippedNotAllowed=${skipped.length}` : "") +
+        ` bodies=${JSON.stringify(bodies)}`,
     );
-    return NextResponse.json({ ok: errors.length === 0, days, mailboxes: mailboxes.length, ...totals, errors });
+    return NextResponse.json({ ok: errors.length === 0, days, mailboxes: mailboxes.length, ...totals, bodies, errors });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[email-log] failed: ${message}`);

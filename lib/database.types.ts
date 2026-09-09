@@ -1078,6 +1078,24 @@ export type Database = {
           is_calendar_response: boolean;
           customer_side: boolean;
           first_seen_at: string;
+          /** Graph bodyPreview, raw first ~255 chars. Null = not fetched. */
+          body_preview: string | null;
+          /** New content only, chrome stripped, 4000 cap. Null = see body_status. */
+          body_trimmed: string | null;
+          /** RAW length before trimming. Null = never fetched. */
+          body_chars: number | null;
+          /** stored|truncated|empty|not_fetched|unavailable|gone|skipped. Null = predates the column. */
+          body_status: string | null;
+          body_fetched_at: string | null;
+          /** nda|quote|agreement. Null means NOT an agreement, a positive finding. */
+          agreement_kind: string | null;
+          /** sent|executed. "sent" is not proof it is unsigned. */
+          agreement_state: string | null;
+          is_machine_sender: boolean;
+          /** True on almost every message: HTML signatures carry logos. */
+          has_attachments: boolean | null;
+          /** none|listed|not_listed|unavailable. Null = predates the column. */
+          attachment_status: string | null;
         };
         Insert: {
           id?: string;
@@ -1097,6 +1115,16 @@ export type Database = {
           is_calendar_response?: boolean;
           customer_side?: boolean;
           first_seen_at?: string;
+          body_preview?: string | null;
+          body_trimmed?: string | null;
+          body_chars?: number | null;
+          body_status?: string | null;
+          body_fetched_at?: string | null;
+          agreement_kind?: string | null;
+          agreement_state?: string | null;
+          is_machine_sender?: boolean;
+          has_attachments?: boolean | null;
+          attachment_status?: string | null;
         };
         Update: {
           id?: string;
@@ -1116,6 +1144,16 @@ export type Database = {
           is_calendar_response?: boolean;
           customer_side?: boolean;
           first_seen_at?: string;
+          body_preview?: string | null;
+          body_trimmed?: string | null;
+          body_chars?: number | null;
+          body_status?: string | null;
+          body_fetched_at?: string | null;
+          agreement_kind?: string | null;
+          agreement_state?: string | null;
+          is_machine_sender?: boolean;
+          has_attachments?: boolean | null;
+          attachment_status?: string | null;
         };
         Relationships: [];
       };

@@ -56,7 +56,7 @@ async function main(): Promise<void> {
 
   console.log(`\n${"=".repeat(80)}`);
   console.log(`${apply ? "INGESTING" : "DRY RUN"}: email log, ${days} days back to ${since.toISOString().slice(0, 10)}`);
-  console.log(`${mailboxes.length} mailbox(es). Bodies are never stored.`);
+  console.log(`${mailboxes.length} mailbox(es). Bodies are stored trimmed and capped since 2026-09-08; see lib/email-log.ts.`);
   if (skipped.length > 0) {
     console.log(`\n  NOT READ, outside GRAPH_MAIL_ALLOWED_MAILBOXES: ${skipped.join(", ")}`);
   }

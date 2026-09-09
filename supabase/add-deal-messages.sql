@@ -22,16 +22,23 @@
 -- the remaining twenty followed by mail from the rep. Scoring from the
 -- transcript alone records reps who did the work as reps who did nothing.
 --
--- WHAT IS DELIBERATELY NOT STORED: the body.
+-- WHAT WAS DELIBERATELY NOT STORED: the body. SUPERSEDED 2026-09-08 by
+-- supabase/add-message-capture.sql. The reasoning below still stands and is
+-- kept because it is the argument anyone widening this must answer.
 --
 -- Magaya is under NDA, and MS_CLIENT_SECRET is effectively a tenant-wide
 -- mailbox key because the Application Access Policy was declined, so the
 -- only thing keeping DealRipe out of ~45,000 mailboxes is allowedMailboxes()
 -- in software. Metadata answers every signal this log exists for: who wrote,
--- to whom, when, on which thread. A body is fetched on demand by
--- getMessageBody when a specific claim needs evidence, and is not retained.
--- Storing bodies would raise the cost of getting that gate wrong by orders
--- of magnitude for no signal we cannot already compute.
+-- to whom, when, on which thread.
+--
+-- What that missed, and why it changed: metadata cannot say what was promised,
+-- what was asked and never answered, or which document went out.
+-- lib/deal-memory.ts lists ten draft-versus-sent pairs where the rep held
+-- something DealRipe did not. Bodies are now stored TRIMMED and CAPPED, only
+-- for messages already mapped to a pilot deal, and never for machine senders.
+-- The mitigations are in add-message-capture.sql; read it before widening
+-- this further.
 --
 -- Subject IS stored: calendar-response detection needs it, and a rep
 -- cannot recognise a thread without it.
@@ -86,7 +93,7 @@ create table if not exists public.deal_messages (
 );
 
 comment on table public.deal_messages is
-  'Email metadata per deal. Bodies are deliberately never stored: Magaya is under NDA and the Graph app-only grant covers every mailbox in the tenant, so the log holds only what the signals need. Fetch a body on demand with getMessageBody when a specific claim needs evidence.';
+  'Email per deal. Held metadata only until 2026-09-08, when supabase/add-message-capture.sql added trimmed, capped bodies as an accepted risk with mitigations. Magaya is under NDA and the Graph app-only grant covers every mailbox in the tenant, so read that migration''s header before widening what is stored here.';
 
 comment on column public.deal_messages.internet_message_id is
   'RFC 5322 Message-ID, stable across mailboxes. The dedupe key, because Graph''s own message id is per-mailbox and a co-sold thread would otherwise be counted once per rep.';

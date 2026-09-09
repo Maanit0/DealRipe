@@ -12,13 +12,29 @@
  *
  * With the log, silence becomes a measurement instead of a guess.
  *
- * WHAT IT DELIBERATELY DOES NOT STORE
+ * WHAT IT STORES, AND WHAT CHANGED ON 2026-09-08
  *
- * Bodies. Magaya is under NDA and MS_CLIENT_SECRET is effectively a
- * tenant-wide mailbox key because the Application Access Policy was declined,
- * so allowedMailboxes() in software is the only boundary. Metadata answers
- * every signal here. getMessageBody fetches a body on demand when one specific
- * claim needs evidence, and it is not retained.
+ * This table held metadata only, deliberately: Magaya is under NDA and
+ * MS_CLIENT_SECRET is effectively a tenant-wide mailbox key because the
+ * Application Access Policy was declined, so allowedMailboxes() in software is
+ * the only boundary there is. None of that has changed.
+ *
+ * What changed is what the metadata costs. lib/deal-memory.ts opens with ten
+ * draft-versus-sent pairs where the rep held something DealRipe did not, "a
+ * EULA and a corrected proposal, we did not know they existed", and a subject
+ * line cannot say what was promised, what was asked and never answered, or
+ * which document went out. So bodies ARE stored now, as an accepted risk with
+ * four mitigations rather than as a reversal nobody wrote down:
+ *
+ *   only for messages already mapped to a pilot deal by the domain filter below
+ *   never for machine senders (EchoSign bodies link into a signing session)
+ *   TRIMMED by lib/mail-body.ts, so quoted history and banners are not retained
+ *   capped at BODY_STORE_CAP, with body_chars recording the original length
+ *
+ * body_status carries WHICH kind of nothing when there is no body, because a
+ * deleted message, a transient failure and a genuinely empty body were one null
+ * until readMessageBody split them and are three different instructions to a
+ * backfill.
  *
  * TWO THINGS THAT LOOK LIKE ENGAGEMENT AND ARE NOT
  *
@@ -33,8 +49,9 @@
 
 import type { Database } from "./database.types";
 import { domainOf, isCalendarResponseSubject, listMailboxMessages, type MailMessage } from "./graph-mail";
-import { getMessageBody } from "./graph-mail";
+import { getMessageBody, readMessageBody } from "./graph-mail";
 import { trimMessageBody } from "./mail-body";
+import { agreementSignal, isMachineSender } from "./meeting-state";
 import { supabaseAdmin } from "./supabase";
 
 /** Free-mail domains never identify a company. CLAUDE.md: matching %@gmail.com
@@ -185,6 +202,21 @@ export async function ingestMailbox(args: {
     }
 
     const fromDomain = domainOf(m.from);
+    const isCalendar = isCalendarResponseSubject(m.subject);
+    const machine = isMachineSender(m.from);
+    const agreement = agreementSignal(m.subject);
+
+    // WHY THE BODY IS NOT FETCHED HERE. listMailboxMessages can return 500
+    // messages per mailbox and this cron has a 300s ceiling, so one Graph GET
+    // per message would time out the whole ingest. Rows are marked not_fetched
+    // and filled by fillMissingBodies, which is bounded and shared with the
+    // backfill script so there is one code path rather than two.
+    //
+    // A machine sender is skipped outright rather than deferred: EchoSign
+    // notification bodies carry links into a signing session, and a calendar
+    // response body is Outlook talking to itself.
+    const bodyStatus = machine || isCalendar ? "skipped" : "not_fetched";
+
     rows.push({
       tenant_id: args.tenantId,
       deal_id: dealId,
@@ -199,8 +231,19 @@ export async function ingestMailbox(args: {
       cc_emails: m.cc,
       subject: m.subject,
       sent_at: m.at,
-      is_calendar_response: isCalendarResponseSubject(m.subject),
+      is_calendar_response: isCalendar,
       customer_side: !!fromDomain && fromDomain !== seller && !FREE_MAIL.has(fromDomain),
+      // Free: already on the wire in MESSAGE_SELECT and previously discarded.
+      body_preview: m.preview || null,
+      body_status: bodyStatus,
+      is_machine_sender: machine,
+      agreement_kind: agreement?.kind ?? null,
+      agreement_state: agreement ? (agreement.executed ? "executed" : "sent") : null,
+      has_attachments: m.hasAttachments,
+      // Enumerating attachments is a Graph GET per message, so it is deferred
+      // the same way the body is. "none" is asserted only where Graph says
+      // there is nothing to enumerate.
+      attachment_status: m.hasAttachments ? "not_listed" : "none",
     });
   }
 
@@ -218,6 +261,120 @@ export async function ingestMailbox(args: {
     if (res.error) out.errors.push(`upsert failed: ${res.error.message}`);
     else out.rowsWritten += chunk.length;
   }
+  return out;
+}
+
+/** How many bodies one pass will fetch. See the budget note below. */
+const BODY_FETCH_DEFAULT_LIMIT = 150;
+/** Concurrent Graph GETs. Graph 504s on this mailbox API when pushed. */
+const BODY_FETCH_CONCURRENCY = 4;
+/** Storage cap. Generous on purpose: Graph eventually 404s the message. */
+export const BODY_STORE_CAP = 4000;
+
+export type BodyFillResult = {
+  considered: number;
+  stored: number;
+  truncated: number;
+  empty: number;
+  gone: number;
+  unavailable: number;
+};
+
+/**
+ * Fill in bodies for rows the ingest marked not_fetched.
+ *
+ * SEPARATE FROM THE INGEST, and shared with scripts/backfill-message-bodies.ts
+ * so a backfilled body is byte-identical to an ingested one. Two code paths
+ * that both "trim and store a body" would drift, and the drift would be
+ * invisible because both produce plausible text.
+ *
+ * BOUNDED. listMailboxMessages can return 500 messages per mailbox and the
+ * email-log cron has a 300s ceiling. Overflow stays not_fetched and is picked
+ * up by the next run, which is why not_fetched and unavailable are different
+ * words: one means "not yet", the other means "we tried and could not".
+ *
+ * A 404 writes 'gone' and is never retried. A 503 writes 'unavailable' and is.
+ * That distinction is the entire reason readMessageBody exists.
+ */
+export async function fillMissingBodies(args: {
+  tenantId: string;
+  graphTenant: string;
+  limit?: number;
+  /** Restrict to one mailbox, for a targeted backfill. */
+  mailbox?: string;
+  /** Only messages sent on or after this. Newest first regardless. */
+  since?: Date;
+  dryRun?: boolean;
+}): Promise<BodyFillResult> {
+  const db = supabaseAdmin();
+  const out: BodyFillResult = { considered: 0, stored: 0, truncated: 0, empty: 0, gone: 0, unavailable: 0 };
+
+  let q = db
+    .from("deal_messages")
+    .select("id, graph_message_id, mailbox, sent_at")
+    .eq("tenant_id", args.tenantId)
+    .in("body_status", ["not_fetched", "unavailable"])
+    .order("sent_at", { ascending: false })
+    .limit(args.limit ?? BODY_FETCH_DEFAULT_LIMIT);
+  if (args.mailbox) q = q.eq("mailbox", args.mailbox.toLowerCase());
+  if (args.since) q = q.gte("sent_at", args.since.toISOString());
+
+  const res = await q;
+  // A failed read here is not "nothing to do". Returning zeros would report a
+  // successful pass that fetched nothing, which is how a broken backfill
+  // survives for weeks looking like a finished one.
+  if (res.error) throw new Error(`body backlog read failed: ${res.error.message}`);
+
+  const rows = res.data ?? [];
+  out.considered = rows.length;
+  if (args.dryRun || rows.length === 0) return out;
+
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const row = rows[cursor++];
+      if (!row) return;
+      const r = await readMessageBody({
+        tenantIdOrDomain: args.graphTenant,
+        mailbox: row.mailbox,
+        messageId: row.graph_message_id,
+      });
+
+      const patch: Database["public"]["Tables"]["deal_messages"]["Update"] = {
+        body_fetched_at: new Date().toISOString(),
+      };
+      if (r.status === "ok") {
+        const t = trimMessageBody(r.text, { cap: BODY_STORE_CAP });
+        patch.body_trimmed = t.text;
+        patch.body_chars = t.originalChars;
+        // "truncated" is about the CAP, not about chrome removal. A message
+        // whose quoted thread was cut is still complete as stored.
+        patch.body_status = t.truncated ? "truncated" : "stored";
+        if (t.truncated) out.truncated += 1;
+        else out.stored += 1;
+      } else if (r.status === "empty") {
+        patch.body_status = "empty";
+        patch.body_chars = 0;
+        out.empty += 1;
+      } else if (r.status === "gone") {
+        // Permanent. Graph will not produce this message again, and retrying it
+        // every run forever is how a backlog stops draining.
+        patch.body_status = "gone";
+        out.gone += 1;
+      } else {
+        patch.body_status = "unavailable";
+        out.unavailable += 1;
+      }
+
+      // TARGETED UPDATE BY PRIMARY KEY, touching only body columns. The ingest
+      // upsert uses ignoreDuplicates:true, so it can never fill these in; and
+      // flipping it to a real upsert would rewrite direction, customer_side,
+      // subject and graph_message_id on historical rows using today's rules.
+      const upd = await db.from("deal_messages").update(patch).eq("id", row.id);
+      if (upd.error) console.error(`[email-log] body update failed (${row.id}): ${upd.error.message}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BODY_FETCH_CONCURRENCY, rows.length) }, worker));
   return out;
 }
 
@@ -260,10 +417,10 @@ export type MessageBrief = {
   /**
    * Enough to fetch the BODY from Graph on demand.
    *
-   * deal_messages deliberately stores metadata only: Magaya is under NDA and
-   * duplicating message bodies into our database would double the NDA surface
-   * for signal we can fetch when we actually need it. A briefing needs it about
-   * twice a day, so it is fetched then and never stored.
+   * Kept even though bodies are stored now (2026-09-08). body_trimmed is
+   * trimmed and capped, and a caller that needs the RAW message, or one whose
+   * row predates the column or came back 'gone', still has to ask Graph. These
+   * two ids are the only way to do that.
    */
   mailbox: string | null;
   graphMessageId: string | null;

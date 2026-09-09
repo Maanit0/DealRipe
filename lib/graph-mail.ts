@@ -147,10 +147,14 @@ async function getAppOnlyToken(tenantId: string): Promise<string> {
 // ====================================================================
 
 /**
- * A mail message reduced to the fields DealRipe reasons about. Bodies are
- * deliberately NOT fetched: every signal we derive (latency, direction,
+ * A mail message reduced to the fields DealRipe reasons about. The LIST call
+ * still fetches no bodies: every signal derived here (latency, direction,
  * participant change, thread continuity) comes from headers, and headers are a
  * far smaller privacy surface to defend in a security review.
+ *
+ * Bodies are fetched separately and, since 2026-09-08, stored trimmed and
+ * capped by lib/email-log.ts fillMissingBodies. See the accepted-risk note in
+ * that module and in supabase/add-message-capture.sql.
  */
 export type MailMessage = {
   id: string;
@@ -194,6 +198,15 @@ export type MailMessage = {
   outbound: boolean;
   /** First ~255 chars. Enough to classify intent without storing the body. */
   preview: string;
+  /**
+   * Graph's hasAttachments, free on the list call.
+   *
+   * TRUE IS NOT "THIS MESSAGE CARRIES A DOCUMENT". Every rep here has an HTML
+   * signature and every HTML signature carries a logo, so this is true on
+   * almost everything they send. listMessageAttachments is what separates a
+   * proposal from a cid: image.
+   */
+  hasAttachments: boolean;
 };
 
 type GraphRecipient = { emailAddress?: { address?: string | null } };
@@ -209,6 +222,7 @@ type GraphMessage = {
   sender?: GraphRecipient | null;
   toRecipients?: GraphRecipient[];
   ccRecipients?: GraphRecipient[];
+  hasAttachments?: boolean | null;
 };
 
 const MESSAGE_SELECT = [
@@ -222,6 +236,10 @@ const MESSAGE_SELECT = [
   "from",
   "toRecipients",
   "ccRecipients",
+  // Free on the LIST call. The InefficientFilter that Exchange rejects is about
+  // combining hasAttachments with a sentDateTime $filter and an $orderby; it
+  // has never been about $select. See findSentAttachments.
+  "hasAttachments",
   // A DRAFT IS NOT MAIL THAT HAPPENED. /users/{id}/messages spans every folder
   // including Drafts, so without this the mailbox read cannot tell a sent
   // follow-up from one still sitting unsent, and DealRipe writes a draft into
@@ -360,6 +378,7 @@ export async function listMailboxMessages(args: {
           .toLowerCase()
           .includes("eventmessage"),
         preview: (m.bodyPreview ?? "").trim(),
+        hasAttachments: m.hasAttachments === true,
       });
     }
     url = json["@odata.nextLink"] ?? "";

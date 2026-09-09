@@ -81,10 +81,11 @@ export type DealMemory = {
   /**
    * The customer's most recent inbound message.
    *
-   * `excerpt` is FETCHED ON DEMAND AND NEVER STORED. deal_messages holds
-   * metadata only, by design: Magaya is under NDA and MS_CLIENT_SECRET is
-   * effectively a tenant-wide mailbox key, so bodies are not retained. This is
-   * the case lib/email-log.ts reserved getMessageBody for, "when one specific
+   * `excerpt` is fetched on demand. Since 2026-09-08 deal_messages also holds
+   * a trimmed, capped body, so this could read body_trimmed instead and should
+   * once the backfill has run: a stored body costs no Graph call and survives
+   * the message being deleted. Until then this is still the case
+   * lib/email-log.ts reserved getMessageBody for, "when one specific
    * claim needs evidence": knowing they declined on price rewrites the entire
    * email, and a subject line cannot tell you that. Ariel's Orvia draft
    * summarised a proposal the customer had already turned down.

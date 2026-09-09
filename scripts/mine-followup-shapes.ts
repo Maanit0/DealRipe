@@ -16,7 +16,9 @@
  * transcript, which is why the OUTPUT of this analysis belongs in a prompt as
  * generalised guidance, never as quoted customer text.
  *
- * Bodies come from Graph, since deal_messages stores metadata only.
+ * Bodies come from Graph rather than from deal_messages.body_trimmed, because
+ * this script wants the RAW message: it is measuring the shape reps actually
+ * write, and reading our own trimmed copy would measure our trimmer instead.
  */
 
 import { config } from "dotenv";
