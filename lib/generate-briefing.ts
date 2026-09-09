@@ -213,8 +213,19 @@ export async function generateBriefingFromState(
   //
   // Memoised for six hours and never throws: a briefing without priors is worse
   // than one with them, and no briefing at all is worse than both.
-  const { loadGatePriors } = await import("./sales-brain");
-  const gatePriors = state.tenantId ? await loadGatePriors(state.tenantId) : [];
+  //
+  // CONDITIONED ON THE KIND OF CALL where the evidence supports it. A question
+  // that works in discovery is not the same question on a proposal call, and
+  // the ledger shows that shape directly: 25 of 119 discovery prescriptions
+  // were followed against 2 of 56 on demos. loadPriorsForCall falls back to the
+  // tenant-wide prior for any gate the conditioned slice is too thin to speak
+  // to, so a thin slice loses nothing.
+  //
+  // state.callType is resolved BEFORE the call by lib/call-type-precall.ts,
+  // because calls.call_subtype is written after capture and is null for the
+  // call being briefed.
+  const { loadPriorsForCall } = await import("./sales-brain");
+  const gatePriors = state.tenantId ? await loadPriorsForCall(state.tenantId, state.callType?.type ?? null) : [];
 
   const userMessage = buildMagayaBriefingUserMessage({
     account: state.account,

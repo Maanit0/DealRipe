@@ -39,6 +39,17 @@ export const MIN_ARM = 5;
 
 export type GatePrior = {
   gate: string;
+  /**
+   * The deal state this prior holds FOR. null means tenant-wide.
+   *
+   * A question that works on a discovery call is not the same question on a
+   * proposal call, and the follow-through ledger already showed that shape:
+   * 25 of 119 discovery prescriptions were followed against 2 of 56 on demos.
+   * Measured 2026-09-09, 22 of 114 gate-by-call-type cells clear the n floor
+   * and discovery holds most of them, so this conditions where the evidence
+   * exists and falls back to tenant-wide where it does not.
+   */
+  callType: string | null;
   /** Prescriptions targeting this gate whose follow-through is known. */
   n: number;
   followed: number;
@@ -77,6 +88,7 @@ export type GatePrior = {
 
 type Row = {
   id: string;
+  call_id: string;
   framework_field_keys: string[] | null;
   followed: string;
   outcome_qualification_advanced: string;
@@ -90,7 +102,7 @@ async function pageAll(tenantId: string): Promise<Row[]> {
   for (let from = 0; ; from += 1000) {
     const res = await db
       .from("prescribed_actions")
-      .select("id, framework_field_keys, followed, outcome_qualification_advanced, outcome_next_meeting, kind")
+      .select("id, call_id, framework_field_keys, followed, outcome_qualification_advanced, outcome_next_meeting, kind")
       .eq("tenant_id", tenantId)
       .order("id", { ascending: true })
       .range(from, from + 999);
@@ -112,8 +124,27 @@ async function pageAll(tenantId: string): Promise<Row[]> {
  * call in writing, and scoring an unobserved follow-through as a failure records
  * reps who did the work as reps who did nothing.
  */
-export async function computeGatePriors(tenantId: string): Promise<GatePrior[]> {
+export async function computeGatePriors(
+  tenantId: string,
+  opts?: { callType?: string | null },
+): Promise<GatePrior[]> {
   const rows = await pageAll(tenantId);
+
+  // Condition on the kind of conversation, where asked for. calls.call_subtype
+  // is written by transcript-sync AFTER capture, so a prescription issued for a
+  // call we never captured has none: those are EXCLUDED from a conditioned
+  // read rather than pooled in, because "unclassified" is not a call type.
+  let allow: Set<string> | null = null;
+  if (opts?.callType) {
+    const db = supabaseAdmin();
+    const cs = await db
+      .from("calls")
+      .select("id, call_subtype")
+      .eq("tenant_id", tenantId)
+      .eq("call_subtype", opts.callType);
+    if (cs.error) throw new Error(`calls read failed: ${cs.error.message}`);
+    allow = new Set((cs.data ?? []).map((c) => c.id));
+  }
 
   type Bucket = {
     followedAdv: string[]; followedNot: string[]; notAdv: string[]; notNot: string[];
@@ -122,6 +153,7 @@ export async function computeGatePriors(tenantId: string): Promise<GatePrior[]> 
   const byGate = new Map<string, Bucket>();
 
   for (const r of rows) {
+    if (allow && !allow.has(r.call_id)) continue;
     if (!Array.isArray(r.framework_field_keys) || r.framework_field_keys.length === 0) continue;
     if (r.followed !== "yes" && r.followed !== "no") continue;
     // An unknown outcome cannot be scored either way.
@@ -188,6 +220,7 @@ export async function computeGatePriors(tenantId: string): Promise<GatePrior[]> 
 
     out.push({
       gate,
+      callType: opts?.callType ?? null,
       n,
       followed: followedN,
       advancedWhenFollowed: advFollowed,
@@ -241,17 +274,45 @@ export function priorLine(p: GatePrior): string | null {
  * generate is worse than both. An empty array means "no guidance", and
  * priorBlock renders nothing for it, which is the correct silent behaviour.
  */
-let cache: { at: number; priors: GatePrior[] } | null = null;
+const cache = new Map<string, { at: number; priors: GatePrior[] }>();
 const TTL_MS = 6 * 3600_000;
 
-export async function loadGatePriors(tenantId: string): Promise<GatePrior[]> {
-  if (cache && Date.now() - cache.at < TTL_MS) return cache.priors;
+export async function loadGatePriors(
+  tenantId: string,
+  opts?: { callType?: string | null },
+): Promise<GatePrior[]> {
+  const key = `${tenantId}|${opts?.callType ?? ""}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.priors;
   try {
-    const priors = await computeGatePriors(tenantId);
-    cache = { at: Date.now(), priors };
+    const priors = await computeGatePriors(tenantId, opts);
+    cache.set(key, { at: Date.now(), priors });
     return priors;
   } catch (err) {
     console.error(`[sales-brain] priors unavailable, briefing continues without them: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
+}
+
+/**
+ * Priors for this call, conditioned where the evidence supports it.
+ *
+ * Tries the call type first and FALLS BACK to tenant-wide for any gate the
+ * conditioned read cannot speak to. A gate with n=40 across the book and n=4 on
+ * demos should still say what it can, and saying nothing because one slice is
+ * thin loses the whole finding.
+ *
+ * The fallback is visible on the object: callType is null on a tenant-wide
+ * prior and set on a conditioned one, so a reader can always tell which
+ * question was answered.
+ */
+export async function loadPriorsForCall(
+  tenantId: string,
+  callType: string | null | undefined,
+): Promise<GatePrior[]> {
+  const wide = await loadGatePriors(tenantId);
+  if (!callType) return wide;
+  const narrow = await loadGatePriors(tenantId, { callType });
+  const usable = new Map(narrow.filter((p) => p.verdict !== "insufficient").map((p) => [p.gate, p]));
+  return wide.map((p) => usable.get(p.gate) ?? p);
 }
