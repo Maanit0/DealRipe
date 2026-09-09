@@ -29,30 +29,22 @@
  */
 
 import { readDraftAdoption } from "./draft-adoption";
+import { trimMessageBody } from "./mail-body";
 import { supabaseAdmin } from "./supabase";
 
 /**
- * Strip the mail chrome Exchange prepends to external mail.
+ * The Exchange banner strip that used to live here moved into
+ * lib/mail-body.ts, along with the reason it exists: Magaya's tenant stamps
+ * "CAUTION: This email originated from outside your organization" on every
+ * inbound message and Outlook adds "You don't often get email from x", both at
+ * the TOP, so an excerpt taken from the top is the banner and nothing else. The
+ * first run of this block handed the writer a security warning under the
+ * heading "what they said".
  *
- * Magaya's tenant stamps "CAUTION: This email originated from outside your
- * organization" on every inbound message, and Outlook adds "You don't often get
- * email from x. Learn why this is important". Both land at the TOP, so an
- * excerpt taken from the top is the banner and nothing else: the first run of
- * this handed the writer a security warning under the heading "what they said".
+ * It moved because there were five copies of this idea and this one had the
+ * banner filters while another had the stronger quoted-tail cut. trimMessageBody
+ * is the union of all five.
  */
-function stripMailChrome(body: string): string {
-  return body
-    .split("\n")
-    .filter(
-      (l) =>
-        !/^\s*CAUTION:/i.test(l) &&
-        !/originated from outside your organization/i.test(l) &&
-        !/you don'?t often get email from/i.test(l) &&
-        !/Learn why this is important/i.test(l) &&
-        !/^\s*\[?EXTERNAL\]?\s*:?\s*$/i.test(l),
-    )
-    .join("\n");
-}
 
 export type PriorCommitment = {
   when: string;
@@ -346,9 +338,9 @@ export async function readDealMemory(args: {
         if (body) {
           // Above the quoted reply. Everything below it is our own last email
           // coming back, which tells the writer nothing and costs tokens.
-          const clean = stripMailChrome(body);
-          const cut = clean.search(/\n\s*(From:|On .+ wrote:|-{5,})/);
-          excerpt = (cut > 0 ? clean.slice(0, cut) : clean).replace(/\s+/g, " ").trim().slice(0, 900) || null;
+          // Collapse to one line BEFORE the 900 cap, so the cap counts prose
+          // rather than the newlines the trimmer left behind.
+          excerpt = trimMessageBody(body).text.replace(/\s+/g, " ").trim().slice(0, 900) || null;
         }
       } catch {
         // A body we could not read is not an empty message. Subject and date

@@ -39,6 +39,8 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+import { isSeller } from "../lib/attendees";
+import { labelNamesParticipant, sellerDirectory, sideOfSpeaker, type Side } from "../lib/speaker-match";
 import { getAnthropicClient, getAnthropicModel } from "../lib/anthropic";
 import type { Tristate } from "../lib/database.types";
 import { prettyAccount, repName } from "../lib/display-names";
@@ -267,95 +269,24 @@ function speakerIsReal(labels: Set<string>, speaker: string): boolean {
  * silently dropping them would lose real moves while silently keeping them
  * would repeat the bug.
  */
-type Side = "seller" | "customer" | "unknown";
-
-const SELLER_DOMAIN = "magaya.com";
-
+/**
+ * Side, labelNamesParticipant, sideOfSpeaker and sellerDirectory moved to
+ * lib/speaker-match.ts. They were the most careful speaker matching in the
+ * codebase and they lived in a diagnostic, which inverts CLAUDE.md's rule that
+ * a diagnostic imports production logic or it does not exist. The reasoning
+ * that produced them, including the Seaboard Marine misattribution, moved too.
+ */
 type Participant = { name?: string | null; email?: string | null };
 
 function participantsOf(raw: unknown): Participant[] {
   return Array.isArray(raw) ? (raw as Participant[]) : [];
 }
 
-/** Lowercase alphabetic name tokens, so "Soto, Jaime" and "Jaime Soto" match. */
-function nameTokens(s: string): string[] {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z\s]+/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length >= 3);
-}
-
-/**
- * Does this transcript label name this participant.
- *
- * Two tokens shared is a match, and one is enough when either side only has
- * one to give. The email local part is checked too, because half the Magaya
- * invites carry an address where the name should be: "JHuseby@tql.com" is how
- * the roster spells the man the transcript calls "Joseph Huseby".
- */
-function labelNamesParticipant(speaker: string, p: Participant): boolean {
-  const s = nameTokens(speaker);
-  if (s.length === 0) return false;
-  const n = nameTokens(p.name ?? "");
-  const shared = s.filter((t) => n.includes(t)).length;
-  if (shared >= 2) return true;
-  if (shared === 1 && (s.length === 1 || n.length === 1)) return true;
-
-  const local = (p.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
-  if (local.length >= 4 && s.some((t) => t.length >= 4 && local.includes(t))) return true;
-  return false;
-}
-
-/**
- * This call's invite decides first, and a wider directory catches the rest.
- *
- * The invite is the customer's copy as often as ours, so a Magaya person who
- * joined without being on it looks identical to a stranger. Checking the
- * speaker against every magaya.com attendee seen anywhere in the window fixes
- * that without weakening the customer test, which still runs first and still
- * wins: a name that is on THIS invite as the customer is the customer.
- */
-function sideOfSpeaker(
-  participants: Participant[],
-  speaker: string,
-  directory: Participant[],
-): Side {
-  let sawCustomer = false;
-  for (const p of participants) {
-    if (!labelNamesParticipant(speaker, p)) continue;
-    const domain = (p.email ?? "").split("@")[1]?.toLowerCase() ?? "";
-    if (domain === SELLER_DOMAIN) return "seller";
-    if (domain) sawCustomer = true;
-  }
-  if (sawCustomer) return "customer";
-  if (directory.some((p) => labelNamesParticipant(speaker, p))) return "seller";
-  return "unknown";
-}
-
-/** Every magaya.com attendee seen on any call in the window, deduped by address. */
-function sellerDirectory(all: ReadonlyArray<Participant[]>): Participant[] {
-  const byEmail = new Map<string, Participant>();
-  for (const list of all) {
-    for (const p of list) {
-      const email = (p.email ?? "").toLowerCase();
-      if (email.endsWith(`@${SELLER_DOMAIN}`) && !byEmail.has(email)) byEmail.set(email, p);
-    }
-  }
-  return [...byEmail.values()];
-}
-
 /** The roster the model is given, so it can obey the seller-side rule. */
 function rosterFor(participants: Participant[]): string {
   const label = (p: Participant) => (p.name ?? p.email ?? "").trim();
-  const seller = participants
-    .filter((p) => (p.email ?? "").toLowerCase().endsWith(`@${SELLER_DOMAIN}`))
-    .map(label)
-    .filter(Boolean);
-  const customer = participants
-    .filter((p) => !(p.email ?? "").toLowerCase().endsWith(`@${SELLER_DOMAIN}`))
-    .map(label)
-    .filter(Boolean);
+  const seller = participants.filter((p) => isSeller(p.email)).map(label).filter(Boolean);
+  const customer = participants.filter((p) => !isSeller(p.email)).map(label).filter(Boolean);
   return [
     `WHO WAS ON THE INVITE:`,
     `  seller side (Magaya): ${seller.length > 0 ? seller.join(", ") : "nobody listed"}`,

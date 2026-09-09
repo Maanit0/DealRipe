@@ -34,6 +34,7 @@
 import type { Database } from "./database.types";
 import { domainOf, isCalendarResponseSubject, listMailboxMessages, type MailMessage } from "./graph-mail";
 import { getMessageBody } from "./graph-mail";
+import { trimMessageBody } from "./mail-body";
 import { supabaseAdmin } from "./supabase";
 
 /** Free-mail domains never identify a company. CLAUDE.md: matching %@gmail.com
@@ -504,13 +505,12 @@ export async function attachMessageExcerpts(
       });
       if (!body) return m;
       // Cut the quoted history. A reply carries the whole thread underneath it,
-      // and the part that matters is what THIS message added on top.
-      const trimmed = body
-        .split(/\n\s*(?:From:|On .{0,60} wrote:|-----Original Message-----|_{5,})/)[0]
-        .replace(/\r/g, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-      const excerpt = trimmed.length > cap ? trimmed.slice(0, cap).trimEnd() + "..." : trimmed;
+      // and the part that matters is what THIS message added on top. The cut
+      // itself lives in lib/mail-body.ts; the copy that used to be here was the
+      // weakest of the five and missed Outlook's "Original Appointment"
+      // separator entirely.
+      const t = trimMessageBody(body, { cap });
+      const excerpt = t.truncated ? `${t.text}...` : t.text;
       return { ...m, excerpt: excerpt || null };
     } catch {
       return m;

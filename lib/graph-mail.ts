@@ -435,27 +435,79 @@ function toRecipientList(list: DraftRecipient[] | undefined) {
  * body for the handful of messages they actually use rather than pulling
  * bodies for every message in the mailbox.
  *
- * Requested as text so no HTML stripping is needed. The body is used in a
- * prompt and never stored.
+ * Requested as text so no HTML stripping is needed.
  */
+export type MessageBodyResult =
+  /** Graph returned content. */
+  | { status: "ok"; text: string }
+  /** Graph returned the message and its body is genuinely empty. */
+  | { status: "empty" }
+  /** Graph no longer has this message. Permanent: do not retry. */
+  | { status: "gone"; httpStatus: number }
+  /** We could not ask. Transient: retry is the correct response. */
+  | { status: "unavailable"; httpStatus: number | null; error: string };
+
+/**
+ * The same read, saying WHICH kind of nothing it got.
+ *
+ * getMessageBody collapses three different facts into one null: a 404 because
+ * the rep deleted the mail, a 503 because Graph was briefly unwell, and a
+ * message whose body really is empty. That was harmless while the body was
+ * fetched, used in one prompt and discarded, because all three correctly meant
+ * "no excerpt this time".
+ *
+ * It stops being harmless the moment a body is PERSISTED. Stored as one null,
+ * a deleted message and a transient failure are indistinguishable, so a
+ * backfill either retries dead ids until the end of time or gives up on rows it
+ * could still have read. This codebase's dominant failure mode is treating
+ * absence of evidence as evidence of absence, and a nullable body column is
+ * that failure mode with a schema.
+ *
+ * getMessageBody stays as a thin wrapper so no existing caller changes.
+ */
+export async function readMessageBody(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  messageId: string;
+}): Promise<MessageBodyResult> {
+  assertMailboxAllowed(args.mailbox);
+  let res: Response;
+  try {
+    const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+    const token = await getAppOnlyToken(tenantId);
+    const url =
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(args.mailbox)}` +
+      `/messages/${encodeURIComponent(args.messageId)}?$select=body`;
+    res = await fetch(url, {
+      headers: { authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="text"' },
+    });
+  } catch (err) {
+    // Token acquisition or transport. Never "gone": we never reached the store.
+    return { status: "unavailable", httpStatus: null, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!res.ok) {
+    // 404 is the message; 410 is Graph saying it is gone outright. Everything
+    // else, throttling and 5xx included, is us failing to ask.
+    return res.status === 404 || res.status === 410
+      ? { status: "gone", httpStatus: res.status }
+      : { status: "unavailable", httpStatus: res.status, error: `graph ${res.status}` };
+  }
+  try {
+    const json = (await res.json()) as { body?: { content?: string } };
+    const content = (json.body?.content ?? "").trim();
+    return content.length > 0 ? { status: "ok", text: content } : { status: "empty" };
+  } catch (err) {
+    return { status: "unavailable", httpStatus: res.status, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function getMessageBody(args: {
   tenantIdOrDomain: string;
   mailbox: string;
   messageId: string;
 }): Promise<string | null> {
-  assertMailboxAllowed(args.mailbox);
-  const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
-  const token = await getAppOnlyToken(tenantId);
-  const url =
-    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(args.mailbox)}` +
-    `/messages/${encodeURIComponent(args.messageId)}?$select=body`;
-  const res = await fetch(url, {
-    headers: { authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="text"' },
-  });
-  if (!res.ok) return null;
-  const json = (await res.json()) as { body?: { content?: string } };
-  const content = (json.body?.content ?? "").trim();
-  return content.length > 0 ? content : null;
+  const r = await readMessageBody(args);
+  return r.status === "ok" ? r.text : null;
 }
 
 /**
@@ -615,26 +667,115 @@ export async function findSentAttachments(args: {
   // made every read fail with nothing to look up.
   const out: Array<{ id: string; subject: string; sentAt: string; to: string[]; attachments: Array<{ id: string; name: string; contentType: string; size: number }> }> = [];
   for (const m of (json.value ?? []).filter((m) => m.hasAttachments)) {
-    const ar = await fetch(
-      `${GRAPH_BASE}/users/${user}/messages/${encodeURIComponent(m.id)}/attachments?$select=id,name,contentType,size`,
-      { headers: { authorization: `Bearer ${token}` } },
-    );
-    if (!ar.ok) continue;
-    const aj = (await ar.json()) as { value?: Array<{ id: string; name?: string; contentType?: string; size?: number }> };
+    const listed = await listMessageAttachments({
+      tenantIdOrDomain: args.tenantIdOrDomain,
+      mailbox: args.mailbox,
+      messageId: String(m.id),
+    });
+    if (listed.status !== "ok") continue;
     out.push({
       id: String(m.id),
       subject: String(m.subject ?? ""),
       sentAt: String(m.sentDateTime ?? ""),
       to: (m.toRecipients ?? []).map((r) => String(r.emailAddress?.address ?? "")).filter(Boolean),
-      attachments: (aj.value ?? []).map((a) => ({
-        id: String(a.id),
-        name: String(a.name ?? ""),
-        contentType: String(a.contentType ?? ""),
-        size: Number(a.size ?? 0),
+      attachments: listed.attachments.map((a) => ({
+        id: a.id,
+        name: a.name,
+        contentType: a.contentType,
+        size: a.size,
       })),
     });
   }
   return out;
+}
+
+export type MessageAttachment = {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  /** Graph's isInline. Absent on item and reference attachments, so false. */
+  isInline: boolean;
+  /** "#microsoft.graph.fileAttachment" and friends. Only a file has bytes. */
+  odataType: string;
+};
+
+export type MessageAttachmentsResult =
+  /** attachments is the REAL files. skipped counts what the filter removed. */
+  | { status: "ok"; attachments: MessageAttachment[]; skippedInline: number }
+  /** Graph no longer has this message. Permanent. */
+  | { status: "gone"; httpStatus: number }
+  /** We could not ask. Transient, and NOT the same as "no attachments". */
+  | { status: "unavailable"; httpStatus: number | null; error: string };
+
+/**
+ * What is actually attached to one message, with the signature furniture gone.
+ *
+ * TWO THINGS THIS DOES THAT THE ORIGINAL LOOP DID NOT.
+ *
+ * It selects isInline. Every rep here has an HTML signature, and an HTML
+ * signature carries a logo, so hasAttachments is true on almost every message
+ * any of them sends. Counting those as attachments would make "the rep sent
+ * the proposal" fire across most of the book, and a flag that fires on most of
+ * the book is not a flag. Graph does not always set isInline on a signature
+ * image, so a small image with no meaningful name is dropped as well, and the
+ * count of what was dropped is returned rather than being silently absorbed.
+ *
+ * It distinguishes "could not list" from "nothing attached". The original
+ * skipped a failed sub-request with `continue`, which is indistinguishable
+ * downstream from a message that had no files on it. Once that answer is
+ * persisted, the difference is the whole point of storing it.
+ */
+export async function listMessageAttachments(args: {
+  tenantIdOrDomain: string;
+  mailbox: string;
+  messageId: string;
+}): Promise<MessageAttachmentsResult> {
+  assertMailboxAllowed(args.mailbox);
+  let res: Response;
+  try {
+    const tenantId = await resolveGraphTenantId(args.tenantIdOrDomain);
+    const token = await getAppOnlyToken(tenantId);
+    const url =
+      `${GRAPH_BASE}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}` +
+      `/attachments?$select=id,name,contentType,size,isInline`;
+    res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  } catch (err) {
+    return { status: "unavailable", httpStatus: null, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!res.ok) {
+    return res.status === 404 || res.status === 410
+      ? { status: "gone", httpStatus: res.status }
+      : { status: "unavailable", httpStatus: res.status, error: `graph ${res.status}` };
+  }
+  let raw: Array<{ id: string; name?: string; contentType?: string; size?: number; isInline?: boolean; "@odata.type"?: string }>;
+  try {
+    raw = ((await res.json()) as { value?: typeof raw }).value ?? [];
+  } catch (err) {
+    return { status: "unavailable", httpStatus: res.status, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const all: MessageAttachment[] = raw.map((a) => ({
+    id: String(a.id),
+    name: String(a.name ?? ""),
+    contentType: String(a.contentType ?? ""),
+    size: Number(a.size ?? 0),
+    isInline: a.isInline === true,
+    odataType: String(a["@odata.type"] ?? ""),
+  }));
+  const attachments = all.filter((a) => !isSignatureFurniture(a));
+  return { status: "ok", attachments, skippedInline: all.length - attachments.length };
+}
+
+/** Small inline images are a signature, not a document the rep chose to send. */
+const SIGNATURE_IMAGE_MAX_BYTES = 40_000;
+
+function isSignatureFurniture(a: MessageAttachment): boolean {
+  if (a.isInline) return true;
+  // Graph does not reliably set isInline, so a small image whose name is a
+  // generated token ("image001.png") is treated the same way. A real screenshot
+  // a customer sent is normally larger than this and usually named.
+  return a.contentType.startsWith("image/") && a.size <= SIGNATURE_IMAGE_MAX_BYTES && /^image\d{3,}\./i.test(a.name);
 }
 
 /** One attachment's bytes, base64, as Graph stores them. */

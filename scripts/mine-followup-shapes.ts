@@ -22,7 +22,8 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import { isMeetingInviteBoilerplate, stripMailChrome } from "../lib/followup-draft";
+import { isMeetingInviteBoilerplate } from "../lib/followup-draft";
+import { stripMailChrome, trimMessageBody } from "../lib/mail-body";
 import { getMessageBody } from "../lib/graph-mail";
 import { supabaseAdmin } from "../lib/supabase";
 import { resolveTenantId } from "../lib/tenant-deal-lookup";
@@ -49,22 +50,12 @@ function overlaps(a: string, b: string): boolean {
   return hit > 0.55;
 }
 
-/** Strip quoted history, signatures and disclaimers so shape is readable. */
-function trim(body: string): string {
-  const head = body
-    .split(/\n\s*(?:From:|On .{0,60} wrote:|-----Original Message-----|_{5,}|CAUTION: This email)/)[0]
-    .replace(/\r/g, "")
-    .trim();
-  return head
-    .split("\n")
-    .filter((l) => !/^\s*\[cid:|^\s*NOTICE:|automatically generated/i.test(l))
-    .join("\n")
-    // Safelinks wrap every URL in 900 characters of tracking that drowns the
-    // shape we are here to read.
-    .replace(/<https?:\/\/[^>]{60,}>/g, "")
-    .replace(/https?:\/\/\S{120,}/g, "[long link]")
-    .trim();
-}
+/**
+ * The Safelinks and disclaimer stripping that used to live here is now in
+ * lib/mail-body.ts, which is also what production stores. A diagnostic that
+ * trims differently from the ingest is reading a different email than the one
+ * the model will see.
+ */
 
 async function main(): Promise<void> {
   const only = arg("--type");
@@ -115,7 +106,7 @@ async function main(): Promise<void> {
         messageId: m.graph_message_id,
       }).catch(() => null);
       if (!body) continue;
-      const t = trim(body);
+      const t = trimMessageBody(body).text;
       if (t.length < 120) continue;
       // A Teams invite or reminder is not a follow-up.
       if (isMeetingInviteBoilerplate(`${m.subject ?? ""}\n${t}`)) continue;

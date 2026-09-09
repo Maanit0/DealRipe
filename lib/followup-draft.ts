@@ -31,6 +31,7 @@ import { draftArchiveHtml } from "./draft-archive";
 import { bodyTextToHtml, hasHtmlSignature, signatureFor, signatureHtml } from "./rep-signature-html";
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
+import { cutQuotedTail, stripMailChrome } from "./mail-body";
 import { bundleForNamedAttachments, collateralPromptBlock } from "./magaya-collateral";
 import { applyMagayaTerms, MAGAYA_GLOSSARY } from "./magaya-terms";
 import { repName } from "./display-names";
@@ -439,15 +440,16 @@ export async function voiceSamples(mailbox: string): Promise<string[]> {
   return withBodies.map(({ m, body }) => {
     if (!body) return `Subject: ${m.subject}\n${m.preview}`;
     // Trim the quoted thread below a reply, which is someone else's writing.
-    // Cut the quoted thread. Outlook's text rendering separates a reply with a
-    // long underscore rule before "From:", which the original pattern missed
-    // entirely, so Steven's samples carried the whole chain. That made them long
-    // enough to trip the head/tail truncation, which put his sign-off in the
-    // head and a "[...]" marker where his name should have been.
-    const own = body
-      .split(/\n\s*(?:_{10,}|-{10,})\s*\n(?=\s*(?:From|Sent|To|Subject):)/)[0]
-      .split(/\n\s*(?:From:|On .{0,60}wrote:|-----Original Message-----)/)[0]
-      .trim();
+    // Outlook's text rendering separates a reply with a long underscore rule
+    // before "From:", which an earlier pattern here missed entirely, so
+    // Steven's samples carried the whole chain. That made them long enough to
+    // trip the head/tail truncation, which put his sign-off in the head and a
+    // "[...]" marker where his name should have been.
+    //
+    // cutQuotedTail and NOT trimMessageBody: a voice sample is the one place
+    // that WANTS the signature furniture, because the sign-off is the thing
+    // being learned. Only the quoted tail is someone else's writing.
+    const own = cutQuotedTail(body).trim();
     if (own.length <= VOICE_HEAD + VOICE_TAIL) return `Subject: ${m.subject}\n${own}`;
     // Head carries the greeting and register, tail carries the sign-off.
     return `Subject: ${m.subject}\n${own.slice(0, VOICE_HEAD)}\n[...]\n${own.slice(-VOICE_TAIL)}`;
@@ -498,40 +500,16 @@ export function isMeetingInviteBoilerplate(text: string): boolean {
 /**
  * Where the rep's own writing ends and somebody else's quoted message begins.
  *
- * Outlook opens a quoted original with a separator that CARRIES TEXT, so the
- * bare-rule strip below never matched it, and the header block underneath is
- * all short lines that sail through the 60-char filter in learnSignature.
+ * This lived here, and the cut it performs is the strongest of the four that
+ * existed, which is why it is now in lib/mail-body.ts and re-exported rather
+ * than reimplemented: email-log and deal-memory each had a weaker copy, so
+ * every caller got some of the fix and none got all of it. The reasoning that
+ * produced the line-anchored boundary, including Ariel's Black Gold drafts on
+ * 2026-08-12, moved with it.
  *
- * Ariel's sent mail is mostly replies to meeting invites. His learned
- * "signature" came out as his sign-off, his name, then
- * "-----Original Appointment-----" and the invite headers. Appended to a draft,
- * the body ended in a dash, the completeness check read that as a truncation,
- * and every draft he should have had was discarded before it reached his
- * Outlook. That is the Black Gold call on 2026-08-12 and it was never about the
- * reply path.
- *
- * Everything past the first boundary is another person's prose. It is wrong in
- * a signature and wrong in a voice sample, so it is cut in one place for both.
+ * Re-exported because scripts/mine-followup-shapes.ts imports it from here.
  */
-const QUOTED_BOUNDARY_RE =
-  /^\s*(?:-{2,}\s*original\s+(?:message|appointment)\s*-{2,}|_{5,}\s*$|from:\s|sent:\s|on\s.{0,160}\swrote:\s*$|>)/i;
-
-function cutQuotedTail(text: string): string {
-  const lines = text.split("\n");
-  const at = lines.findIndex((l) => QUOTED_BOUNDARY_RE.test(l));
-  return at === -1 ? text : lines.slice(0, at).join("\n");
-}
-
-export function stripMailChrome(text: string): string {
-  return cutQuotedTail(text)
-    .replace(/Get Outlook for (iOS|Android)\s*<[^>]*>/gi, "")
-    .replace(/Sent from my (iPhone|iPad|Android|BlackBerry)[^\n]*/gi, "")
-    .replace(/\[cid:[^\]]*\]\s*(<[^>]*>)?/gi, "")
-    .replace(/\[(?:A |An )?[^\]]{0,80}(?:picture|image|drawing|logo)[^\]]{0,80}\]\s*(<[^>]*>)?/gi, "")
-    .replace(/^[_\-\u2500-\u257F]{6,}$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
+export { stripMailChrome };
 
 /** Sign-offs reps actually use. Order does not matter; the match does. */
 const SIGNOFF_RE =

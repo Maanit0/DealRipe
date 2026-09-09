@@ -20,7 +20,13 @@
  * co-sold deals are exactly where recaps and drafts go to the wrong person.
  */
 
-const SELLER_DOMAIN = "magaya.com";
+/**
+ * Exported because roughly a dozen modules had grown their own copy of this
+ * string and its endsWith test. The doc below on rosterFromMeeting explains why
+ * that matters: two functions walking the same invite with their own rules is
+ * how one of them ends up naming a distribution list.
+ */
+export const SELLER_DOMAIN = "magaya.com";
 
 export type MeetingAttendee = { name?: string | null; email?: string | null };
 export type ContactTitle = { name: string; title: string | null; email: string | null };
@@ -36,7 +42,7 @@ export type BriefingAttendee = {
   side: "customer" | "colleague" | "mailbox";
 };
 
-function isSeller(email: string | null | undefined): boolean {
+export function isSeller(email: string | null | undefined): boolean {
   return (email ?? "").toLowerCase().endsWith(`@${SELLER_DOMAIN}`);
 }
 
