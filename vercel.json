@@ -67,6 +67,10 @@
     {
       "path": "/api/cron/feedback-watch",
       "schedule": "7,22,37,52 * * * *"
+    },
+    {
+      "path": "/api/cron/company-memory",
+      "schedule": "30 7 * * *"
     }
   ]
 }
