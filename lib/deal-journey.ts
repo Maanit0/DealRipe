@@ -39,6 +39,7 @@
  * export. Anything derived from a transcript is still transcript.
  */
 
+import { readDealMemory, type PriorCommitment } from "./deal-memory";
 import { detectMicroOutcomes, type MicroOutcome } from "./micro-outcomes";
 import { supabaseAdmin } from "./supabase";
 
@@ -51,6 +52,7 @@ export type JourneyChannel =
   | "dealripe"
   | "gate"
   | "activity"
+  | "commitment"
   | "outcome";
 
 /**
@@ -121,12 +123,40 @@ export type JourneyCoverage = {
   notes: string[];
 };
 
+/**
+ * One captured conversation, in full.
+ *
+ * The transcript is the least compressed thing DealRipe holds: 5.2M characters
+ * across 222 conversations, stored raw. Everything else about a call is derived
+ * from it, so a journey that shows a character count is showing the shadow of
+ * the evidence rather than the evidence.
+ *
+ * NDA MATERIAL, unambiguously. This is the customer speaking.
+ */
+export type JourneyTranscript = {
+  callId: string;
+  at: string;
+  subtype: string | null;
+  meetingType: string | null;
+  chars: number;
+  text: string;
+};
+
 export type DealJourney = {
   dealId: string;
   account: string;
   outcomeLabel: string | null;
   events: JourneyEvent[];
   gathered: GatheredField[];
+  /** Full text of every captured conversation, oldest first. */
+  transcripts: JourneyTranscript[];
+  /**
+   * What DealRipe's drafts promised the customer, and whether the draft
+   * carrying each promise actually left the mailbox. "unsent" matters: a
+   * promise the customer never received is not a commitment, and offering it as
+   * one invents an obligation.
+   */
+  commitments: PriorCommitment[];
   outcomes: MicroOutcome[];
   coverage: JourneyCoverage;
 };
@@ -366,6 +396,29 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     });
   }
 
+  // COMMITMENTS. Read through readDealMemory rather than re-deriving, so the
+  // journey cannot disagree with what the follow-up draft is told. Best effort:
+  // it reaches Graph for draft adoption and a failure there must not cost the
+  // whole journey.
+  let commitments: PriorCommitment[] = [];
+  try {
+    commitments = (await readDealMemory({ tenantId, dealId })).toldThemWeWould;
+  } catch (err) {
+    console.error(`[journey] commitments unavailable for ${dealId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  for (const c of commitments) {
+    events.push({
+      at: c.when,
+      channel: "commitment",
+      // Ours: we wrote it. Whether the CUSTOMER received it is delivery, and
+      // an unsent promise is not an obligation.
+      authorship: "dealripe",
+      kind: `commitment:${c.delivery}`,
+      summary: `we said we would: ${clip(c.text, 140)}${c.delivery === "sent" ? "" : c.delivery === "unsent" ? "   [DRAFT NEVER SENT: not a real promise]" : "   [delivery unknown]"}`,
+      source: { table: "sent_messages", id: dealId },
+    });
+  }
+
   const allOutcomes = await detectMicroOutcomes(tenantId);
   const outcomes = allOutcomes.filter((o) => o.dealId === dealId);
   // AUTHORSHIP PER OUTCOME KIND, and this is where it matters most.
@@ -420,6 +473,20 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     account: deal.account,
     outcomeLabel: deal.outcome_label,
     events: events.filter((e) => e.at).sort((a, b) => a.at.localeCompare(b.at)),
+    transcripts: calls
+      .map((c) => ({
+        callId: c.id,
+        at: String(c.call_date ?? c.scheduled_start ?? ""),
+        subtype: c.call_subtype,
+        meetingType: c.meeting_type,
+        chars: charsByCall.get(c.id) ?? 0,
+        text: transcripts.find((t) => t.call_id === c.id)?.body ?? "",
+      }))
+      // Joining noise is not a conversation: a no-show still produces a
+      // transcript of "okay" and "I'll be on the line".
+      .filter((t) => t.chars >= MIN_CONVERSATION_CHARS && t.at)
+      .sort((a, b) => a.at.localeCompare(b.at)),
+    commitments,
     gathered: extractions
       .filter((e) => e.status !== "unknown")
       .map((e) => ({

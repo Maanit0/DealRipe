@@ -5,6 +5,7 @@
  *   npx tsx scripts/deal-journey.ts --account Dunavant
  *   npx tsx scripts/deal-journey.ts --all --json      # every deal to .previews/
  *   npx tsx scripts/deal-journey.ts --account X --gathered   # + the framework answers
+ *   npx tsx scripts/deal-journey.ts --account X --transcripts  # + every word said
  *
  * READ ONLY.
  *
@@ -36,7 +37,7 @@ function arg(n: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function render(j: DealJourney, showGathered: boolean): string {
+function render(j: DealJourney, showGathered: boolean, showTranscripts: boolean): string {
   const L: string[] = [];
   L.push("");
   L.push("=".repeat(100));
@@ -104,6 +105,30 @@ function render(j: DealJourney, showGathered: boolean): string {
     }
   }
 
+  if (j.commitments.length > 0) {
+    L.push("");
+    L.push(`  WHAT WE SAID WE WOULD DO  (${j.commitments.length})`);
+    L.push("  " + "-".repeat(96));
+    for (const c of j.commitments) {
+      // "unsent" is called out because a promise the customer never received is
+      // not a commitment, and reading it as one invents an obligation.
+      const tag = c.delivery === "sent" ? "sent  " : c.delivery === "unsent" ? "UNSENT" : "?     ";
+      L.push(`    ${c.when.slice(0, 10)}  [${tag}] ${c.text.slice(0, 110)}`);
+    }
+  }
+
+  if (showTranscripts && j.transcripts.length > 0) {
+    L.push("");
+    L.push(`  FULL TRANSCRIPTS  (${j.transcripts.length} conversations, ${j.transcripts.reduce((n, t) => n + t.chars, 0)} chars)`);
+    for (const t of j.transcripts) {
+      L.push("");
+      L.push("  " + "=".repeat(96));
+      L.push(`  ${t.at.slice(0, 10)}  ${t.subtype ?? "unclassified"}${t.meetingType ? ` / ${t.meetingType}` : ""}  ${t.chars} chars`);
+      L.push("  " + "=".repeat(96));
+      for (const line of t.text.split("\n")) if (line.trim()) L.push(`    ${line.trim()}`);
+    }
+  }
+
   L.push("");
   L.push(`  OUTCOMES  (${j.outcomes.length})`);
   L.push("  " + "-".repeat(96));
@@ -121,6 +146,7 @@ async function main(): Promise<void> {
   const all = process.argv.includes("--all");
   const asJson = process.argv.includes("--json");
   const showGathered = process.argv.includes("--gathered");
+  const showTranscripts = process.argv.includes("--transcripts");
 
   let dealIds: string[] = [];
   if (dealArg) dealIds = [dealArg];
@@ -156,12 +182,17 @@ async function main(): Promise<void> {
     writeFileSync(path, JSON.stringify(built, null, 2), "utf8");
     console.log(`\n  ${built.length} journey/journeys written to ${path}`);
     console.log(`  ${built.reduce((n, j) => n + j.events.length, 0)} events total.`);
+    console.log(
+      `  ${built.reduce((n, j) => n + j.transcripts.length, 0)} full transcripts ` +
+        `(${built.reduce((n, j) => n + j.transcripts.reduce((m, t) => m + t.chars, 0), 0)} chars), ` +
+        `${built.reduce((n, j) => n + j.commitments.length, 0)} commitments.`,
+    );
     console.log(`  GITIGNORED AND NDA MATERIAL. Do not commit it or send it anywhere.\n`);
     return;
   }
 
   for (const j of built.sort((a, b) => b.events.length - a.events.length)) {
-    console.log(render(j, showGathered));
+    console.log(render(j, showGathered, showTranscripts));
   }
 }
 

@@ -465,6 +465,47 @@ function repFirstName(mailbox: string): string {
   return repName(mailbox);
 }
 
+/**
+ * The rep is the sender. Rewrite them out of the third person.
+ *
+ * WHY A DETERMINISTIC PASS AND NOT JUST A PROMPT RULE. This email leaves the
+ * rep's own mailbox with their signature on it, so "Steven sent the NDA to the
+ * CFO during the call" is writing about yourself in the third person, and it is
+ * the single clearest tell that a machine wrote the draft. Rule 9b says so, and
+ * a rule the model can slip on is worth a rewrite it cannot: this is the same
+ * treatment em-dashes and "please find attached" already get here, and the same
+ * fix imperativeCommitment applies in lib/recap-lint.ts for the recap.
+ *
+ * ONLY THE SENDER'S OWN NAME. A colleague named in the third person is correct
+ * ("Ernesto will set up the sandbox"), so this must never touch a name that is
+ * not the mailbox owner's. Word-boundary anchored, and it deliberately does not
+ * touch a possessive ("Steven's team") where the rewrite would be wrong.
+ */
+export function fixThirdPersonSender(body: string, firstName: string): { body: string; fixed: number } {
+  const name = firstName.trim().split(/\s+/)[0];
+  if (name.length < 2) return { body, fixed: 0 };
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let fixed = 0;
+  const sub = (re: RegExp, to: string | ((m: string) => string)) => {
+    body = body.replace(re, (m: string) => {
+      fixed += 1;
+      return typeof to === "string" ? to : to(m);
+    });
+  };
+  // "Steven: will follow up" in a numbered next step.
+  sub(new RegExp(`\\b${n}:\\s*will\\b`, "g"), "I'll");
+  sub(new RegExp(`\\b${n}:\\s*(?=[a-z])`, "g"), "I'll ");
+  sub(new RegExp(`\\b${n}\\s+will\\b`, "g"), "I'll");
+  sub(new RegExp(`\\b${n}\\s+is\\s+(?=\\w+ing\\b)`, "g"), "I'm ");
+  sub(new RegExp(`\\b${n}\\s+has\\b`, "g"), "I've");
+  sub(new RegExp(`\\b${n}\\s+(sent|shared|attached|confirmed|scheduled|sends|reviewed|added)\\b`, "g"), (m: string) => {
+    const verb = m.split(/\s+/)[1];
+    return `I ${verb === "sends" ? "send" : verb}`;
+  });
+  return { body, fixed };
+}
+
+
 
 // ====================================================================
 // Voice sample hygiene
@@ -735,7 +776,13 @@ Non-negotiable:
 
 8. Any proposed time carries a TIMEZONE. "Thursday, August 13th at 10:00 AM ET", never a bare "10:00 AM". These customers span Canada, Latin America, Europe and Asia, and an unqualified time is how a booked meeting turns into a no-show. When the customer's own timezone is given below, state the time in THEIRS, then the rep's in brackets: "10:00 AM ET (9:00 AM CT my time)". Writing a time only in the seller's zone quietly makes the buyer do the conversion.
 9. Distinguish what is IN THIS EMAIL from what will be REVIEWED at the meeting. A datasheet or a video LINK from the collateral list is in this email, and present tense is correct for those. A RECORDING IS NOT: DealRipe never has one, so it is never in this email. A proposal, pricing or an implementation estimate is walked through live, because emailing it ahead removes the reason for the meeting and lets the buyer evaluate it alone. Unless the transcript shows the rep explicitly promising to email a proposal ahead, do NOT say it is coming. Do not lump them together: "the proposal, recording and estimate are on their way" is wrong when only the recording is going now.
-9a. NAME WHO OWES WHAT. Where the call left work on both sides, say whose each piece is: "Steven is checking internally on the PCIT integration", "once you've forwarded one of the draft airway bills to the carrier". A list of things that will happen with nobody attached to them reads as a summary; the same list with owners reads as a plan, and the customer can see their half.
+9a. NAME WHO OWES WHAT, IN FIRST AND SECOND PERSON. Where the call left work on both sides, say whose each piece is, because a list of things that will happen with nobody attached reads as a summary and the same list with owners reads as a plan. But the owner is written the way a person writes: "I'll check internally on the PCIT integration", "once you've forwarded one of the draft airway bills to the carrier". Name a COLLEAGUE in the third person, never yourself and never the recipient.
+
+9b. YOU ARE THE SENDER. WRITE AS "I". This email goes out from the rep's own mailbox with their signature on it, so referring to them by name is writing about yourself in the third person and it is the single clearest tell that a machine wrote the draft. "Steven sent the NDA to the CFO's email during the call" must be "I sent the NDA over during the call". "Steven: will follow up directly if we haven't seen the signed NDA" must be "I'll follow up directly if I haven't seen the signed NDA by Friday". The rep's name appears in exactly one place, the signature, and that is appended for you.
+
+9c. THE CUSTOMER IS "YOU". Never write the recipient's company or the recipient themselves in the third person. "Suntechmed just received privileged application approval" is a line from a pipeline review; to the customer it is "You've just received privileged application approval". Their company name belongs in the email when it is doing work (naming which entity, which office, which account) and nowhere else.
+
+9d. DO NOT TELL THE CUSTOMER FACTS ABOUT THEIR OWN ORGANISATION. "The CFO holds signing authority for contracts and NDAs" is a qualification note we wrote for ourselves. They know who signs their contracts, and reading our record of it back to them is the moment the email stops sounding like a person and starts sounding like a CRM. The same fact is useful in the email ONLY as an action addressed to them: "Could you confirm the NDA reached your CFO". Facts about their org that came from the extraction belong in the briefing and the recap, which the rep reads. This email is not those documents. IF A LINE WOULD FIT UNDER A HEADING IN A DEAL REVIEW, IT DOES NOT BELONG HERE.
 
 10. SHAPE FOLLOWS THE CALL. There is no fixed skeleton, because the job of the email changes with what happened: a discovery that surfaced five things needs a recap, a short check-in needs two lines, a proposal review needs the terms. Decide the shape from the call, then write it. Formatting rules that always hold: short standalone lines with a blank line between them, never a dense paragraph, because a rep reads this on a phone between calls. Where the call produced several distinct points, a labelled block is correct and is what these reps write. Eduardo's shape, when the call earns it: a one line opener naming something specific, "Quick recap of what we covered:" with a bulleted line per point, "Next steps:" numbered with an owner on each, then one line inviting correction. Use it when it fits and ignore it when it does not. A two line email after a two minute call is a good email.
 10b. NEVER REFER TO SOMETHING THIS EMAIL DOES NOT CONTAIN. The ABC Cargo draft closed with "Let me know if anything looks off from the recap below" and there was no recap below: the model wrote the pointer and skipped the section. If you promise a recap, write the recap. If you do not write one, close on something else. The same applies to "see below", "as attached" and "the summary above".
@@ -1084,6 +1131,14 @@ export async function generateFollowUpDraft(
   }
   const parsed = parseJson(raw);
   if (!parsed) return null;
+
+  // The rep is the sender: write them out of the third person before anything
+  // else looks at the body. See fixThirdPersonSender.
+  const senderFix = fixThirdPersonSender(parsed.body, repFirstName(input.mailbox));
+  if (senderFix.fixed > 0) {
+    console.log(`[draft] rewrote ${senderFix.fixed} third-person reference(s) to the sender`);
+    parsed.body = senderFix.body;
+  }
 
   // Reject a body that stops mid-thought. Anthropic's stop_reason tells us when
   // the model ran out of room, and a body not ending in terminal punctuation or
