@@ -19,7 +19,7 @@ import { type MeetingType } from "./meeting-classify";
 import { buildRecap, type RecapBuild } from "./recap-build";
 import { formatMeetingTime } from "./graph-time";
 import { renderRecapEmailBody, renderRecapNote } from "./recap-render";
-import { formatMeetingWhen } from "./followup-draft";
+import { formatMeetingWhen , agreedFromNextSteps } from "./followup-draft";
 import { MailerConfigError, sendEmail } from "./mailer";
 import { getDealContext } from "./deal-context";
 import { recipientsForCall } from "./call-recipients";
@@ -31,6 +31,29 @@ import { recordSentMessage } from "./sent-messages";
 import { getDealExtraction, getUpcomingCallForDeal } from "./supabase-queries";
 import { supabaseAdmin } from "./supabase";
 import { createTasksForCall, generateTasksFromCall, type GeneratedTask } from "./tasks";
+
+/**
+ * What was AGREED on the call, as structure rather than as sentences.
+ *
+ * It used to be two string arrays, and the strings came from the recap's
+ * nextSteps AFTER imperativeCommitment had rendered them as instructions with
+ * the owner in brackets: "Send the NDA to the CFO. (Steven)". The follow-up
+ * draft was then told to restate that briefly, and faithfully produced "Steven
+ * sent the NDA to the CFO" in an email Steven was sending.
+ *
+ * The judgement in this object is worth keeping and worth passing: DISCUSSED IS
+ * NOT AGREED, and deciding that twice in two places is how the two answers
+ * disagree. The PROSE is not, because a string is a sentence and a sentence in
+ * the recap's register will be copied into an email written in another one.
+ *
+ * So the owner travels as a field and never inside the text. A consumer that
+ * wants "I'll" or "you" composes it; nothing can copy a name out of a body it
+ * was never in.
+ */
+export type AgreedCommitments = {
+  weOwe: Array<{ what: string; owner: string | null }>;
+  customerOwes: Array<{ what: string; owner: string | null }>;
+};
 
 export type NotifyResult = {
   sent: boolean;
@@ -50,7 +73,7 @@ export type NotifyResult = {
    * because the call discussed one. Every line here has a transcript quote
    * behind it.
    */
-  agreed?: { weOwe: string[]; customerOwes: string[] };
+  agreed?: AgreedCommitments;
   /**
    * The recap rendered as a Salesforce Note body.
    *
@@ -122,7 +145,7 @@ export async function sendPostCallSummary(args: {
    */
   makeDraft?: (ctx: {
     summary?: PostCallSummary;
-    agreed?: { weOwe: string[]; customerOwes: string[] };
+    agreed?: AgreedCommitments;
   }) => Promise<{ html: string; text: string } | null>;
 }): Promise<NotifyResult> {
   const db = supabaseAdmin();
@@ -259,7 +282,7 @@ export async function sendPostCallSummary(args: {
   // Handed back so the follow-up draft can reuse it. Regenerating would be a
   // second Anthropic call on every ingest for identical output.
   let qualSummary: PostCallSummary | undefined;
-  let agreed: { weOwe: string[]; customerOwes: string[] } | undefined;
+  let agreed: AgreedCommitments | undefined;
   let genTasks: GeneratedTask[] = [];
 
   email = renderRecapEmail(built, {
@@ -303,10 +326,7 @@ export async function sendPostCallSummary(args: {
       history: built.history,
     });
     if (built.narrative.status === "present") {
-      agreed = {
-        weOwe: built.narrative.value.nextSteps.weOwe.map((f) => f.statement),
-        customerOwes: built.narrative.value.nextSteps.customerOwes.map((f) => f.statement),
-      };
+      agreed = agreedFromNextSteps(built.narrative.value.nextSteps);
     }
   }
 
@@ -570,7 +590,7 @@ async function defaultDraft(a: {
   transcript: string;
   meetingType: string | null;
   summary?: PostCallSummary;
-  agreed?: { weOwe: string[]; customerOwes: string[] };
+  agreed?: AgreedCommitments;
 }): Promise<{ html: string; text: string } | null> {
   if (!a.callId) return null;
   const { supabaseAdmin } = await import("./supabase");

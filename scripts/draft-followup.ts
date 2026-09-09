@@ -104,12 +104,12 @@ async function main(): Promise<void> {
   // exists to check for.
   const { buildNarrative } = await import("../lib/recap-passes");
   const narrative = await buildNarrative({ account: ctx.account, transcript: tr.data.body });
+  // agreedFromNextSteps, not a local copy: a preview that maps this differently
+  // from production stops testing production.
+  const { agreedFromNextSteps } = await import("../lib/followup-draft");
   const agreed =
     narrative.result.status === "present"
-      ? {
-          weOwe: narrative.result.value.nextSteps.weOwe.map((f) => f.statement),
-          customerOwes: narrative.result.value.nextSteps.customerOwes.map((f) => f.statement),
-        }
+      ? agreedFromNextSteps(narrative.result.value.nextSteps)
       : undefined;
   console.log(
     agreed

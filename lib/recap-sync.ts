@@ -1,3 +1,4 @@
+import type { AgreedForDraft } from "./followup-draft";
 /**
  * The recap and the follow-up draft, on their own cron.
  *
@@ -332,7 +333,7 @@ export async function runRecapSync(
       // the card and never the recap.
       const makeDraft = async (ctx: {
         summary?: PostCallSummary;
-        agreed?: { weOwe: string[]; customerOwes: string[] };
+        agreed?: AgreedForDraft;
       }): Promise<{ html: string; text: string } | null> => {
         const { autoDraftFollowUpForCall } = await import("./followup-draft");
         const callRow = await db

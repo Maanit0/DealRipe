@@ -48,6 +48,49 @@ const VOICE_SAMPLES = 6;
 const VOICE_HEAD = 700;
 const VOICE_TAIL = 300;
 
+/**
+ * What was agreed, with the owner as a FIELD and never inside the text.
+ * See the note on FollowUpDraftInput.agreed.
+ */
+export type AgreedForDraft = {
+  weOwe: Array<{ what: string; owner: string | null }>;
+  customerOwes: Array<{ what: string; owner: string | null }>;
+};
+
+/**
+ * Turn the recap's nextSteps into commitments with the owner as a FIELD.
+ *
+ * imperativeCommitment renders a commitment as "Send the NDA to the CFO.
+ * (Steven)": the bracketed name is a record-keeping device for the rep reading
+ * the recap, and it must never reach an email body, because restating it
+ * produces "Steven sent the NDA" in an email Steven is sending.
+ *
+ * EXPORTED SO THERE IS ONE OF THESE. lib/post-call-notify.ts builds this on the
+ * live path and scripts/draft-followup.ts built its own copy for the preview,
+ * which is how a preview quietly stops testing what production does.
+ */
+export function agreedFromNextSteps(nextSteps: {
+  weOwe: Array<{ statement: string }>;
+  customerOwes: Array<{ statement: string }>;
+}): AgreedForDraft {
+  // A trailing parenthetical is only an OWNER if it looks like a name. Reps
+  // write trailing parentheticals that are not: "Send the revised quote
+  // (including the WMS tier)" would otherwise have "including the WMS tier"
+  // lifted out as the owner and deleted from the commitment, which loses the
+  // scope of what was promised. One to three capitalised words, optionally
+  // joined by "and".
+  const LOOKS_LIKE_A_NAME = /^[A-Z][\w.'-]*(?:\s+(?:and|&)?\s*[A-Z][\w.'-]*){0,2}$/;
+  const split = (statement: string): { what: string; owner: string | null } => {
+    const m = /^(.*?)\s*\(([^()]{2,40})\)\s*$/.exec(statement.trim());
+    if (!m || !LOOKS_LIKE_A_NAME.test(m[2].trim())) return { what: statement.trim(), owner: null };
+    return { what: m[1].trim(), owner: m[2].trim() };
+  };
+  return {
+    weOwe: nextSteps.weOwe.map((f) => split(f.statement)),
+    customerOwes: nextSteps.customerOwes.map((f) => split(f.statement)),
+  };
+}
+
 export type FollowUpDraftInput = {
   /** The rep's mailbox. Must be on GRAPH_MAIL_ALLOWED_MAILBOXES. */
   mailbox: string;
@@ -111,7 +154,17 @@ export type FollowUpDraftInput = {
    * implementation estimate he was never sending, because the call discussed
    * one and he was only sending a recording. Discussed is not agreed.
    */
-  agreed?: { weOwe: string[]; customerOwes: string[] };
+  /**
+   * What was AGREED, as structure. The owner is a FIELD and never inside the
+   * text: imperativeCommitment renders the recap's commitments as "Send the NDA
+   * to the CFO. (Steven)", and restating that produced "Steven sent the NDA" in
+   * an email Steven was sending.
+   *
+   * The recap and this draft are two artifacts for two audiences. The recap's
+   * JUDGEMENT travels (discussed is not agreed, which is a fact about the call
+   * and expensive to decide twice); the recap's PROSE does not.
+   */
+  agreed?: AgreedForDraft;
   /**
    * What the DEAL knows, beyond this one call. See lib/deal-memory.ts.
    *
@@ -955,10 +1008,16 @@ A REPLY IS STILL A POST-CALL EMAIL. Replying on an existing thread does NOT make
     // request.
     input.agreed && (input.agreed.weOwe.length > 0 || input.agreed.customerOwes.length > 0)
       ? [
-          `WHAT WAS ACTUALLY AGREED. Open the email by restating this briefly, in your own words, so the customer starts from established ground. These are the ONLY commitments that exist; anything else discussed on the call was discussed, not agreed, and must not be described as something you are sending.`,
-          input.agreed.weOwe.length > 0 ? `We owe them:\n${input.agreed.weOwe.map((x) => `- ${x}`).join("\n")}` : "",
+          `WHAT WAS ACTUALLY AGREED. These are the ONLY commitments that exist; anything else discussed on the call was discussed, not agreed, and must not be described as something you are sending.
+
+THIS BLOCK IS OUR INTERNAL RECORD AND IS NOT WRITTEN IN THE VOICE OF AN EMAIL. It comes from the recap, where a commitment is stored as an instruction with the owner in brackets, e.g. "Send the NDA to the CFO. (Steven)". Restating it as written produces "Steven sent the NDA to the CFO" in an email Steven is sending, which is the single clearest tell that a machine wrote the draft. TRANSLATE EACH LINE INTO FIRST OR SECOND PERSON BEFORE IT REACHES THE EMAIL: what we owe becomes "I'll", what they owe becomes "you". A name in brackets is a record keeping device and never appears in the body.
+
+Use it to open the email from established ground, in your own words.`,
+          input.agreed.weOwe.length > 0
+            ? `WE owe them, write each as "I'll ...":\n${input.agreed.weOwe.map((x) => `- ${x.what}`).join("\n")}`
+            : "",
           input.agreed.customerOwes.length > 0
-            ? `They owe us:\n${input.agreed.customerOwes.map((x) => `- ${x}`).join("\n")}`
+            ? `THEY owe us, write each as "you ...":\n${input.agreed.customerOwes.map((x) => `- ${x.what}`).join("\n")}`
             : "",
         ]
           .filter(Boolean)
@@ -1025,11 +1084,11 @@ A REPLY IS STILL A POST-CALL EMAIL. Replying on an existing thread does NOT make
  * a demo that gates an NDA.
  */
 function agreedMentionsUpcomingDemo(
-  agreed: { weOwe: string[]; customerOwes: string[] } | undefined,
+  agreed: AgreedForDraft | undefined,
 ): boolean {
   if (!agreed) return false;
   return [...agreed.weOwe, ...agreed.customerOwes].some((x) =>
-    /\b(demo|demonstration|presentation|walk ?through)\b/i.test(x),
+    /\b(demo|demonstration|presentation|walk ?through)\b/i.test(x.what),
   );
 }
 
@@ -1543,7 +1602,7 @@ export async function autoDraftFollowUpForCall(args: {
    */
   summary?: PostCallSummary;
   /** Verified commitments from the narrative pass. See FollowUpDraftInput. */
-  agreed?: { weOwe: string[]; customerOwes: string[] };
+  agreed?: AgreedForDraft;
   attendees?: string;
   callDate?: string | null;
   participants: unknown;
