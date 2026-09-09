@@ -29,6 +29,7 @@
  * script can print every decision.
  */
 
+import { diffResponses, recordResponseChanges } from "./calendar-response-log";
 import type { Json } from "./database.types";
 import { shouldJoinAutoMeeting } from "./join-gate";
 import {
@@ -475,7 +476,7 @@ async function processEvent(
   const candidates = seriesKey ? [callKey, ev.eventId, seriesKey] : [ev.eventId];
   const found = await db
     .from("calls")
-    .select("id, recall_bot_id, call_date, scheduled_start, external_id")
+    .select("id, recall_bot_id, call_date, scheduled_start, external_id, participants")
     .eq("deal_id", dealId)
     .in("external_id", candidates)
     .limit(3);
@@ -516,7 +517,7 @@ async function processEvent(
   if (!existing.data) {
     const sameSlot = await db
       .from("calls")
-      .select("id, recall_bot_id, call_date, external_id, scheduled_start")
+      .select("id, recall_bot_id, call_date, external_id, scheduled_start, participants")
       .eq("deal_id", dealId)
       .eq("scheduled_start", eventIso)
       .limit(2);
@@ -865,6 +866,29 @@ async function processEvent(
   // Same start instant, bot dispatched. Refresh participants in case attendees
   // changed. Reaching here with a moved start is the bug described above: this
   // update would write the new time onto the row while the bot kept the old one.
+  // THE RSVP, BEFORE IT IS OVERWRITTEN.
+  //
+  // The update below replaces calls.participants with the current roster,
+  // which is correct for the roster and destroys the response history: an
+  // attendee who declined on Monday and accepted on Wednesday leaves a row
+  // saying "accepted", and one removed from the invite leaves nothing. This is
+  // the only place DealRipe had the data and deleted it, so the diff is taken
+  // here rather than anywhere else.
+  //
+  // Best effort: recordResponseChanges never throws. calendar-sync decides
+  // whether a bot joins a customer meeting and instrumentation beside it must
+  // not be able to fail that.
+  const rsvpChanges = diffResponses({ stored: callRow.participants, incoming: ev.attendees });
+  if (rsvpChanges.length > 0) {
+    await recordResponseChanges({
+      tenantId,
+      dealId,
+      callId: callRow.id,
+      meetingStart: eventIso,
+      changes: rsvpChanges,
+    });
+  }
+
   const upd = await db
     .from("calls")
     .update({

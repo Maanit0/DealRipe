@@ -440,6 +440,51 @@ export type Database = {
         };
         Relationships: [];
       };
+      calendar_response_events: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          call_id: string | null;
+          email: string;
+          display_name: string | null;
+          customer_side: boolean | null;
+          /** Null on the first observation of this person on this meeting. */
+          from_response: string | null;
+          /** Graph's responseStatus, plus "removed", which is ours. */
+          to_response: string;
+          meeting_start: string | null;
+          observed_at: string;
+          /** The change happened inside (previous_observed_at, observed_at]. */
+          previous_observed_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          call_id?: string | null;
+          email: string;
+          display_name?: string | null;
+          customer_side?: boolean | null;
+          from_response?: string | null;
+          to_response: string;
+          meeting_start?: string | null;
+          observed_at?: string;
+          previous_observed_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          display_name?: string | null;
+          customer_side?: boolean | null;
+          from_response?: string | null;
+          to_response?: string;
+          meeting_start?: string | null;
+          observed_at?: string;
+          previous_observed_at?: string | null;
+        };
+        Relationships: [];
+      };
       rolldog_gate_events: {
         Row: {
           id: string;
