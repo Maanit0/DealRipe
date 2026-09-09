@@ -163,6 +163,41 @@ async function main(): Promise<void> {
     byDeal.set(m.deal_id, [...(byDeal.get(m.deal_id) ?? []), m]);
   }
 
+  // SEGMENT, because a renewal and a discovery call are not one dataset.
+  // 29 of 174 observed conversations are existing_customer and 9 are internal,
+  // so 22% of what looks like the corpus is not new-business qualification at
+  // all. Mixing them dilutes any signal that is specific to either.
+  //
+  // meeting_type is written by transcript-sync AFTER capture, so a deal with no
+  // captured call has no classification. That is "unknown", never "new
+  // business", and it is reported as its own segment rather than folded in.
+  const segment = arg("--segment"); // new | existing | unknown
+  const calls = await page<{ deal_id: string; meeting_type: string | null }>(
+    "calls",
+    "id, deal_id, meeting_type",
+    tenantId,
+  );
+  const kindByDeal = new Map<string, string>();
+  for (const c of calls) {
+    if (!c.meeting_type || c.meeting_type === "internal") continue;
+    const prev = kindByDeal.get(c.deal_id);
+    // An existing-customer call anywhere on the deal marks the whole deal:
+    // Account.Type is a property of the company, not of one meeting.
+    if (c.meeting_type === "existing_customer" || !prev) kindByDeal.set(c.deal_id, c.meeting_type);
+  }
+  const segOf = (d: string) =>
+    kindByDeal.get(d) === "existing_customer" ? "existing" : kindByDeal.has(d) ? "new" : "unknown";
+
+  const segCounts: Record<string, number> = {};
+  for (const d of byDeal.keys()) segCounts[segOf(d)] = (segCounts[segOf(d)] ?? 0) + 1;
+  console.log(`\n  deals with email, by segment: ${JSON.stringify(segCounts)}`);
+  if (segment) {
+    for (const d of [...byDeal.keys()]) if (segOf(d) !== segment) byDeal.delete(d);
+    console.log(`  restricted to segment "${segment}": ${byDeal.size} deals`);
+  } else {
+    console.log(`  (all segments; use --segment new|existing|unknown to split)`);
+  }
+
   // PROGRESSION, not victory. A deal advanced if Salesforce recorded a
   // StageName change on it at any point we hold. Deliberately not the outcome
   // label: 9 won and 17 lost is too small, and 5 of the losses are one sweep.
