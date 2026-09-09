@@ -7,8 +7,9 @@
  *
  * After this script runs for tenant T:
  *   - public.qualification_frameworks has one row (T, 'Magaya Rolldog', 'rolldog')
- *   - public.framework_fields has 33 rows: 10 Rolldog-writable sub-object
- *     fields + 17 briefing-only (3 cross-stage + 14 SQL stage-gate items)
+ *   - public.framework_fields has 35 rows: 10 Rolldog-writable sub-object
+ *     fields + 19 briefing-only (3 cross-stage + 14 SQL stage-gate items
+ *     + pain_points and why_us, added 2026-09-08)
  *     + 6 discovery-profile fields (5 mapped to Salesforce Sales Development
  *     fields, 1 NDA signal with no CRM field), each tagged with a stage_key
  *     (SQL1..SQL5)
@@ -163,6 +164,43 @@ const MAGAYA_FIELDS: MagayaFieldSeed[] = [
       attr: "why-looking-now",
       parser: "text",
     },
+  },
+  {
+    // ADDED 2026-09-08. Two things the framework never asked for, and both are
+    // on the list Eduardo cares about.
+    //
+    // WHY PAIN IS NOT why_looking. why_looking asks the business REASON they
+    // are evaluating a change ("we are growing and our system will not scale").
+    // A pain point is the mechanic that hurts: the double keying, the four
+    // hours a week reconciling, the customs entry that has to be retyped.
+    // docs/recap-target-eduardo.md calls that paragraph worth more than the
+    // whole gap audit, and it has been generated in recaps and demo strategies
+    // while living in no field, so nothing could ever query it.
+    //
+    // The question is written to force MECHANICS and reject CATEGORIES.
+    // "Customs sophistication is a decision driver" is a requirement category
+    // that leaked through the demo-strategy lint once; a pain describes
+    // something going wrong.
+    field_key: "pain_points",
+    label: "Situation",
+    question:
+      "Did the customer describe a specific problem that is costing them something today? Yes only if they named a MECHANIC that goes wrong, such as re-keying the same data into two systems, hours spent reconciling, an error that reaches a customer, or work that cannot be done at all. Then ANSWER WITH THE PROBLEM IN THEIR OWN TERMS. A category of interest such as 'customs sophistication matters to them' is NOT a pain point and is Unknown. THE ONLY TWO VALID STATUSES ARE Yes AND Unknown; never answer No, because a call that did not surface a pain has not established that none exists.",
+    stage_key: "SQL1",
+    // Briefing-only. Rolldog has no attribute for this and inventing one would
+    // write our prose into a customer's CRM field nobody asked us to fill.
+    write_target: null,
+  },
+  {
+    // WHY US, which sql3_selected_vendor cannot answer: that is a yes/no gate
+    // recording THAT they chose Magaya, never why. The reason is what a later
+    // deal in the same situation needs, and it is the thing a rep repeats in
+    // the next proposal.
+    field_key: "why_us",
+    label: "Situation",
+    question:
+      "Did the customer say what specifically about Magaya fits their problem, in their own words? Yes if they named a capability, a differentiator, or a reason they prefer this over an alternative, and then ANSWER WITH WHAT THEY SAID. Our own pitch repeated back by the rep is NOT evidence: it must come from the customer. Unknown if they have not said. THE ONLY TWO VALID STATUSES ARE Yes AND Unknown.",
+    stage_key: "SQL2",
+    write_target: null,
   },
   {
     field_key: "existing_systems",
