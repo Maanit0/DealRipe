@@ -50,6 +50,7 @@ export type JourneyChannel =
   | "calendar"
   | "dealripe"
   | "gate"
+  | "activity"
   | "outcome";
 
 /**
@@ -205,6 +206,20 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     ),
   ]);
 
+  // Rep-logged activity from the CRMs. Read separately and tolerantly: this
+  // table lands after the others, so a deal built before the migration should
+  // render the rest of its journey rather than failing whole.
+  let activities: Array<{ id: string; source_system: string; source_object: string; subject: string | null; body: string | null; activity_type: string | null; status: string | null; actor: string | null; occurred_at: string | null; created_at_source: string | null; is_ours: boolean }> = [];
+  try {
+    activities = await rows(
+      "crm_activities",
+      "id, source_system, source_object, subject, body, activity_type, status, actor, occurred_at, created_at_source, is_ours",
+      [["deal_id", dealId]],
+    );
+  } catch {
+    activities = [];
+  }
+
   const charsByCall = new Map(transcripts.map((t) => [t.call_id, String(t.body ?? "").length]));
   const events: JourneyEvent[] = [];
 
@@ -330,6 +345,24 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
       kind: `prescribed:${p.kind}`,
       summary: `DealRipe told the rep (${p.source ?? "briefing"}): ${clip(p.text, 160) ?? "(no text)"}`,
       source: { table: "prescribed_actions", id: p.id },
+    });
+  }
+
+  for (const a of activities) {
+    const at = a.occurred_at ?? a.created_at_source;
+    if (!at) continue;
+    events.push({
+      at,
+      channel: "activity",
+      // A rep logging what they did is a rep assertion, the same class as a
+      // stage move: it is what they say happened, not what was observed. Ours
+      // is marked separately so DealRipe's own Tasks are never read back as the
+      // rep's work.
+      authorship: a.is_ours ? "dealripe" : "seller",
+      kind: `${a.source_system}:${a.source_object}${a.is_ours ? ":ours" : ""}`,
+      summary: `${a.actor ?? "someone"} logged ${a.activity_type ?? a.source_object}${a.status ? ` [${a.status}]` : ""}: ${a.subject ?? "(no subject)"}`,
+      detail: clip(a.body, 400),
+      source: { table: "crm_activities", id: a.id },
     });
   }
 
