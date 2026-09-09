@@ -56,6 +56,21 @@ function render(j: DealJourney, showGathered: boolean): string {
   for (const n of j.coverage.notes) L.push(`    NOTE: ${n}`);
 
   L.push("");
+  L.push(`  WHO AUTHORED THE EVIDENCE`);
+  const byAuthor: Record<string, number> = {};
+  for (const e of j.events) byAuthor[e.authorship] = (byAuthor[e.authorship] ?? 0) + 1;
+  for (const k of ["buyer", "system", "mixed", "seller", "dealripe"]) {
+    if (!byAuthor[k]) continue;
+    const note =
+      k === "buyer" ? "  the customer's own words and actions. Ground truth."
+      : k === "system" ? "  a third party asserting a fact neither side can edit."
+      : k === "seller" ? "  the rep's assertions. Calibration material, not ground truth."
+      : k === "dealripe" ? "  our own output. Never evidence for our own claims."
+      : "  genuinely both sides.";
+    L.push(`    ${k.padEnd(10)} ${String(byAuthor[k]).padStart(4)}${note}`);
+  }
+
+  L.push("");
   L.push(`  TIMELINE  (${j.events.length} events)`);
   L.push("  " + "-".repeat(96));
   let lastDay = "";
@@ -67,7 +82,10 @@ function render(j: DealJourney, showGathered: boolean): string {
       lastDay = d;
     }
     const tag = e.channel.toUpperCase().padEnd(9);
-    L.push(`    ${tag} ${e.summary}`);
+    // Authorship in the margin, because reading a stage move and a customer
+    // reply as the same kind of fact is the mistake this column exists to stop.
+    const who = `<${e.authorship}>`.padEnd(10);
+    L.push(`    ${tag} ${who} ${e.summary}`);
     if (e.detail) {
       for (const line of String(e.detail).split("\n").slice(0, 6)) {
         if (line.trim()) L.push(`              | ${line.trim().slice(0, 96)}`);

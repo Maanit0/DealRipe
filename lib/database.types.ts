@@ -440,6 +440,58 @@ export type Database = {
         };
         Relationships: [];
       };
+      crm_activities: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          /** Null = no DealRipe deal for this account/opportunity. Row still kept. */
+          deal_id: string | null;
+          source_system: string;
+          /** Task | Event | activity. Kept separate on purpose. */
+          source_object: string;
+          external_id: string;
+          account_id: string | null;
+          opportunity_id: string | null;
+          subject: string | null;
+          /** Task/Event Description or Rolldog notes. Free text the rep wrote. */
+          body: string | null;
+          activity_type: string | null;
+          status: string | null;
+          actor: string | null;
+          occurred_at: string | null;
+          created_at_source: string | null;
+          observed_at: string;
+          /** TRUE when DealRipe wrote it. Consumers MUST filter on this. */
+          is_ours: boolean;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id?: string | null;
+          source_system: string;
+          source_object: string;
+          external_id: string;
+          account_id?: string | null;
+          opportunity_id?: string | null;
+          subject?: string | null;
+          body?: string | null;
+          activity_type?: string | null;
+          status?: string | null;
+          actor?: string | null;
+          occurred_at?: string | null;
+          created_at_source?: string | null;
+          observed_at?: string;
+          is_ours?: boolean;
+        };
+        Update: {
+          deal_id?: string | null;
+          subject?: string | null;
+          body?: string | null;
+          status?: string | null;
+          is_ours?: boolean;
+        };
+        Relationships: [];
+      };
       crm_field_events: {
         Row: {
           id: string;

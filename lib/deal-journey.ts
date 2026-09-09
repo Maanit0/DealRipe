@@ -52,10 +52,45 @@ export type JourneyChannel =
   | "gate"
   | "outcome";
 
+/**
+ * WHO AUTHORED THIS, which is a different question from where it came from and
+ * a more important one.
+ *
+ * A CRM stage is a rep's opinion typed into a box. An executed NDA is Adobe
+ * Sign asserting a fact neither side can edit. A customer's reply is the
+ * customer. Averaging those into "deal activity" is how a learning loop ends up
+ * training on bookkeeping, and this codebase already has the evidence: measured
+ * 2026-09-08, every email and call signal correlated NEGATIVELY with
+ * stage_advanced on comparable windows, while the same signals behaved sensibly
+ * against nda_executed. Stage movement is the rep remembering to update
+ * Salesforce.
+ *
+ * So the rule is: a learning TARGET should be buyer or system authored. Seller
+ * authorship is not noise, it is a different measurement, and it is the one
+ * per-rep calibration is made of: the gap between what a rep asserted and what
+ * the buyer actually did IS the coaching signal.
+ */
+export type Authorship =
+  /** The customer said it, wrote it, or did it. Cannot be edited by the rep. */
+  | "buyer"
+  /** The rep said it, wrote it, or typed it into a CRM field. An assertion. */
+  | "seller"
+  /** A third party or machine asserted it: Adobe Sign, Graph, the calendar. */
+  | "system"
+  /** DealRipe generated it: an extraction, a prescription, a draft. */
+  | "dealripe"
+  /** Genuinely both sides, e.g. a conversation. Never silently folded either way. */
+  | "mixed";
+
 export type JourneyEvent = {
   /** ISO. When it happened in the world, not when we saw it. */
   at: string;
   channel: JourneyChannel;
+  /**
+   * Who produced this. Read it before using an event as evidence of anything:
+   * "the stage moved" and "the customer signed" are not the same kind of fact.
+   */
+  authorship: Authorship;
   kind: string;
   /** One line. May contain customer content: treat as NDA material. */
   summary: string;
@@ -186,6 +221,10 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     events.push({
       at,
       channel: "call",
+      // The meeting HAPPENING is a calendar fact; the conversation inside it is
+      // both sides talking. Neither is a rep assertion, and neither is purely
+      // the buyer, so it is mixed rather than quietly filed as one.
+      authorship: real ? "mixed" : "system",
       kind: real ? `call:${c.call_subtype ?? "unclassified"}` : "call:not_captured",
       // "not captured" is deliberate wording. A lobby timeout is undecidable:
       // the bot cannot see whether the meeting ran without it.
@@ -200,12 +239,23 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
   for (const m of msgs) {
     if (!m.sent_at) continue;
     const who = m.is_machine_sender ? "machine" : m.customer_side ? "customer" : "rep";
+    // LABEL FROM customer_side, NOT from direction.
+    //
+    // direction is PER MAILBOX: it means "the owner of the mailbox we read this
+    // from sent it". On a co-sold deal a colleague's outbound therefore reads
+    // as inbound in the other rep's mailbox, and the journey rendered a message
+    // the rep plainly wrote as "rep inbound". customer_side is domain-based and
+    // says which side of the table the sender sat on, which is the question.
+    const arrow = m.is_machine_sender ? "notification" : m.customer_side ? "-> us" : "-> them";
     const agreement = m.agreement_kind ? ` [${m.agreement_kind} ${m.agreement_state}]` : "";
     events.push({
       at: m.sent_at,
       channel: m.is_calendar_response ? "calendar" : "email",
-      kind: m.is_calendar_response ? "calendar:response" : `email:${m.direction}:${who}`,
-      summary: `${who} ${m.direction}${m.has_attachments ? " (+attachment)" : ""}${agreement}: ${m.subject ?? "(no subject)"}`,
+      // The single cleanest authorship signal we have. A customer-side inbound
+      // message is the buyer in their own words; our outbound is the rep's.
+      authorship: m.is_machine_sender ? "system" : m.customer_side ? "buyer" : "seller",
+      kind: m.is_calendar_response ? "calendar:response" : `email:${who}`,
+      summary: `${who} ${arrow}${m.has_attachments ? " (+attachment)" : ""}${agreement}: ${m.subject ?? "(no subject)"}`,
       // Body is NDA material and is clipped, not omitted: the whole point of
       // the journey is being able to read what was actually said.
       detail: m.body_trimmed ? clip(m.body_trimmed, 600) : m.body_status === "gone" ? "(body permanently unavailable: message deleted)" : null,
@@ -217,6 +267,10 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     events.push({
       at: e.changed_at,
       channel: "crm",
+      // A REP ASSERTION, always. Stage, amount, close date and forecast
+      // category are a person's opinion typed into a box, which is why every
+      // buyer signal correlated negatively with stage_advanced.
+      authorship: "seller",
       kind: `crm:${e.field}`,
       summary: `${e.field} ${e.old_value ?? "(none)"} -> ${e.new_value ?? "(none)"}${e.changed_by ? ` by ${e.changed_by}` : ""}`,
       source: { table: "crm_field_events", id: e.id },
@@ -227,6 +281,10 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     events.push({
       at: g.occurred_at ?? g.observed_at,
       channel: "gate",
+      // Ours. The EVIDENCE is the customer's words, but the judgement that a
+      // gate is answered is a model's, so it can be wrong in ways the words
+      // cannot.
+      authorship: "dealripe",
       // A null from_status is the backfilled floor: what was already true, not
       // something that moved. Labelled so it can never be read as a flip.
       kind: g.from_status === null ? "gate:first_observed" : "gate:flipped",
@@ -243,6 +301,8 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     events.push({
       at: t.observed_at,
       channel: "checklist",
+      // The rep ticks this by hand. DealRipe has never ticked one.
+      authorship: "seller",
       kind: t.from_ticked === null ? "checklist:first_observed" : t.to_ticked ? "checklist:ticked" : "checklist:unticked",
       summary: `[${t.stage_key ?? "?"}] ${t.item_name ?? `#${t.rolldog_id}`}${t.from_ticked === null ? " already ticked when first seen" : t.to_ticked ? " ticked" : " untick"}`,
       source: { table: "rolldog_gate_events", id: t.id },
@@ -253,6 +313,9 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     events.push({
       at: r.observed_at,
       channel: "calendar",
+      // Accepting, declining or being dropped from an invite is the buyer
+      // acting, unless the address is ours.
+      authorship: r.email.toLowerCase().endsWith("@magaya.com") ? "seller" : "buyer",
       kind: `rsvp:${r.to_response}`,
       summary: `${r.display_name ?? r.email} ${r.from_response ? `${r.from_response} -> ` : ""}${r.to_response}${r.meeting_start ? ` for ${r.meeting_start.slice(0, 10)}` : ""}`,
       source: { table: "calendar_response_events", id: r.id },
@@ -263,6 +326,7 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
     events.push({
       at: p.created_at,
       channel: "dealripe",
+      authorship: "dealripe",
       kind: `prescribed:${p.kind}`,
       summary: `DealRipe told the rep (${p.source ?? "briefing"}): ${clip(p.text, 160) ?? "(no text)"}`,
       source: { table: "prescribed_actions", id: p.id },
@@ -271,10 +335,27 @@ export async function buildDealJourney(tenantId: string, dealId: string): Promis
 
   const allOutcomes = await detectMicroOutcomes(tenantId);
   const outcomes = allOutcomes.filter((o) => o.dealId === dealId);
+  // AUTHORSHIP PER OUTCOME KIND, and this is where it matters most.
+  //
+  // An executed NDA is Adobe Sign asserting something neither side can edit. A
+  // customer coming back after silence is the buyer. A stage move is the rep.
+  // AND SO IS closed_won / closed_lost: a rep marks a deal closed, which is
+  // usually true but is still their entry, and the 2026-08-07 hygiene sweep
+  // that closed four deals in 90 seconds is what a seller-authored outcome
+  // looks like when it is wrong.
+  const outcomeAuthor = (kind: string): Authorship => {
+    if (kind === "nda_executed" || kind === "quote_executed") return "system";
+    if (kind === "reengaged_after_silence") return "buyer";
+    if (kind === "stage_advanced" || kind === "closed_won" || kind === "closed_lost") return "seller";
+    if (kind === "gate_flipped") return "dealripe";
+    // A booked meeting needs both sides: we sent it, they accepted it.
+    return "mixed";
+  };
   for (const o of outcomes) {
     events.push({
       at: o.occurredAt,
       channel: "outcome",
+      authorship: outcomeAuthor(o.kind),
       kind: `outcome:${o.kind}`,
       summary: o.evidence,
       source: o.source,

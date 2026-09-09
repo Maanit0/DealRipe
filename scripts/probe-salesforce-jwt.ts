@@ -42,7 +42,10 @@ const OBJECTS: Array<{ name: string; why: string; granted: boolean }> = [
   { name: "Event", why: "meeting history", granted: true },
   { name: "Task", why: "rep activity, and where recaps get written", granted: true },
   { name: "Account", why: "the Sales Development tab: compelling event, exec sponsor, budget", granted: false },
-  { name: "OpportunityContactRole", why: "stakeholder roles on the deal", granted: false },
+  // Re-probed live 2026-09-08 with scripts/salesforce-permissions.ts: READ,
+  // CREATE and UPDATE are all granted. The false below was stale and had been
+  // read as "we cannot have the buying group".
+  { name: "OpportunityContactRole", why: "stakeholder roles on the deal", granted: true },
 ];
 
 function b64url(input: Buffer | string): string {
