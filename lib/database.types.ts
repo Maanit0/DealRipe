@@ -440,6 +440,82 @@ export type Database = {
         };
         Relationships: [];
       };
+      rolldog_gate_events: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          opportunity_id: string;
+          rolldog_id: number;
+          item_name: string | null;
+          stage_key: string | null;
+          /** Null on first observation. NOT the same as false. */
+          from_ticked: boolean | null;
+          to_ticked: boolean;
+          observed_at: string;
+          source: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          opportunity_id: string;
+          rolldog_id: number;
+          item_name?: string | null;
+          stage_key?: string | null;
+          from_ticked?: boolean | null;
+          to_ticked: boolean;
+          observed_at?: string;
+          source?: string;
+          created_at?: string;
+        };
+        Update: {
+          item_name?: string | null;
+          stage_key?: string | null;
+          from_ticked?: boolean | null;
+          to_ticked?: boolean;
+          observed_at?: string;
+          source?: string;
+        };
+        Relationships: [];
+      };
+      rolldog_checklist_reads: {
+        Row: {
+          id: string;
+          tenant_id: string;
+          deal_id: string;
+          opportunity_id: string | null;
+          read_at: string;
+          /** present | no_opportunity | no_checklist | unavailable */
+          status: string;
+          /** Null unless status is "present". Never 0 for a failed read. */
+          ticked_count: number | null;
+          total_count: number | null;
+          current_stage_position: number | null;
+          error: string | null;
+        };
+        Insert: {
+          id?: string;
+          tenant_id: string;
+          deal_id: string;
+          opportunity_id?: string | null;
+          read_at?: string;
+          status: string;
+          ticked_count?: number | null;
+          total_count?: number | null;
+          current_stage_position?: number | null;
+          error?: string | null;
+        };
+        Update: {
+          status?: string;
+          ticked_count?: number | null;
+          total_count?: number | null;
+          current_stage_position?: number | null;
+          error?: string | null;
+        };
+        Relationships: [];
+      };
       field_extractions: {
         Row: {
           id: string;

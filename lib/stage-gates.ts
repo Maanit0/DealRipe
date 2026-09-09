@@ -74,7 +74,7 @@ export type StageGateSummary = {
  * called "SQL - Develop Opportunity (Qualify)" with no digit at all, so any
  * regex over the name silently misfiles every SQL1 gate. Position 1 is SQL0.
  */
-function stageKeyForPosition(position: number): string {
+export function stageKeyForPosition(position: number): string {
   const n = Math.max(0, position - 1);
   return `SQL${n}`;
 }

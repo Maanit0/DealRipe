@@ -33,17 +33,61 @@ async function main(): Promise<void> {
   const db = supabaseAdmin();
   const tenantId = await resolveTenantId("magaya");
 
-  const { data: rows, error } = await db
-    .from("field_extractions")
-    .select("deal_id, framework_field_key, framework_id, status, answer, evidence, confidence, last_updated_from_call_id, updated_at, created_at")
-    .eq("tenant_id", tenantId);
-  if (error) throw new Error(`field_extractions read failed: ${error.message}`);
+  // PAGINATED, and it must stay that way. PostgREST caps a plain select at
+  // 1000 rows and says nothing about it, so the first version of this script
+  // reported "would seed 1000" against 2140 real rows and would have left 1140
+  // fields with no floor event and nobody any the wiser. A silent cap reads as
+  // "covered everything" exactly when it did not.
+  const PAGE = 1000;
+  const rows: Array<{
+    deal_id: string;
+    framework_field_key: string;
+    framework_id: string | null;
+    status: string;
+    answer: string | null;
+    evidence: string | null;
+    confidence: number | null;
+    last_updated_from_call_id: string | null;
+    updated_at: string;
+    created_at: string;
+  }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await db
+      .from("field_extractions")
+      .select("deal_id, framework_field_key, framework_id, status, answer, evidence, confidence, last_updated_from_call_id, updated_at, created_at")
+      .eq("tenant_id", tenantId)
+      .order("deal_id", { ascending: true })
+      .order("framework_field_key", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`field_extractions read failed: ${error.message}`);
+    rows.push(...((data ?? []) as typeof rows));
+    if ((data ?? []).length < PAGE) break;
+  }
 
-  const { data: existing } = await db
-    .from("field_extraction_events")
-    .select("deal_id, framework_field_key")
+  // Cross-check against the count, so a future paging change that silently
+  // truncates is loud rather than invisible.
+  const { count: total } = await db
+    .from("field_extractions")
+    .select("id", { count: "exact", head: true })
     .eq("tenant_id", tenantId);
-  const seen = new Set((existing ?? []).map((e) => `${e.deal_id}|${e.framework_field_key}`));
+  if (typeof total === "number" && total !== rows.length) {
+    throw new Error(`read ${rows.length} field_extractions rows but the table reports ${total}; refusing to seed a partial floor`);
+  }
+
+  const seen = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await db
+      .from("field_extraction_events")
+      .select("deal_id, framework_field_key")
+      .eq("tenant_id", tenantId)
+      .order("deal_id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    // A failed read here would look like "no events yet" and re-seed every
+    // field a second time. Refuse instead.
+    if (error) throw new Error(`field_extraction_events read failed: ${error.message}`);
+    for (const e of data ?? []) seen.add(`${e.deal_id}|${e.framework_field_key}`);
+    if ((data ?? []).length < PAGE) break;
+  }
 
   const callIds = [...new Set((rows ?? []).map((r) => r.last_updated_from_call_id).filter(Boolean))] as string[];
   const callDate = new Map<string, string | null>();

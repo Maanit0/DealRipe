@@ -641,6 +641,7 @@ const authorizedOppsStore = new AsyncLocalStorage<ReadonlySet<string>>();
  *   lib/deal-context.ts       the briefing's stage read
  *   lib/stage-gates.ts        the rep's checklist read
  *   lib/snapshot.ts           the four-hourly stage read
+ *   lib/stage-gate-log.ts     the checklist trajectory sweep
  *   lib/rolldog-narrative.ts, lib/rolldog-reconcile.ts, lib/promotion.ts
  * Every one of them passes the single opportunity already stored on the deal.
  */
