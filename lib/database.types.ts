@@ -481,6 +481,23 @@ export type Database = {
         Update: { storage_path?: string | null; is_stock_collateral?: boolean; collateral_file?: string | null };
         Relationships: [];
       };
+      company_context_snapshots: {
+        Row: {
+          id: string; tenant_id: string; generated_at: string; generated_on: string;
+          /** The whole CompanyContext. Counts and spans only, never prose. */
+          payload: Json;
+          deals: number | null; captured_conversations: number | null;
+          /** NOT a failure count: a lobby timeout is undecidable. */
+          uncaptured_meetings: number | null; deals_observed: number | null;
+        };
+        Insert: {
+          id?: string; tenant_id: string; generated_at?: string; generated_on?: string;
+          payload: Json; deals?: number | null; captured_conversations?: number | null;
+          uncaptured_meetings?: number | null; deals_observed?: number | null;
+        };
+        Update: { payload?: Json };
+        Relationships: [];
+      };
       crm_activities: {
         Row: {
           id: string;
