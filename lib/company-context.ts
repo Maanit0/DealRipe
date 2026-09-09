@@ -330,11 +330,24 @@ export async function buildCompanyContext(tenantId: string, slug: string): Promi
       fields: gateKeys.length,
       gates: gateKeys.map((gate) => {
         const rows = extractions.filter((e) => e.framework_field_key === gate);
+        // CASE-INSENSITIVE, AND THAT IS NOT DEFENSIVE CODING.
+        //
+        // field_extractions.status is stored "Yes"/"No" CAPITALISED, while
+        // prescribed_actions.followed is lowercase "yes"/"no"/"unknown". Two
+        // tables, two conventions, and the Tristate type in database.types.ts
+        // documents only the lowercase one.
+        //
+        // The first version of this compared === "yes" and reported answered: 0
+        // for all 35 gates. A memory bank whose whole purpose is holding facts
+        // held a wrong one for a day, and it looked plausible because "nothing
+        // is answered yet" is a believable state for a young pilot. Comparing a
+        // stored enum without checking its actual values is how that happens.
+        const yes = rows.filter((r) => String(r.status).toLowerCase() === "yes").length;
         return {
           gate,
           stageKey: null,
-          answered: rows.filter((r) => r.status === "yes").length,
-          open: rows.filter((r) => r.status !== "yes").length,
+          answered: yes,
+          open: rows.length - yes,
           observedMoves: movesByGate[gate] ?? 0,
         };
       }),
