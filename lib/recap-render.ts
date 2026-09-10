@@ -342,6 +342,26 @@ function renderRecapEmailBodyInner(args: {
       out.push("What they owe us:");
       out.push(n.nextSteps.customerOwes.map((f) => `  - ${f.statement}`).join("\n"));
     }
+
+    // WHETHER THE NEXT CONVERSATION IS SECURED, which is a different question
+    // from what either side owes and is the largest measured signal here.
+    //
+    // Across 69 deals with a captured discovery call, scored for a NAMED action
+    // proposed by the rep AND audible assent from the customer: 41% of the
+    // calls with both saw another meeting, against 14% of the calls without.
+    //
+    // WRITTEN AS A FACT ABOUT THE CALL, NEVER AS A JUDGEMENT OF THE REP. The
+    // recap goes to the person who ran the call, and the briefing rules already
+    // record what happens when this register slips: "you failed to ask" is a
+    // manager talking and a rep stops reading. No rate, no tally, no comparison
+    // to anybody. It says what was said, or that nothing was, and stops.
+    if (n.nextMeeting.secured && n.nextMeeting.accepted) {
+      out.push("");
+      out.push(`Next meeting agreed on the call. They said: "${n.nextMeeting.accepted}"`);
+    } else {
+      out.push("");
+      out.push("No next meeting was agreed out loud on this call.");
+    }
   }
 
   if (args.demoStrategy.status === "present" && args.demoStrategy.value.risks.length > 0) {

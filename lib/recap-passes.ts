@@ -120,6 +120,33 @@ export type Narrative = {
     customerOwes: QuotedFact[];
     weOwe: QuotedFact[];
   };
+  /**
+   * Whether the NEXT CONVERSATION was secured, which nextSteps does not answer.
+   *
+   * nextSteps records deliverables: what each side agreed to send or do. That is
+   * a different thing from whether anyone agreed to meet again, and the
+   * difference is the largest measured signal in this book.
+   *
+   * Measured 2026-09-09 across all 69 deals with a captured discovery call,
+   * scoring the transcript for a NAMED action proposed by the rep AND audible
+   * assent from the customer: 41% of the calls that had both saw another
+   * meeting, against 14% of the calls that did not. Fire rate 59%.
+   *
+   * The old framework gate answered Yes on 63 of those 69, 91%, because it
+   * accepted the rep saying it. BOTH HALVES ARE REQUIRED and the assent is the
+   * half usually missing: "if you want, once we have that NDA in place" is a
+   * conditional nobody answered, and it is the shape that stalls.
+   *
+   * secured=false is a FACT ABOUT THE CALL and must never be rendered as a
+   * judgement of the rep. A recap that scolds stops being read.
+   */
+  nextMeeting: {
+    secured: boolean;
+    /** The rep naming the action, verbatim. Null when they did not. */
+    proposed: string | null;
+    /** The customer agreeing, in their own words. Null when they did not. */
+    accepted: string | null;
+  };
 };
 
 export type DemoSession = {
@@ -280,6 +307,9 @@ SECTION BUDGETS (there is no overall length limit; density is the point):
 - buyingProcess: who evaluates, who was explicitly said NOT to be the decision maker, how legal and procurement work.
 - timeline: dates, urgency, and what is driving it.
 - environmentNotes MUST also include any COMMERCIAL COMMITMENT either side made on the call, such as an answer about whether an optional module changes the price.
+- nextMeeting: whether the NEXT CONVERSATION was secured on this call, which is a different question from what each side owes. secured is true ONLY if you can quote BOTH halves: the rep naming a specific next action (a demo, an NDA, a proposal review, a technical session, a named date), and the customer agreeing in their own words. Put the rep's words in "proposed" and the customer's in "accepted", both verbatim.
+  secured is FALSE for every one of these, which are the shapes that actually stall: a conditional offer the rep never asks a question about ("if you want, once we have that NDA in place"); a step the rep states with no reply from the customer; a timeline or plan described with no meeting attached; "we'll be in touch", "let's find time", "I'll send something over"; the call ending mid-topic. The rep speaking is not agreement, silence is not agreement, and a customer saying "okay" to a SUMMARY of the discussion is not agreement to a next action. If secured is false, both quotes are null.
+  Measured across 69 discovery calls: calls with both halves saw another meeting 41% of the time against 14% without. This is the single strongest signal in the book, which is why it is asked separately and strictly.
 - nextSteps: split by who owes it. customerOwes is everything the customer agreed to send or do. weOwe is everything the seller agreed to send or do. Every specific figure or document the seller ASKED THE CUSTOMER FOR belongs in customerOwes, listed individually rather than as "send the requested data". If the seller asked for four numbers, that is four entries.
   EVERY "weOwe" STATEMENT IS AN IMPERATIVE, verb first, addressed to the reader: "Send the recording link and a written follow-up summary of the call", never "Alexandra will send the recording link and a written follow-up summary of the call". No seller name inside the sentence. Where more than one seller was on the call and it matters which of them owes it, put the name in parentheses at the END: "Confirm the specific advance notice window for bond and license expiration alerts. (Alexandra)". Where only one seller was on the call, omit the parenthesis; the reader knows it is theirs.
   "customerOwes" stays in the third person and DOES name the customer, because the reader is chasing those people and needs to know which of them owes what.
@@ -297,7 +327,8 @@ Return a single JSON object, no prose, no markdown fences:
   "nextSteps": {
     "customerOwes": [{"statement": string, "quote": string, "speaker": string|null}],
     "weOwe": [{"statement": string, "quote": string, "speaker": string|null}]
-  }
+  },
+  "nextMeeting": {"secured": boolean, "proposed": string|null, "accepted": string|null}
 }
 
 ${MAGAYA_GLOSSARY}
@@ -447,6 +478,29 @@ export async function buildNarrative(args: {
   const customerOwes = keepQuoted(asQuoted(ns.customerOwes), args.transcript, QUOTE_MIN);
   const weOwe = keepQuoted(asQuoted(ns.weOwe), args.transcript, QUOTE_MIN);
 
+  // GROUNDED THROUGH keepQuoted, the same function every other claim uses,
+  // rather than a second quote check that could drift from it. Both halves are
+  // wrapped as quoted facts and both must survive: a model that invents an
+  // agreement then produces "no next meeting" instead of fiction, which matters
+  // more here than elsewhere because this one is about to be told to a rep.
+  const nmRaw = (o as { nextMeeting?: { secured?: boolean; proposed?: string; accepted?: string } }).nextMeeting;
+  const nmChecked = keepQuoted(
+    [
+      { statement: "proposed", quote: String(nmRaw?.proposed ?? ""), speaker: null },
+      { statement: "accepted", quote: String(nmRaw?.accepted ?? ""), speaker: null },
+    ].filter((f) => f.quote.trim().length > 0),
+    args.transcript,
+    QUOTE_MIN,
+  );
+  const nextMeeting =
+    nmRaw?.secured === true && nmChecked.kept.length === 2
+      ? {
+          secured: true,
+          proposed: nmChecked.kept.find((f) => f.statement === "proposed")?.quote ?? null,
+          accepted: nmChecked.kept.find((f) => f.statement === "accepted")?.quote ?? null,
+        }
+      : { secured: false, proposed: null, accepted: null };
+
   const grounding: GroundingTrace = {
     droppedNumbers: numbers.dropped.length,
     droppedFacts:
@@ -519,6 +573,7 @@ export async function buildNarrative(args: {
         buyingProcess: buying.kept,
         timeline: timeline.kept,
         nextSteps: { customerOwes: customerOwes.kept, weOwe: weOwe.kept },
+        nextMeeting,
       },
     },
     grounding,
