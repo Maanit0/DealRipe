@@ -28,6 +28,14 @@ import { feedbackFooterHtml, feedbackFooterText, newFeedbackToken } from "./arti
 import { dealChangeBlock, readDealChangeHistory } from "./deal-change-history";
 import { dealMemoryBlock, readDealMemory } from "./deal-memory";
 import { draftArchiveHtml } from "./draft-archive";
+import {
+  applyDraftFixes,
+  describeDraftFindings,
+  draftBlocking,
+  draftErrors,
+  lintDraft,
+  type DraftFinding,
+} from "./draft-lint";
 import { bodyTextToHtml, hasHtmlSignature, signatureFor, signatureHtml } from "./rep-signature-html";
 import { runModel } from "./model-run";
 import { createReplyDraft, createDraft, domainOf, getMessageBody, listMailboxMessages, type MailMessage } from "./graph-mail";
@@ -834,11 +842,28 @@ Non-negotiable:
 9b. YOU ARE THE SENDER. WRITE AS "I". This email goes out from the rep's own mailbox with their signature on it, so referring to them by name is writing about yourself in the third person and it is the single clearest tell that a machine wrote the draft. "Steven sent the NDA to the CFO's email during the call" must be "I sent the NDA over during the call". "Steven: will follow up directly if we haven't seen the signed NDA" must be "I'll follow up directly if I haven't seen the signed NDA by Friday". The rep's name appears in exactly one place, the signature, and that is appended for you.
 
 9c. THE CUSTOMER IS "YOU". Never write the recipient's company or the recipient themselves in the third person. "Suntechmed just received privileged application approval" is a line from a pipeline review; to the customer it is "You've just received privileged application approval". Their company name belongs in the email when it is doing work (naming which entity, which office, which account) and nowhere else.
+   THIS APPLIES TO PEOPLE AS HARD AS IT APPLIES TO COMPANIES, and the person case is worse because they watch themselves being discussed. "Rohit flagged he will be out of the country shortly" went out in an email addressed to Rohit. To him it reads as being talked about by someone standing next to him. It is "you mentioned you'll be out of the country shortly", or, if it is not worth saying to his face, it is not worth writing.
+   A NAME IN THE GREETING IS NOT A VIOLATION, and neither is speaking to one of several recipients directly: "Bharat, could you send the user counts". What is banned is the third person about someone who is reading. Anyone NOT on the address line may be named normally, which is rule 9a.
+
+9e. NEVER USE SALES-QUALIFICATION VOCABULARY. The recap has been banned from this since it existed and this email was not, which is how a draft reached a customer saying what they described "really framed the urgency well" and calling their twenty year old system "the core driver for the change". Banned: urgency, compelling event, decision criteria, decision maker, economic buyer, budget holder, pain point, qualification, buying process, buying group, champion, MEDDIC, BANT, SQL1 through SQL5, and "driver" in the sense of a reason a deal is happening. Say the thing itself: not "that framed the urgency well" but "you said you cannot see one office's shipments from another, and that is what we would replace first". THE CUSTOMER DOES NOT HAVE URGENCY. They have three offices that cannot see each other's data.
+   NOT BANNED, because the reps themselves write them to customers: "next steps" as a heading, "discovery call", "stakeholder", "timeline", "use case". Their vocabulary is not the problem; ours is.
+
+9h. NEVER REPORT THE STATE OF A QUALIFICATION GATE TO THE CUSTOMER. This is the purest form of the mistake and the hardest to catch, because the sentence is true and reads like an ordinary recap line. A draft went out saying "No hard timeline yet, but the demo is tentatively set for September 26th". "No hard timeline yet" is not something that happened on the call. It is our own timeline gate reporting itself as unanswered, written as prose, and addressed to the very person whose answer is missing. Also banned in this shape: "budget is not yet confirmed", "we still need to establish who signs", "decision process is unclear".
+   A RECAP LINE SAYS WHAT WAS SAID. A gap audit says what was not. The customer was there; they do not need to be told what we failed to learn, and telling them reads as marking their homework.
+   THE CORRECT FORM OF THE SAME FACT IS AN ASK. Not "no hard timeline yet" but "is there a date you are working back from on your side?". Rule 6 already says work ONE open gate in as a question; this says the other way of using a gate is banned outright. State a real condition freely, because that is a fact about the plan and not about our record: "the demo is set for September 26th, once the NDA is signed" is fine.
+
+9f. NEVER STATE A CONCLUSION ABOUT THE DEAL TO THE BUYER. "so timing on the next steps matters" and "it's clear the timing is right to move" are sentences from a pipeline review. They tell the customer that their situation has consequences for our sequencing, which is true, ours to act on, and none of their business. If the timing matters, do the thing the timing implies: propose the date. Do not narrate why you are proposing it.
+
+9g. DO NOT TELL THE CUSTOMER WHO WAS NOT IN THE ROOM. "Your general manager was not on today's call, and Rohit flagged he will be out of the country shortly" is a roster note we keep for ourselves, and it went out addressed to Rohit. They know who came to their own meeting. If someone's absence actually matters, it matters as an ASK and only as an ask: "would it be worth having your general manager on the demo?" Saying who was missing is a deal review. Asking for them is a next step.
 
 9d. DO NOT TELL THE CUSTOMER FACTS ABOUT THEIR OWN ORGANISATION. "The CFO holds signing authority for contracts and NDAs" is a qualification note we wrote for ourselves. They know who signs their contracts, and reading our record of it back to them is the moment the email stops sounding like a person and starts sounding like a CRM. The same fact is useful in the email ONLY as an action addressed to them: "Could you confirm the NDA reached your CFO". Facts about their org that came from the extraction belong in the briefing and the recap, which the rep reads. This email is not those documents. IF A LINE WOULD FIT UNDER A HEADING IN A DEAL REVIEW, IT DOES NOT BELONG HERE.
 
-10. SHAPE FOLLOWS THE CALL. There is no fixed skeleton, because the job of the email changes with what happened: a discovery that surfaced five things needs a recap, a short check-in needs two lines, a proposal review needs the terms. Decide the shape from the call, then write it. Formatting rules that always hold: short standalone lines with a blank line between them, never a dense paragraph, because a rep reads this on a phone between calls. Where the call produced several distinct points, a labelled block is correct and is what these reps write. Eduardo's shape, when the call earns it: a one line opener naming something specific, "Quick recap of what we covered:" with a bulleted line per point, "Next steps:" numbered with an owner on each, then one line inviting correction. Use it when it fits and ignore it when it does not. A two line email after a two minute call is a good email.
-10b. NEVER REFER TO SOMETHING THIS EMAIL DOES NOT CONTAIN. The ABC Cargo draft closed with "Let me know if anything looks off from the recap below" and there was no recap below: the model wrote the pointer and skipped the section. If you promise a recap, write the recap. If you do not write one, close on something else. The same applies to "see below", "as attached" and "the summary above".
+10. SHAPE FOLLOWS THE CALL. There is no fixed skeleton, because the job of the email changes with what happened: a discovery that surfaced five things needs a recap, a short check-in needs two lines, a proposal review needs the terms. Decide the shape from the call, then write it. Formatting rules that always hold: short standalone lines with a blank line between them, never a dense paragraph, because a rep reads this on a phone between calls. Where the call produced several distinct points, a labelled block is correct and is what these reps write. Eduardo's shape, when the call earns it: a one line opener naming something specific, "Quick recap of what we covered:" with a bulleted line per point, "Next steps:" numbered with an owner on each. Use it when it fits and ignore it when it does not. Do NOT close by inviting correction; see 10d. A two line email after a two minute call is a good email.
+10b. NEVER REFER TO SOMETHING THIS EMAIL DOES NOT CONTAIN. The ABC Cargo draft closed by pointing at a recap below it, and there was no recap below: the model wrote the pointer and skipped the section. If you promise a recap, write the recap. If you do not write one, close on something else. The same applies to "see below", "as attached" and "the summary above".
+
+10d. NEVER ASK THE CUSTOMER TO AUDIT THE EMAIL. No "let me know if anything looks off", no "if I missed anything", no "correct me if that's wrong". MEASURED: across 595 emails these six reps actually sent, that line appears ONCE, and it is a rep apologising for possibly misspelling someone's name. It is not a thing they write. It reads as a lack of confidence in your own notes and it gives the customer homework in place of a next step.
+   This rule exists because the instruction it replaces caused the defect. An earlier version of rule 10 asked for "a line inviting correction" and quoted a specimen of one, and rule 5b's warning came true exactly as written: the model lifted the specimen wording and sent it.
+   WHAT THE REPS CLOSE ON INSTEAD, all three from their own sent mail. A process question: "Is there a formal approval process on your side we should plan around before Norwood signs?" A restatement of what the customer owes, so the ball is visibly in their court: "Olga, you are sending a sample IE cancellation document so we can look at the bill of lading structure." A forward commitment with your name on it: "Let me know if you have any additional feedback as you are reviewing and I will check back in regarding the filer code." Each of those moves the deal; asking them to proofread does not.
 10c. WHEN THE CALL PRODUCED SEVERAL DISTINCT FINDINGS, WRITE THE RECAP. A discovery that surfaced their volumes, their current process, a scope limit and a commercial preference has four things worth confirming in writing, and a four line email that mentions none of them is the dry draft reps rewrite. Judge it by content, not by call type: if you can write three or more lines that each carry a number, a constraint, a correction or the customer's own words, the recap earns its place. If you cannot, do not pad one.
 10a. STOP AFTER THE LAST CONTENT LINE. Do NOT write a closing line, a sign-off, a name, a title or a phone number. The rep's signature is appended automatically and is not yours to write. End the body on the final sentence of substance.
 11. For anything going out WITH this email, use present tense and stay neutral about the mechanism: "Here's the datasheet from Friday's session." That stays true once the rep attaches it. This applies to bundle files only, never to a recording.
@@ -865,7 +890,7 @@ anything else, so rule 3's "as long as the call earns" is bounded here.
   though it is unflattering, then list next steps with an owner on each. Eduardo
   Bencomo's discovery follow-ups run around 290 words in this shape: a one line
   opener naming something specific, "Quick recap of what we covered:" over
-  several bullets, "Next steps:" numbered, then a line inviting correction.
+  several bullets, then "Next steps:" numbered, with an owner on each.
 
 - DEMO: they saw the product, so they do not need it described back. Short, and
   the measured range for these reps is 60 to 110 words. Alexandra Suntrup's demo
@@ -1174,22 +1199,117 @@ export async function generateFollowUpDraft(
   }
   const booked = bookedRead.meeting;
 
-  const resp = await runModel({
-    task: "followup_draft",
-    // Generous headroom. A truncated draft is the one failure mode a rep cannot
-    // work around: they see an email cut off mid-sentence and stop trusting it.
-    maxTokens: 3000,
-    temperature: 0.3, // a shade of variation so it reads human, not templated
-    system: SYSTEM,
-    messages: [{ role: "user", content: buildUserMessage(input, samples, Boolean(thread), threadBody, slots, booked) }],
-  });
-  const block = resp.message.content.find((b) => b.type === "text");
-  const raw = block && "text" in block ? block.text : "";
-  if (process.env.DRAFT_DEBUG === "1") {
-    console.log(`\n----- RAW MODEL OUTPUT (${raw.length} chars) -----\n${raw}\n----- END RAW -----\n`);
+  const userMessage = buildUserMessage(input, samples, Boolean(thread), threadBody, slots, booked);
+
+  // The names on the To line, which is what separates rule 9c from rule 9a: a
+  // person READING this email may not be written about in the third person,
+  // and a colleague of theirs who is not reading it may be ("once Gustavo has
+  // forwarded one of the draft airway bills").
+  //
+  // Read off input.recipients rather than re-derived from customerEmails, so
+  // the lint and the greeting cannot disagree about who this email is for.
+  // That string is already built by the same filter that decides who receives
+  // the mail, and building a second one here is how the two drift.
+  const recipientNames = (input.recipients ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n.length >= 3 && !n.includes("@"));
+
+  // GENERATE, LINT, REGENERATE ONCE. Exactly the loop lib/generate-briefing.ts
+  // runs, and it is here because the draft was the only generated artifact
+  // without one. Three register defects reached customers' drafts in two days
+  // (see lib/draft-lint.ts), each one already forbidden by a prose rule that
+  // lost quietly against two hundred other prose rules.
+  //
+  // regenerate rather than suppress for register: the rep gets an email that
+  // sounds like a CRM, which they edit. Suppressing hands them a blank page
+  // after a real call, and a rep with no draft writes nothing at all.
+  let parsed: ReturnType<typeof parseJson> = null;
+  let findings: DraftFinding[] = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const messages: Array<{ role: "user" | "assistant"; content: string }> = [
+      { role: "user", content: userMessage },
+    ];
+    if (attempt > 0 && parsed) {
+      messages.push({ role: "assistant", content: JSON.stringify(parsed) });
+      messages.push({
+        role: "user",
+        content:
+          `That draft breaks rules that cannot be broken:\n` +
+          draftErrors(findings)
+            .map((f) => `- ${f.rule}: ${f.detail}`)
+            .join("\n") +
+          `\n\nRewrite the whole email fixing exactly those problems. Keep everything else, including the ` +
+          `specifics you pulled from the call. Return JSON only.`,
+      });
+    }
+
+    const resp = await runModel({
+      task: "followup_draft",
+      // Generous headroom. A truncated draft is the one failure mode a rep cannot
+      // work around: they see an email cut off mid-sentence and stop trusting it.
+      maxTokens: 3000,
+      temperature: 0.3, // a shade of variation so it reads human, not templated
+      system: SYSTEM,
+      messages,
+    });
+    const block = resp.message.content.find((b) => b.type === "text");
+    const raw = block && "text" in block ? block.text : "";
+    if (process.env.DRAFT_DEBUG === "1") {
+      console.log(`\n----- RAW MODEL OUTPUT (${raw.length} chars) -----\n${raw}\n----- END RAW -----\n`);
+    }
+    const candidate = parseJson(raw);
+    if (!candidate) continue;
+
+    // A truncated body is not worth linting or retrying into. Checked here,
+    // against the MODEL's body before the signature is appended, for the same
+    // reason it was moved here originally: the old placement read the last
+    // character of the signature and never once looked at the text it exists
+    // to police.
+    //
+    // NEVER DISCARD A GOOD EARLIER ATTEMPT. The first version of this loop set
+    // parsed = null here, so a sound first draft carrying one register finding
+    // was thrown away whenever the REGENERATION came back truncated, and the
+    // rep got nothing at all. Caught on Ubfreight, which returned a draft on
+    // one run and null on the next with no code change between them. A retry
+    // may only ever improve on what we already have.
+    const tail = candidate.body.trimEnd().slice(-1);
+    if (resp.truncated || !/[.!?"')\dA-Za-z]/.test(tail)) {
+      console.warn(
+        `[followup-draft] discarding truncated attempt ${attempt} for ${input.account} ` +
+          `(stop_reason=${resp.message.stop_reason}, body ends "${candidate.body.trimEnd().slice(-24)}")`,
+      );
+      continue;
+    }
+
+    parsed = candidate;
+    findings = lintDraft({ body: candidate.body, subject: candidate.subject, recipientNames });
+    if (draftErrors(findings).length === 0) break;
+    if (attempt === 0) {
+      console.warn(`[followup-draft] ${input.account}: regenerating, ${describeDraftFindings(draftErrors(findings))}`);
+    }
   }
-  const parsed = parseJson(raw);
   if (!parsed) return null;
+
+  // A placeholder or an unfilled token is the one thing that does not ship. It
+  // asserts something we cannot stand behind, and a rep who sees "[INSERT
+  // DATE]" in their outbox stops opening these.
+  const blocking = draftBlocking(findings);
+  if (blocking.length > 0) {
+    console.error(`[followup-draft] ${input.account}: SUPPRESSED, ${describeDraftFindings(blocking)}`);
+    return null;
+  }
+  if (draftErrors(findings).length > 0) {
+    console.warn(
+      `[followup-draft] ${input.account}: SHIPPING WITH REGISTER PROBLEMS after two attempts, ` +
+        describeDraftFindings(draftErrors(findings)),
+    );
+  }
+
+  // fix tier: deterministic and lossless, applied rather than reported.
+  const fixed = applyDraftFixes({ body: parsed.body, subject: parsed.subject });
+  parsed.body = fixed.body;
+  parsed.subject = fixed.subject;
 
   // The rep is the sender: write them out of the third person before anything
   // else looks at the body. See fixThirdPersonSender.
@@ -1199,25 +1319,11 @@ export async function generateFollowUpDraft(
     parsed.body = senderFix.body;
   }
 
-  // Reject a body that stops mid-thought. Anthropic's stop_reason tells us when
-  // the model ran out of room, and a body not ending in terminal punctuation or
-  // a sign-off is the same failure arriving quietly. Returning nothing is right:
-  // no draft is recoverable, half a draft in a rep's outbox is not.
-  //
-  // Check the MODEL'S body, before the signature is appended. The check used to
-  // run afterwards, which meant it read the last character of the signature and
-  // never once looked at the text it exists to police: a body truncated
-  // mid-sentence passed whenever the signature happened to end in a letter, and
-  // a sound body was thrown away whenever the signature did not. Both halves of
-  // that showed up in production.
-  const modelTail = parsed.body.trimEnd().slice(-1);
-  if (resp.truncated || !/[.!?"')\dA-Za-z]/.test(modelTail)) {
-    console.warn(
-      `[followup-draft] discarding truncated draft for ${input.account} ` +
-        `(stop_reason=${resp.message.stop_reason}, body ends "${parsed.body.trimEnd().slice(-24)}")`,
-    );
-    return null;
-  }
+  // The truncation check lives inside the generation loop above, so a
+  // truncated first attempt is retried rather than thrown away. It checks the
+  // MODEL'S body before the signature is appended, which is the placement it
+  // has to have: it once ran afterwards and therefore read the last character
+  // of the signature, never once looking at the text it exists to police.
 
   // Append the sign-off ourselves. The model kept abandoning it mid-word
   // ("Ha" for "Happy to..."), and a rep's sign-off is fixed text anyway: not
