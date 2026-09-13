@@ -210,6 +210,13 @@ async function contactHistory(
       .select("deal_id, customer_side, subject, sent_at")
       .eq("tenant_id", tenantId)
       .eq("is_calendar_response", false)
+      // A ROBOT IS NOT THE CUSTOMER. Without this, an echosign@echosign.com
+      // notification counted as an inbound reply: it set lastInbound, which
+      // anchored the silence clock and made the deal "engaged". Master Cargo
+      // reached Gone silent that way with no human contact of any kind.
+      // Excluded on the outbound side too, because a signature-service mail
+      // sent on our behalf is not a rep chasing.
+      .eq("is_machine_sender", false)
       .in("deal_id", dealIds.slice(i, i + CHUNK))
       .order("sent_at", { ascending: false });
     if (res.error) throw new Error(`deal_messages read failed: ${res.error.message}`);
@@ -1025,7 +1032,23 @@ function rowHtml(r: Row, now: number, variant: "live" | "quiet" = "live"): strin
       variant === "quiet"
         ? `<i class="sub">${silentDays !== null ? `${silentDays}d silent` : "no contact on record"} &middot; ${
             r.chases ?? 0
-          } follow-up${(r.chases ?? 0) === 1 ? "" : "s"} &middot; 0 replies</i>`
+          } follow-up${(r.chases ?? 0) === 1 ? "" : "s"} ${
+            // NAME THE CLOCK, because the number is meaningless without it.
+            // This printed a hardcoded "0 replies" on every quiet row
+            // (audited 2026-09-13). It was true by construction, since chases
+            // counts only outbound since the last inbound, so a reply would
+            // have reset it to zero. But it can never be anything other than
+            // zero, and it reads as a lifetime count: it appeared on 13 rows
+            // whose customers have written 3+ times, including Eosits at 20.
+            //
+            // The anchor differs by row and saying the wrong one is its own
+            // error, so it is taken from lastContact rather than assumed.
+            r.lastContact?.kind === "call"
+              ? "since the last call"
+              : r.lastContact
+                ? "since their last reply"
+                : "sent, nothing back"
+          }</i>`
         : ""
     }</td>
     <td class="chg">${changed ? esc(changed) : `<span class="none">No change</span>`}</td>
@@ -1197,13 +1220,37 @@ export async function buildActivityReport(args: {
     deal,
     next: nextByDeal.get(deal.dealId),
     agreedAt: agreedAtByDeal.get(deal.dealId),
+    // ENGAGEMENT MEANS A HUMAN. contactHistory now excludes machine senders,
+    // so this no longer counts a robot as the customer. Master Cargo sat in
+    // Gone silent on the strength of one echosign@echosign.com notification
+    // from 2026-07-22, which is where its "53d silent" came from: zero captured
+    // calls, zero human emails, and a deal that cannot have gone silent because
+    // nobody was ever there.
     engaged: capturedDeals.has(deal.dealId) || Boolean(contactByDeal.get(deal.dealId)?.lastInbound),
     metSinceAgreed: metSince.get(deal.dealId),
     chases: contactByDeal.get(deal.dealId)?.chases,
     lastChaseAbout: contactByDeal.get(deal.dealId)?.lastChaseAbout ?? null,
     lastContact: (() => {
       const inb = contactByDeal.get(deal.dealId)?.lastInbound ?? null;
-      const call = deal.lastConversationAt;
+      // A MEETING WE COULD NOT GET INTO IS NOT A CONVERSATION.
+      //
+      // This read deal.lastConversationAt, which excludes only no_show and
+      // no_conversation (lib/pipeline-changes.ts:906), so a lobby timeout
+      // counted as contact and reset the silence clock. Audited 2026-09-13:
+      // five rows on one report, and each said so in its own read. SEINO LOGIX
+      // printed "31d silent" beside evidence that ends 40 days back; Treecorp
+      // printed "26d silent" in the same row as "meeting on Aug 18 could not
+      // be verified". The report contradicted itself across two columns.
+      //
+      // lastCapturedConversationAt is the stricter field, already on the same
+      // record and already used at :549 and :966, and it means what this needs:
+      // the last call whose CONTENT we actually have.
+      //
+      // The occurrence fact is NOT discarded. A meeting was scheduled and
+      // attempted, and that still drives the capture-failure language in the
+      // read and the no_show flags. It simply stops counting as the customer
+      // having talked to us.
+      const call = deal.lastCapturedConversationAt;
       // Whichever came last IS the last contact. A call three weeks after their
       // last email is the real final interaction, and the reverse is just as true.
       if (call && (!inb || Date.parse(call) > Date.parse(inb.at))) {
@@ -1215,8 +1262,13 @@ export async function buildActivityReport(args: {
     activity: readActivity(
       {
         nextMeetingBooked: deal.nextMeetingBooked,
+        // Same rule as lastContact above: a conversation is one we captured.
+        // hasEverSpoken keeps the looser field on purpose, because "has a call
+        // ever happened on this deal" is a different question from "when did
+        // the customer last talk to us", and a first meeting that our bot
+        // missed still means the deal has started.
         hasEverSpoken: Boolean(deal.lastConversationAt),
-        daysSinceConversation: days(deal.lastConversationAt, now),
+        daysSinceConversation: days(deal.lastCapturedConversationAt, now),
         daysSinceCustomerEmail: days(byDeal.get(deal.dealId) ?? null, now),
         mailboxRead: repHasMail.has((deal.repEmail ?? "").toLowerCase()),
       },

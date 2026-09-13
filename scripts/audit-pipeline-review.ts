@@ -193,7 +193,14 @@ async function main(): Promise<void> {
       && !["no_conversation", "no_show"].includes(String(c.outcome ?? "")));
     const lastAny = cs.map(at).sort().pop() ?? null;
     const capd = (chars.get((cs.find((c: any) => at(c) === lastAny) ?? {}).id) ?? 0) >= MIN_CHARS;
-    if (lastAny && !capd && t.lastCustomerActivity && lastAny > t.lastCustomerActivity) {
+    // ONLY A DISAGREEMENT IS A FINDING. An uncaptured call sitting after the
+    // last real evidence is normal and expected; what mattered was the clock
+    // USING it. Once the clock anchors on lastCapturedConversationAt the claim
+    // matches the evidence, so flagging the mere existence of that call would
+    // report a fixed bug as an open one every week.
+    const realDays = t.lastCustomerActivity ? days(t.lastCustomerActivity, ASOF) : null;
+    const disagrees = realDays !== null && Math.abs(Number(m[1]) - realDays) > 1;
+    if (disagrees && lastAny && !capd && t.lastCustomerActivity && lastAny > t.lastCustomerActivity) {
       resets.push(`    ${r.deal.padEnd(28)} silence counted from ${lastAny} (UNCAPTURED call), real evidence ends ${t.lastCustomerActivity}  claim=${m[1]}d real=${days(t.lastCustomerActivity, ASOF)}d`);
     }
   }
