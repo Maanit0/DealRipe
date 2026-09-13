@@ -567,6 +567,21 @@ async function runEmailPass(args: {
 
   // Bodies, because bodyPreview is the first ~255 characters and a dated ask
   // usually sits at the end of a follow-up rather than the start.
+  //
+  // PREFER THE STORED BODY. Until 2026-09-08 deal_messages held metadata only,
+  // so this had to fetch every body from Graph on every scoring run. It does
+  // not any more, and the stored copy is better on three counts:
+  //
+  //   it is free, where a Graph GET per message per run is not;
+  //   body_raw is the untrimmed customer text, which is what a confirmation
+  //     ("signed and sent back") actually lives in;
+  //   AND IT SURVIVES DELETION. 127 messages are recorded 'gone': Graph no
+  //     longer has them, so a commitment evidenced in one of those was
+  //     permanently unscoreable and silently counted as not followed.
+  //
+  // That last point is why this matters beyond cost. An end commitment is
+  // usually secured after the call in writing, so scoring that cannot read the
+  // writing records reps who did the work as reps who did nothing.
   const { getMessageBody } = await import("./graph-mail");
   // BOTH SIDES OF THE THREAD. Reading only the rep's outbound mail answers
   // "did the rep follow up", which is a different question from "was the
@@ -584,13 +599,41 @@ async function runEmailPass(args: {
       .slice(0, EMAIL_BODIES_TO_READ + 1)
       .map((m) => ({ m, direction: "customer" as const })),
   ];
+  const ids = toRead.map((x) => x.m.id).filter(Boolean);
+  const stored = new Map<string, string>();
+  if (ids.length > 0) {
+    const res = await supabaseAdmin()
+      .from("deal_messages")
+      .select("graph_message_id, body_raw, body_trimmed")
+      .in("graph_message_id", ids);
+    // A failed read is not "nothing stored": it falls through to Graph rather
+    // than silently scoring against previews.
+    if (res.error) console.warn(`[prescription-scoring] stored bodies unavailable, falling back to Graph: ${res.error.message}`);
+    for (const r of res.data ?? []) {
+      // body_raw first: it is the untrimmed customer message, and a
+      // confirmation often sits below a quoted thread that trimming removes.
+      const body = r.body_raw ?? r.body_trimmed;
+      if (r.graph_message_id && body) stored.set(r.graph_message_id, body);
+    }
+  }
+
+  let fromStore = 0;
+  let fromGraph = 0;
   for (const { m, direction } of toRead) {
-    const body = await getMessageBody({
-      tenantIdOrDomain: "magaya.com",
-      mailbox: mail.mailbox,
-      messageId: m.id,
-    }).catch(() => null);
+    let body = stored.get(m.id) ?? null;
+    if (body) fromStore += 1;
+    else {
+      body = await getMessageBody({
+        tenantIdOrDomain: "magaya.com",
+        mailbox: mail.mailbox,
+        messageId: m.id,
+      }).catch(() => null);
+      if (body) fromGraph += 1;
+    }
     emails.push({ subject: m.subject, body: body ?? m.preview, direction });
+  }
+  if (fromStore + fromGraph > 0) {
+    console.log(`[prescription-scoring] bodies: ${fromStore} stored, ${fromGraph} from Graph`);
   }
 
   for (const row of rows) {
