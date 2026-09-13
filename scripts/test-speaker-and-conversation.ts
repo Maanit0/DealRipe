@@ -101,6 +101,49 @@ check("   exact display name still resolves",
     check(`${acct.padEnd(20)} -> ${want}`, got.verdict === want, `got ${got.verdict} (${got.reason})`);
   }
 
+  // UNKNOWN must never establish customer participation on its own.
+  {
+    const dir2 = sellerDirectory([[P("Ariel Rodriguez", "arodriguez@magaya.com")]]);
+    const got = classifyConversation({
+      outcome: "captured", captureClass: "captured",
+      // "John Locasto" is not on this roster and cannot be grounded.
+      transcript: [
+        "Ariel Rodriguez: So on pricing, the licence cost lands around seven thousand a month for seventy users.",
+        "John Locasto: That is higher than we budgeted, and I would need to take the proposal to our owner first.",
+        "John Locasto: Can you send the contract terms and the implementation timeline this week?",
+      ].join("\n"),
+      participants: [P("Ariel Rodriguez", "arodriguez@magaya.com"), P("", "Pricing@kcarlton.com")],
+      directory: dir2,
+    });
+    check("UNKNOWN speaker: a real meeting IS established",
+      got.meetingOccurred === true && got.substantiveMeetingConversation === true, JSON.stringify(got.verdict));
+    check("UNKNOWN speaker: nonSellerHumanParticipated is true",
+      got.nonSellerHumanParticipated === true);
+    check("UNKNOWN speaker: customerParticipated is NOT established",
+      got.customerParticipated === false, `got ${got.customerParticipated}`);
+    check("UNKNOWN speaker: substantiveCustomerConversation is NOT established",
+      got.substantiveCustomerConversation === false, `got ${got.substantiveCustomerConversation}`);
+    check("UNKNOWN speaker: verdict is substantive_unattributed",
+      got.verdict === "substantive_unattributed", `got ${got.verdict}`);
+  }
+  // The same words from a GROUNDED customer must ground the claim.
+  {
+    const dir3 = sellerDirectory([[P("Ariel Rodriguez", "arodriguez@magaya.com")]]);
+    const got = classifyConversation({
+      outcome: "captured", captureClass: "captured",
+      transcript: [
+        "Ariel Rodriguez: So on pricing, the licence cost lands around seven thousand a month for seventy users.",
+        "John Locasto: That is higher than we budgeted, and I would need to take the proposal to our owner first.",
+        "John Locasto: Can you send the contract terms and the implementation timeline this week?",
+      ].join("\n"),
+      participants: [P("Ariel Rodriguez", "arodriguez@magaya.com"), P("John Locasto", "jlocasto@kcarlton.com")],
+      directory: dir3,
+    });
+    check("GROUNDED customer: customerParticipated is true", got.customerParticipated === true);
+    check("GROUNDED customer: substantiveCustomerConversation is true",
+      got.substantiveCustomerConversation === true, `got ${got.verdict}`);
+  }
+
   // F. a transcript with customer + Magaya must be substantive
   {
     const d = deals.find((x: any) => String(x.account) === "Ghy");

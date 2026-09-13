@@ -31,21 +31,57 @@
 
 import { sideOfSpeaker, type Participant } from "./speaker-match";
 
+/**
+ * UNKNOWN IS NOT THE CUSTOMER.
+ *
+ * The first version of this file tested "not positively ours" and called the
+ * result customerParticipated. That is too permissive and it undoes the point
+ * of the speaker fix: seven real customers now resolve to UNKNOWN precisely
+ * because their identity could not be established, and letting UNKNOWN prove
+ * customer participation would hand back the guess that was just removed.
+ *
+ * So the two questions are asked separately and answered separately:
+ *
+ *   nonSellerHumanParticipated  somebody who is not ours spoke. UNKNOWN counts.
+ *   customerParticipated        somebody GROUNDED to the customer spoke.
+ *
+ * and the same split runs through substance:
+ *
+ *   substantiveMeetingConversation   real deal talk happened on this call
+ *   substantiveCustomerConversation  real deal talk is attributable to a
+ *                                    verified customer-side person
+ *
+ * An UNKNOWN speaker may establish that a meeting happened and that a real
+ * conversation took place. It may never establish a customer commitment, an
+ * objection, a preference, an intent, or any buying behaviour, because all of
+ * those are claims about a specific party.
+ */
 export type ConversationClass = {
   meetingOccurred: boolean | null;
-  customerParticipated: boolean | null;
   contentCaptured: boolean;
+  /** Someone not identifiable as ours spoke. UNKNOWN satisfies this. */
+  nonSellerHumanParticipated: boolean | null;
+  /** Someone POSITIVELY grounded to the customer spoke. UNKNOWN does not. */
+  customerParticipated: boolean | null;
+  /** Deal-relevant conversation happened, whoever it is attributable to. */
+  substantiveMeetingConversation: boolean | null;
+  /** Deal-relevant conversation attributable to a verified customer person. */
   substantiveCustomerConversation: boolean | null;
   /** One of the canonical readings, for a human and for the audit. */
   verdict:
     | "substantive_customer_conversation"
     | "short_but_valid"
+    | "substantive_unattributed"
     | "logistics_only"
     | "no_show"
     | "seller_only"
     | "verified_occurrence_no_content"
     | "undecidable";
   reason: string;
+  /** Turns by anyone not identifiable as ours (customer OR unknown). */
+  nonSellerTurns: number;
+  nonSellerWords: number;
+  /** Turns by a positively grounded customer person only. */
   customerTurns: number;
   customerWords: number;
 };
@@ -111,7 +147,7 @@ export function classifyConversation(args: {
 }): ConversationClass {
   const body = String(args.transcript ?? "");
   const contentCaptured = body.trim().length > 0;
-  const none = { customerTurns: 0, customerWords: 0 };
+  const none = { nonSellerTurns: 0, nonSellerWords: 0, customerTurns: 0, customerWords: 0 };
 
   if (!contentCaptured) {
     // No text. Occurrence is decided by the capture classifier alone: a refusal
@@ -119,15 +155,18 @@ export function classifyConversation(args: {
     // undecidable and always will be, because a bot outside the room cannot see
     // whether anyone is inside it.
     if (args.captureClass === "lobby_refused") {
-      return { meetingOccurred: true, customerParticipated: null, contentCaptured: false,
+      return { meetingOccurred: true, contentCaptured: false, nonSellerHumanParticipated: null,
+        customerParticipated: null, substantiveMeetingConversation: null,
         substantiveCustomerConversation: null, verdict: "verified_occurrence_no_content",
         reason: "a human denied the bot entry, so the meeting was running; no content was captured", ...none };
     }
     if (args.outcome === "no_show" || args.outcome === "no_conversation") {
-      return { meetingOccurred: false, customerParticipated: false, contentCaptured: false,
+      return { meetingOccurred: false, contentCaptured: false, nonSellerHumanParticipated: false,
+        customerParticipated: false, substantiveMeetingConversation: false,
         substantiveCustomerConversation: false, verdict: "no_show", reason: `outcome ${args.outcome}`, ...none };
     }
-    return { meetingOccurred: null, customerParticipated: null, contentCaptured: false,
+    return { meetingOccurred: null, contentCaptured: false, nonSellerHumanParticipated: null,
+      customerParticipated: null, substantiveMeetingConversation: null,
       substantiveCustomerConversation: null, verdict: "undecidable",
       reason: `no transcript and capture_class=${args.captureClass ?? "null"}`, ...none };
   }
@@ -143,19 +182,26 @@ export function classifyConversation(args: {
   // invite as a bare address with no display name, so there is nothing for the
   // matcher to match and a positive test reports them absent. Absence of a
   // match is not absence of a person.
-  const nonSeller = turns.filter((t) => sideOfSpeaker(args.participants, t.who, args.directory) !== "seller");
-  const customerTurns = nonSeller.length;
-  const customerWords = nonSeller.reduce((n, t) => n + words(t.text), 0);
+  const side = (who: string) => sideOfSpeaker(args.participants, who, args.directory);
+  const nonSeller = turns.filter((t) => side(t.who) !== "seller");
+  // GROUNDED, not merely not-ours. This is the whole distinction.
+  const grounded = turns.filter((t) => side(t.who) === "customer");
+  const nonSellerTurns = nonSeller.length;
+  const nonSellerWords = nonSeller.reduce((n, t) => n + words(t.text), 0);
+  const customerTurns = grounded.length;
+  const customerWords = grounded.reduce((n, t) => n + words(t.text), 0);
+  const count = { nonSellerTurns, nonSellerWords, customerTurns, customerWords };
 
-  if (customerTurns === 0) {
+  if (nonSellerTurns === 0) {
     const chatter = ROOM_CHATTER.test(body);
-    return { meetingOccurred: chatter ? false : null, customerParticipated: false, contentCaptured: true,
-      substantiveCustomerConversation: false,
+    return { meetingOccurred: chatter ? false : null, contentCaptured: true,
+      nonSellerHumanParticipated: false, customerParticipated: false,
+      substantiveMeetingConversation: false, substantiveCustomerConversation: false,
       verdict: chatter ? "no_show" : "seller_only",
       reason: chatter
         ? "only our own people spoke, and they discuss the customer not turning up"
         : "only our own people spoke; whether the customer was present is not established",
-      customerTurns, customerWords };
+      ...count };
   }
 
   // The customer spoke. Was any of it about the business?
@@ -164,12 +210,14 @@ export function classifyConversation(args: {
   // LENGTH-GATED: "Good. How are you?" is nothing, but a long turn that happens
   // to contain "thank you" is still a real answer, and banning the phrase
   // outright would delete it.
-  const substantive = nonSeller.filter((t) => {
+  const isContent = (t: { text: string }) => {
     const w = words(t.text);
     if (w < 4) return false;
     if (AUDIO_OR_JOIN.test(t.text)) return false;   // specific enough to apply at any length
     return w >= 12 || !PLEASANTRY.test(t.text);
-  });
+  };
+  const substantive = nonSeller.filter(isContent);
+  const substantiveGrounded = grounded.filter(isContent);
   // TWO TURNS AND TWELVE WORDS, not one turn.
   //
   // Single-turn thresholds cannot separate these calls, and chasing each
@@ -180,18 +228,36 @@ export function classifyConversation(args: {
   // filer code. Requiring a small amount of SUSTAINED customer content
   // separates them where a per-turn rule does not.
   const substantiveWords = substantive.reduce((n, t) => n + words(t.text), 0);
+  const groundedWords = substantiveGrounded.reduce((n, t) => n + words(t.text), 0);
   const businessDiscussed = BUSINESS_VOCAB.test(body);
-  if (substantive.length < 2 || substantiveWords < 12 || !businessDiscussed) {
-    return { meetingOccurred: true, customerParticipated: true, contentCaptured: true,
-      substantiveCustomerConversation: false, verdict: "logistics_only",
+  const real = substantive.length >= 2 && substantiveWords >= 12 && businessDiscussed;
+  const realGrounded = substantiveGrounded.length >= 2 && groundedWords >= 12 && businessDiscussed;
+  if (!real) {
+    return { meetingOccurred: true, contentCaptured: true,
+      nonSellerHumanParticipated: true, customerParticipated: customerTurns > 0,
+      substantiveMeetingConversation: false, substantiveCustomerConversation: false,
+      verdict: "logistics_only",
       reason: businessDiscussed
         ? `the customer spoke, but only greetings, audio checks or scheduling (${substantive.length} content turn(s), ${substantiveWords} words)`
         : `the customer spoke, but nothing about the business came up on either side (${substantive.length} content turn(s), ${substantiveWords} words)`,
-      customerTurns, customerWords };
+      ...count };
   }
-  return { meetingOccurred: true, customerParticipated: true, contentCaptured: true,
-    substantiveCustomerConversation: true,
-    verdict: substantive.length <= 3 ? "short_but_valid" : "substantive_customer_conversation",
-    reason: `${substantive.length} customer turn(s) carrying content, ${customerWords} customer words`,
-    customerTurns, customerWords };
+
+  // A real conversation happened. Whether it is attributable to the CUSTOMER is
+  // a second question, and an unattributed one is reported as such rather than
+  // promoted.
+  if (!realGrounded) {
+    return { meetingOccurred: true, contentCaptured: true,
+      nonSellerHumanParticipated: true, customerParticipated: customerTurns > 0,
+      substantiveMeetingConversation: true, substantiveCustomerConversation: false,
+      verdict: "substantive_unattributed",
+      reason: `a real conversation took place, but no speaker could be grounded to the customer (${substantive.length} content turn(s) from unidentified speakers)`,
+      ...count };
+  }
+  return { meetingOccurred: true, contentCaptured: true,
+    nonSellerHumanParticipated: true, customerParticipated: true,
+    substantiveMeetingConversation: true, substantiveCustomerConversation: true,
+    verdict: substantiveGrounded.length <= 3 ? "short_but_valid" : "substantive_customer_conversation",
+    reason: `${substantiveGrounded.length} grounded customer turn(s) carrying content, ${customerWords} customer words`,
+    ...count };
 }
