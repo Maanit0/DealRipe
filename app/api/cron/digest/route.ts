@@ -16,8 +16,15 @@ const PILOT_TENANT_SLUG = "magaya";
 /**
  * Weekly digest cron. Builds the evidence-based digest across every pilot deal
  * and emails it to the sales leader. Same Vercel-cron bearer pattern as the
- * other crons (CRON_SECRET). Scheduled Tuesday 6am Central in vercel.json, so it
- * lands before Mark's pipeline review. Runs a fresh snapshot first (see handle).
+ * other crons (CRON_SECRET). Scheduled MONDAY 06:00 Central in vercel.json
+ * ("0 11 * * 1", UTC), so it lands before Mark's pipeline review. Runs a fresh
+ * snapshot first (see handle).
+ *
+ * The hour is CDT-dependent: 11:00 UTC is 06:00 Central while the US is on
+ * CDT and 05:00 once it is not, so check it in November.
+ *
+ * This comment said Tuesday until 2026-09-12 and was wrong the whole time,
+ * which matters because the day is the one thing a reader checks it for.
  *
  * Recipient is env-driven so it can be pointed at yourself for review before it
  * goes to the customer:

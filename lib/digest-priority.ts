@@ -54,6 +54,13 @@ import { buildDealNarrative } from "./digest-narrative";
 import { assessDeal, computeBuyerSignals } from "./deal-signals-buyer";
 import type { DealChangeRecord } from "./pipeline-changes";
 import { resolveSalesforceSnapshots } from "./salesforce-stage";
+import {
+  closeDateSlipsFor,
+  HISTORY_BEGINS,
+  loadCloseDateHistoryForAccounts,
+  loadOpportunityCreationForAccounts,
+} from "./salesforce-stage-history";
+import { supabaseAdmin } from "./supabase";
 
 /** How many attention deals the digest prints. One constant, so the synthesis
  *  budget and the email can never disagree about the visible set again. */
@@ -282,24 +289,95 @@ export function rankForDigest(
  * Best effort per deal. A deal whose signals cannot be computed keeps an empty
  * flag list and still prints, because a missing flag section is a smaller
  * failure than a missing digest.
+ *
+ * CLOSE-DATE HISTORY IS PREFETCHED HERE, and it was not until 2026-09-12.
+ *
+ * computeBuyerSignals takes closeDateSlips as an OPTIONAL argument and records
+ * its own absence honestly: "the caller did not prefetch close-date history for
+ * this deal". lib/deal-read-portfolio.ts prefetches it; this function did not,
+ * so `s.closeDateSlips.status` was never "read" on the digest path and TWO
+ * FLAGS WERE STRUCTURALLY UNREACHABLE in the only report the CRO opens:
+ * close_date_repeatedly_pushed and close_date_major_slip.
+ *
+ * Not a transient failure and not a rare one. Found by previewing the
+ * 2026-09-14 digest, where FM Global Logistics was ranked SECOND and printed
+ * "(no flags)", while loadPortfolioRead gave the same deal
+ * close_date_repeatedly_pushed. lib/forecast-why.ts separately measured 11
+ * close-date pushes with no date ever validated in a single week, so these fire
+ * on real deals; they simply could not reach Mark.
+ *
+ * Same batched shape as the portfolio read, over the ranked deals only, and
+ * the same fail-open posture: an unavailable history costs the two close-date
+ * flags and nothing else. It is logged loudly because a whole-run Salesforce
+ * failure is otherwise indistinguishable from a week where no date moved.
  */
 export async function attachFlags(priority: DigestPriority, tenantId: string): Promise<void> {
   const ids = priority.ranked.map((r) => r.deal.dealId);
   if (ids.length === 0) return;
 
+  // Which accounts the ranked deals sit on.
+  //
+  // Read from `deals` rather than off DealChangeRecord, which is Rolldog-shaped
+  // and carries no Salesforce link at all. Six ids, one query.
+  //
+  // Only a CONFIRMED link may contribute, the same gate as everywhere else: a
+  // weaker link may point at another company, and a slip counted off the wrong
+  // account is a fabricated finding rather than a missing one.
+  const accountByDeal = new Map<string, string>();
+  try {
+    const res = await supabaseAdmin()
+      .from("deals")
+      .select("id, salesforce_account_id, salesforce_link_confidence")
+      .eq("tenant_id", tenantId)
+      .in("id", ids);
+    if (res.error) throw new Error(res.error.message);
+    for (const d of res.data ?? []) {
+      if (d.salesforce_link_confidence === "confirmed" && d.salesforce_account_id) {
+        accountByDeal.set(d.id, d.salesforce_account_id);
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[digest-priority] could not resolve Salesforce accounts for the ranked deals, ` +
+        `close-date flags will not fire: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const accountIds = [...new Set(accountByDeal.values())];
+
   // Batched once for the whole set, as everywhere else that touches Salesforce.
   let crmByDeal: Awaited<ReturnType<typeof resolveSalesforceSnapshots>> | null = null;
-  try {
-    crmByDeal = await resolveSalesforceSnapshots(tenantId, ids);
-  } catch {
-    // Flags that need the CRM band simply will not fire. That is the honest
-    // degradation: no band read means no band-versus-evidence claim.
+  let closeHist: Awaited<ReturnType<typeof loadCloseDateHistoryForAccounts>> | null = null;
+  let opps: Awaited<ReturnType<typeof loadOpportunityCreationForAccounts>> | null = null;
+  const [crmRes, histRes, oppRes] = await Promise.allSettled([
+    resolveSalesforceSnapshots(tenantId, ids),
+    accountIds.length > 0
+      ? loadCloseDateHistoryForAccounts(accountIds, `${HISTORY_BEGINS}T00:00:00Z`)
+      : Promise.resolve(null),
+    accountIds.length > 0 ? loadOpportunityCreationForAccounts(accountIds) : Promise.resolve(null),
+  ]);
+  // Flags that need the CRM band simply will not fire. That is the honest
+  // degradation: no band read means no band-versus-evidence claim.
+  if (crmRes.status === "fulfilled") crmByDeal = crmRes.value;
+  if (histRes.status === "fulfilled") closeHist = histRes.value;
+  if (oppRes.status === "fulfilled") opps = oppRes.value;
+  if (closeHist && closeHist.status !== "read") {
+    // Loud, because it silently removes a whole class of flag from every deal
+    // in the run and the output is otherwise identical to a quiet week.
+    console.warn(`[digest-priority] close-date history unavailable this run: ${closeHist.error}`);
   }
 
   await Promise.all(
     priority.ranked.map(async (r) => {
       try {
-        const signals = await computeBuyerSignals({ tenantId, dealId: r.deal.dealId });
+        const acc = accountByDeal.get(r.deal.dealId) ?? null;
+        const slips =
+          acc && closeHist?.status === "read" && opps && !("error" in opps)
+            ? closeDateSlipsFor({
+                moves: closeHist.byAccount.get(acc) ?? [],
+                opportunities: opps.get(acc) ?? [],
+              })
+            : undefined;
+        const signals = await computeBuyerSignals({ tenantId, dealId: r.deal.dealId, closeDateSlips: slips });
         const read = crmByDeal?.get(r.deal.dealId);
         r.flags = computeDealFlags({
           signals,

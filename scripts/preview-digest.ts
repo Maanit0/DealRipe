@@ -1,6 +1,7 @@
 /**
- * Render exactly what the Tuesday 6am digest cron will send, and write it to a
- * file for review.
+ * Render exactly what the MONDAY 6am Central digest cron will send, and write
+ * it to a file for review. (Said Tuesday until 2026-09-12; the schedule is
+ * "0 11 * * 1".)
  *
  * Why this exists alongside scripts/generate-digest.ts: that script calls
  * renderWeeklyDigestEmail, an older and much thinner template, while the cron
