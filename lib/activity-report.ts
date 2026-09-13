@@ -8,6 +8,7 @@
  */
 
 import { buildDealEvidence, refreshDealRead } from "./deal-read";
+import { weekOfLabel } from "./week-label";
 import { subjectTopic } from "./email-log";
 import {
   ACTIVITY_WINDOW_DAYS,
@@ -1391,12 +1392,8 @@ export async function buildActivityReport(args: {
   // minutes apart in the same inbox, and at 11:00 UTC they happen to agree, so
   // a difference here would only ever appear if the cron time moved. Pinning
   // both to the customer's timezone means they cannot disagree at all.
-  const when = new Date(now).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "America/Chicago",
-  });
+  // The week's Monday, not today. See lib/week-label.ts.
+  const when = weekOfLabel({ now: new Date(now), withYear: true });
   const dot = (t: string) => `<span class="dot ${t}"></span>`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"/>

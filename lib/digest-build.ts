@@ -26,6 +26,7 @@ import { renderPipelineDigestEmail } from "./emails/weekly-digest";
 import { getForecastWhy } from "./forecast-why";
 import { getPipelineChanges } from "./pipeline-changes";
 import { recordAllDealSnapshots } from "./snapshot";
+import { weekOfLabel } from "./week-label";
 
 export type BuiltDigest = {
   email: ReturnType<typeof renderPipelineDigestEmail>;
@@ -94,11 +95,10 @@ export async function buildWeeklyDigest(args: {
   await attachNarratives(priority, tenantId, changesByDeal);
   await attachDoThis(priority.ranked.map((r) => r.deal), priority.ranked.length);
 
-  const weekLabel = new Date().toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    timeZone: "America/Chicago",
-  });
+  // The week's Monday, not today. See lib/week-label.ts: this used new Date(),
+  // which is right only because the cron fires on Mondays, so every preview and
+  // every retry printed a date that is not a week start.
+  const weekLabel = weekOfLabel();
 
   const email = renderPipelineDigestEmail({
     pc,
