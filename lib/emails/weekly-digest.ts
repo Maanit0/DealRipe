@@ -425,10 +425,24 @@ export function renderPipelineDigestEmail(args: {
   // it once stayed silent and it was printed four times instead. A shared
   // blocker across most of the list is a coaching signal whether or not the reps
   // have created the opportunity yet.
-  const buyerGapDeals = attention.filter((d) => d.economicBuyer && !d.economicBuyer.engaged);
+  // A PATTERN THAT COVERS EVERY DEAL ON THE PAGE IS NOT A PATTERN.
+  //
+  // This read "6 of the deals below share one blocker" and then listed all six
+  // printed deals. That is the base rate wearing a finding's clothes, and it is
+  // the same rule this codebase already applies to flags: one that fires on
+  // most of the book is not a flag. It now has to be a STRICT SUBSET.
+  //
+  // And a deal where no conversation has ever been captured is excluded, because
+  // there the claim is vacuous: Gdp-usa and Amtrixglobal carry never_heard, so
+  // "the person who signs has never been on a call" is true only because NOBODY
+  // has been on a call. Lumping that in with a deal that has had four calls and
+  // no economic buyer describes two different problems as one.
+  const buyerGapDeals = attention.filter(
+    (d) => d.economicBuyer && !d.economicBuyer.engaged && d.lastConversationAt,
+  );
   const patternHtml =
-    buyerGapDeals.length >= 3
-      ? `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};margin:0 0 16px 0;"><strong style="color:${NAVY};">${buyerGapDeals.length} of the deals below share one blocker:</strong> the person who signs has never been on a call. ${esc(
+    buyerGapDeals.length >= 3 && buyerGapDeals.length < attention.length
+      ? `<div style="font-family:${SANS};font-size:15px;line-height:23px;color:${INK};margin:0 0 16px 0;"><strong style="color:${NAVY};">${buyerGapDeals.length} of the ${attention.length} deals below share one blocker:</strong> the person who signs has never been on a call, on a deal where we have actually spoken to someone. ${esc(
           buyerGapDeals.map((d) => d.account).join(", "),
         )}.</div>`
       : "";
@@ -439,6 +453,14 @@ export function renderPipelineDigestEmail(args: {
   const repForecast = committedDeals.reduce((n, d) => n + (d.dealSizeAnnual ?? 0), 0);
   const softDeals = committedDeals.filter((d) => fcat(d.dealRipeCategory) >= 0 && fcat(d.dealRipeCategory) < fcat(d.forecastCategory));
   const softAmount = softDeals.reduce((n, d) => n + (d.dealSizeAnnual ?? 0), 0);
+  // "BELOW" MEANT THE WHOLE BOOK AND THE READER MEANT THIS PAGE.
+  //
+  // softDeals is computed over pc.deals, every deal in the pilot, while the
+  // sentence said "on 13 deals below" on a page that prints six. A leader
+  // scrolls, counts six, and the headline number is the first thing they catch
+  // us being wrong about. Count the intersection and say both.
+  const printedIds = new Set(attention.map((d) => d.dealId));
+  const softBelow = softDeals.filter((d) => printedIds.has(d.dealId)).length;
   const RED_TINT = "#FEF2F2";
 
   const subject = `DealRipe pipeline digest, week of ${weekLabel}${attention.length ? `. ${attention.length} to look at` : ""}`;
@@ -454,7 +476,7 @@ export function renderPipelineDigestEmail(args: {
   // The forecast-reality line: reps' Commit+Expect and how much DealRipe rates softer.
   const forecastLine =
     softAmount > 0
-      ? `<tr><td style="padding:4px 6px 0 6px;"><div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};background:${RED_TINT};border-radius:10px;padding:12px 15px;">Reps have <strong>${esc(money(repForecast))}</strong> in Commit and Expect this week. DealRipe rates <strong style="color:${RED};">${esc(money(softAmount))}</strong> of it softer than the forecast, on ${softDeals.length} deal${softDeals.length === 1 ? "" : "s"} below.</div></td></tr>`
+      ? `<tr><td style="padding:4px 6px 0 6px;"><div style="font-family:${SANS};font-size:14px;line-height:21px;color:${INK};background:${RED_TINT};border-radius:10px;padding:12px 15px;">Reps have <strong>${esc(money(repForecast))}</strong> in Commit and Expect this week. DealRipe rates <strong style="color:${RED};">${esc(money(softAmount))}</strong> of it softer than the forecast, across ${softDeals.length} deal${softDeals.length === 1 ? "" : "s"}${softBelow > 0 ? `, ${softBelow} of which ${softBelow === 1 ? "is" : "are"} below` : ", none of which are below"}.</div></td></tr>`
       : "";
 
   // One readable card per deal: big name, the deal facts, THE risk in a tinted
@@ -714,7 +736,7 @@ export function renderPipelineDigestEmail(args: {
 </td></tr></table></body></html>`;
 
   const t: string[] = [`DealRipe pipeline changes, week of ${weekLabel}`, "", `Pipeline ${money(h.totalPipelineAnnual)} · ${h.dealsChanged} changed · ${h.dealsNeedingAttention} to look at · won/lost ${h.closedWon}/${h.closedLost}`];
-  if (softAmount > 0) t.push("", `Reps have ${money(repForecast)} in Commit and Expect. DealRipe rates ${money(softAmount)} of it softer than the forecast, on ${softDeals.length} deal(s).`);
+  if (softAmount > 0) t.push("", `Reps have ${money(repForecast)} in Commit and Expect. DealRipe rates ${money(softAmount)} of it softer than the forecast, across ${softDeals.length} deal(s), ${softBelow} of which appear below.`);
   if (closedLine) t.push("", closedLine);
   t.push("", "DEALS TO LOOK AT");
   if (priority.valueUnknown.all > 0) {
