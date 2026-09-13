@@ -85,9 +85,54 @@ export function labelNamesParticipant(speaker: string, p: Participant): boolean 
   if (shared >= 2) return true;
   if (shared === 1 && (s.length === 1 || n.length === 1)) return true;
 
+  // THE EMAIL LOCAL PART IS MATCHED WHOLE, NEVER AS A SUBSTRING.
+  //
+  // This was `local.includes(t)`, and a substring test turns one person into
+  // another. Measured 2026-09-13 on live data:
+  //
+  //   "sjohnson".includes("john")   -> the customer John Locasto was scored as
+  //                                    Magaya's Steven Johnson
+  //   "btyler".includes("tyler")    -> the customer Tyler Walrabenstein was
+  //                                    scored as Magaya's Brooke Tyler
+  //
+  // Both were returned as "seller" by sideOfSpeaker, which decides whether a
+  // transcript turn counts as CUSTOMER evidence. mine-plays relies on that, and
+  // CLAUDE.md requires the seller side be decided from the roster rather than
+  // by the model, so a customer with a common first name had their words
+  // attributed to us.
+  //
+  // The capability itself is real and stays: half the Magaya invites carry an
+  // address where the name should be, and "JHuseby@tql.com" is how the roster
+  // spells the man the transcript calls "Joseph Huseby". So the speaker's own
+  // tokens are used to BUILD the address forms a person actually has, and the
+  // local part must equal one of them exactly.
   const local = (p.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
-  if (local.length >= 4 && s.some((t) => t.length >= 4 && local.includes(t))) return true;
-  return false;
+  if (local.length < 4) return false;
+  // FIRST AND LAST ONLY, IN BOTH ORDERS. Generating a form from every pair of
+  // tokens invents addresses that belong to other people: "Salauddin Khan Apon"
+  // produced "a"+"khan" = akhan, which is Magaya's Ammar Khan, and the customer
+  // was scored as a seller. Both orders are generated because rosters spell
+  // names "Walrabenstein, Tyler" as often as "Tyler Walrabenstein".
+  const forms = new Set<string>();
+  for (const t of s) if (t.length >= 4) forms.add(t);
+  const pairs: Array<[string, string]> = s.length >= 2
+    ? [[s[0], s[s.length - 1]], [s[s.length - 1], s[0]]]
+    : [];
+  for (const [a2, b2] of pairs) {
+    forms.add(a2 + b2);        // josephhuseby
+    forms.add(a2[0] + b2);     // jhuseby
+    forms.add(a2 + b2[0]);     // josephh
+  }
+  if (forms.has(local)) return true;
+
+  // A TOKEN THAT STARTS THE ADDRESS. "Simar" is what the transcript calls the
+  // man the roster lists as simarjeet@apexcargo.space, and dropping that lost a
+  // real customer on three Apexcargo calls. Anchored at the start, which is the
+  // whole difference from the substring rule this replaced: "simarjeet" starts
+  // with "simar", while "sjohnson" does not start with "john" and "btyler" does
+  // not start with "tyler". Five characters minimum, so short common names
+  // cannot reach across to an unrelated address.
+  return s.some((t) => t.length >= 5 && (local.startsWith(t) || t.startsWith(local)));
 }
 
 /**
