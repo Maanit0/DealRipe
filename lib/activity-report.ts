@@ -271,6 +271,44 @@ async function capturedCallDeals(tenantId: string, dealIds: string[]): Promise<S
   return out;
 }
 
+/**
+ * Deals where a meeting VERIFIABLY RAN, even though we captured no content.
+ *
+ * OCCURRENCE AND CONTENT ARE INDEPENDENT, and this is the one class where we
+ * have occurrence without content. `lobby_refused` means a human clicked deny
+ * on our bot, so somebody was in the room: the meeting ran. A `lobby_timeout`
+ * is the opposite and always will be, because a bot waiting outside cannot see
+ * whether anyone is inside it.
+ *
+ * Read from calls.capture_class, the classifier's own stored verdict, rather
+ * than by matching text in ingest_error. The two disagree: 25 rows carry the
+ * class and 23 carry the phrase.
+ *
+ * ONE HONEST LIMIT, and it is not fixable from this table. A refusal proves a
+ * HUMAN was there, not that the CUSTOMER was. CLAUDE.md records that nine of
+ * ten lobby events with a known organizer are Magaya-organized, so the hand on
+ * the deny button is often the rep's own. This still clears the bar for "the
+ * meeting happened" and does NOT prove customer engagement on its own; it is
+ * used only for hasEverSpoken, never to move a deal out of Never engaged.
+ */
+async function verifiedOccurrenceDeals(tenantId: string, dealIds: string[]): Promise<Set<string>> {
+  const db = supabaseAdmin();
+  const out = new Set<string>();
+  const CHUNK = 60;
+  for (let i = 0; i < dealIds.length; i += CHUNK) {
+    const res = await db
+      .from("calls")
+      .select("deal_id")
+      .eq("tenant_id", tenantId)
+      .eq("capture_class", "lobby_refused")
+      .lte("scheduled_start", new Date().toISOString())
+      .in("deal_id", dealIds.slice(i, i + CHUNK));
+    if (res.error) throw new Error(`calls read failed: ${res.error.message}`);
+    for (const c of (res.data ?? []) as Array<{ deal_id: string }>) out.add(c.deal_id);
+  }
+  return out;
+}
+
 async function nextMeetingByDeal(tenantId: string, dealIds: string[]): Promise<Map<string, NextMeeting>> {
   const db = supabaseAdmin();
   const out = new Map<string, NextMeeting>();
@@ -1214,6 +1252,7 @@ export async function buildActivityReport(args: {
   const agreedAtByDeal = await nextStepAgreedAt(tenantId, dealIds);
   const contactByDeal = await contactHistory(tenantId, dealIds);
   const capturedDeals = await capturedCallDeals(tenantId, dealIds);
+  const ranDeals = await verifiedOccurrenceDeals(tenantId, dealIds);
   const metSince = await meetingsSinceAgreed(tenantId, dealIds, agreedAtByDeal, now);
 
   let rows: Row[] = deals.map((deal) => ({
@@ -1262,12 +1301,24 @@ export async function buildActivityReport(args: {
     activity: readActivity(
       {
         nextMeetingBooked: deal.nextMeetingBooked,
-        // Same rule as lastContact above: a conversation is one we captured.
-        // hasEverSpoken keeps the looser field on purpose, because "has a call
-        // ever happened on this deal" is a different question from "when did
-        // the customer last talk to us", and a first meeting that our bot
-        // missed still means the deal has started.
-        hasEverSpoken: Boolean(deal.lastConversationAt),
+        // A MEETING WE CANNOT VERIFY IS NOT PROOF THE DEAL HAS STARTED.
+        //
+        // This was Boolean(deal.lastConversationAt), which excludes only
+        // no_show and no_conversation, so a lobby timeout, a capture_failed
+        // with no recorded reason, an orphaned row with no outcome at all, and
+        // even a `duplicate` all counted as having spoken. Audited 2026-09-13:
+        // 14 deals had hasEverSpoken with zero captured calls and zero human
+        // inbound email, and 13 of the 14 rested on evidence that cannot
+        // establish the meeting happened (7 lobby timeouts, 2 capture_failed
+        // with no reason stored, 4 rows with no outcome or a duplicate). Only
+        // Robbenwd had a real basis, a lobby_refused.
+        //
+        // Occurrence and content stay independent: a refusal proves the
+        // meeting ran without giving us a word of it, and that still counts.
+        hasEverSpoken:
+          capturedDeals.has(deal.dealId) ||
+          ranDeals.has(deal.dealId) ||
+          Boolean(contactByDeal.get(deal.dealId)?.lastInbound),
         daysSinceConversation: days(deal.lastCapturedConversationAt, now),
         daysSinceCustomerEmail: days(byDeal.get(deal.dealId) ?? null, now),
         mailboxRead: repHasMail.has((deal.repEmail ?? "").toLowerCase()),
