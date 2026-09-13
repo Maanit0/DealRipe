@@ -244,6 +244,19 @@ export async function findCustomerThread(
 
   const byThread = new Map<string, MailMessage[]>();
   for (const m of msgs) {
+    // OUR OWN UNSENT DRAFT IS NOT CORRESPONDENCE.
+    //
+    // /users/{id}/messages spans EVERY folder including Drafts, and this
+    // feature writes its follow-up INTO the very mailbox it then reads. So the
+    // previous draft sat in the thread, scored as the newest message, and was
+    // fed to the model as threadBody. Observed 2026-09-13 on Binexline: the
+    // model opened "since the recap above has a couple of things worth
+    // correcting", correcting a draft the customer has never seen.
+    //
+    // MailMessage.isDraft already documents the rule ("Never counts as mail on
+    // the deal") and lib/email-log.ts already honours it. This reader did not,
+    // which is the same bug in a second place rather than a new one.
+    if (m.isDraft) continue;
     if (!m.conversationId) continue;
     const list = byThread.get(m.conversationId);
     if (list) list.push(m);
@@ -1118,13 +1131,40 @@ function agreedMentionsUpcomingDemo(
   );
 }
 
+/**
+ * Pull the draft object out of the model's reply.
+ *
+ * PREFER A FENCED BLOCK. The model now routinely writes a paragraph of
+ * reasoning before the JSON, and the brace-scan below takes the FIRST "{" in
+ * the whole reply. A preamble that happens to contain a brace, which reasoning
+ * about rules and placeholders easily does, makes the slice unparseable and the
+ * whole generation returns nothing.
+ *
+ * AND IT MUST NOT FAIL SILENTLY. This returned null with no log line, so an
+ * unparseable reply produced "generateFollowUpDraft returned null" twice in a
+ * row with nothing anywhere saying why, and the failure read as intermittent
+ * rather than as a parse problem. Two Binexline and Ubfreight runs were lost to
+ * that on 2026-09-13 before DRAFT_DEBUG showed the preamble.
+ */
 function parseJson(text: string): { subject: string; body: string; attachmentsToAdd: string[] } | null {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
+  const fence = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/.exec(text);
+  const slice = fence
+    ? fence[1]
+    : (() => {
+        const start = text.indexOf("{");
+        const end = text.lastIndexOf("}");
+        return start < 0 || end <= start ? null : text.slice(start, end + 1);
+      })();
+  if (slice === null) {
+    console.warn(`[followup-draft] model reply carried no JSON object (${text.length} chars): ${text.slice(0, 160)}`);
+    return null;
+  }
   try {
-    const o = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-    if (typeof o.body !== "string" || !o.body.trim()) return null;
+    const o = JSON.parse(slice) as Record<string, unknown>;
+    if (typeof o.body !== "string" || !o.body.trim()) {
+      console.warn(`[followup-draft] parsed JSON has no usable body: ${Object.keys(o).join(", ")}`);
+      return null;
+    }
     return {
       subject: typeof o.subject === "string" ? o.subject : "",
       // Belt and braces on two rules the model can still slip on.
@@ -1145,7 +1185,13 @@ function parseJson(text: string): { subject: string; body: string; attachmentsTo
         ? o.attachmentsToAdd.filter((a): a is string => typeof a === "string")
         : [],
     };
-  } catch {
+  } catch (err) {
+    // The slice looked like JSON and was not. Say so: a silent null here is
+    // indistinguishable from the model refusing, and it cost two runs.
+    console.warn(
+      `[followup-draft] draft JSON did not parse (${err instanceof Error ? err.message : String(err)}): ` +
+        `${slice.slice(0, 160)}`,
+    );
     return null;
   }
 }
