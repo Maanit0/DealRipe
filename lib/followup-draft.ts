@@ -27,6 +27,7 @@
 import { feedbackFooterHtml, feedbackFooterText, newFeedbackToken } from "./artifact-feedback";
 import { dealChangeBlock, readDealChangeHistory } from "./deal-change-history";
 import { dealMemoryBlock, readDealMemory } from "./deal-memory";
+import { isNeverDeliverable, isRoleMailboxAddress } from "./attendees";
 import { draftArchiveHtml } from "./draft-archive";
 import {
   applyDraftFixes,
@@ -1349,9 +1350,31 @@ export async function generateFollowUpDraft(
   // "your recap email is going out to that BDR instead of the prospect in the
   // meeting." The addresses were already computed and correct and simply were
   // not used here.
-  const to = [...new Set((input.customerEmails ?? []).map((e) => e.toLowerCase().trim()))].filter(
+  // A no-reply on the roster is a calendar service, not a person.
+  //
+  // noreply@sender.zohocalendar.in sat on the Apexcargo invite beside the real
+  // customer, so it was both greeted by name and put on the To line of a draft.
+  //
+  // ONLY the undeliverable class is dropped here, never role mailboxes.
+  // docs@yeschb.com, info@alnoran.org, info@triadcargousa.com and
+  // dispatch@shippingsolutions4u.com are each the ONLY external attendee on
+  // their call, so filtering shared mailboxes out of recipients would not tidy
+  // a draft, it would delete it. They keep receiving; they just stop being
+  // addressed as people. See isNeverDeliverable in lib/attendees.ts.
+  const addressable = [...new Set((input.customerEmails ?? []).map((e) => e.toLowerCase().trim()))].filter(
     (e) => e.includes("@") && domainOf(e) !== "magaya.com",
   );
+  const to = addressable.filter((e) => !isNeverDeliverable(e));
+  if (to.length === 0 && addressable.length > 0) {
+    // Every address we have bounces. A draft addressed to a mail daemon is
+    // worse than none, and this is named rather than silently empty because an
+    // empty To line is how Graph quietly addresses the last sender instead.
+    console.warn(
+      `[followup-draft] ${input.account}: every customer address is undeliverable ` +
+        `(${addressable.join(", ")}), no draft`,
+    );
+    return null;
+  }
 
   return {
     // Last thing before this reaches a customer's inbox. A rep who says
@@ -2192,12 +2215,28 @@ function speakerFirstName(transcript: string, needle: string): string | null {
  *    have already decided to write to is a different question.
  * 3. THE EMAIL LOCAL PART, last and reluctantly. It is as likely to be a
  *    surname or an initial as a first name, so it is a guess, not a read.
+ *
+ * BEFORE ANY OF THAT: A SHARED MAILBOX HAS NO FIRST NAME. Measured 2026-09-11,
+ * 11 of 214 captured calls would open a draft "Hi Pricing,", "Hi Docs,", "Hi
+ * Dispatch,", "Hi Info," or "Hi Noreply,". CLAUDE.md already forbids this for
+ * a briefing ask, and lib/attendees.ts has known the answer since 2026-08-25,
+ * when pricing@kcarlton.com rendered as a person named "Pricing" in the
+ * roster. That fix went into the roster and never reached the greeting.
+ *
+ * The worst case is why the DISPLAY NAME is checked too, not just the local
+ * part: it@binexline.com carries the invite name "Binex IT", which the
+ * two-words-is-a-human branch below read as a person and greeted as "Binex",
+ * the company. Two words is not evidence of a person when one is a department.
+ *
+ * An empty string is a real answer. Rule 7a tells the model to open without
+ * names when none are given, so no greeting beats a wrong one.
  */
 export function firstNameFor(
   inviteName: string | null | undefined,
   email: string,
   transcript: string | null,
 ): string {
+  if (isRoleMailboxAddress(email, inviteName)) return "";
   const raw = (inviteName ?? "").trim();
   // A full name from the invite is the best source and needs no help.
   if (raw && !raw.includes("@") && raw.split(/\s+/).length >= 2) return raw.split(/\s+/)[0];

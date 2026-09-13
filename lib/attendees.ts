@@ -123,6 +123,46 @@ export function isRoleMailboxName(name: string | null | undefined): boolean {
   return ROLE_MAILBOXES.has(n.replace(/[._-]/g, ""));
 }
 
+/**
+ * A shared mailbox, decided from the ADDRESS.
+ *
+ * `isRoleMailboxName` answers the same question from a display name, for the
+ * places that hold no address. This one is the address form and it exists
+ * because the greeting path had neither: DealRipe was opening drafts "Hi
+ * Pricing,", "Hi Docs,", "Hi Dispatch," and "Hi Info,".
+ *
+ * The display name is checked as well as the local part, because the worst
+ * case had a clean-looking name. `it@binexline.com` carries the invite name
+ * "Binex IT", which firstNameFor read as a two-word human name and greeted as
+ * "Binex", the company. Two words is not evidence of a person when one of them
+ * is a department.
+ */
+export function isRoleMailboxAddress(email: string, displayName?: string | null): boolean {
+  return isRoleMailbox((email ?? "").toLowerCase().trim(), (displayName ?? "").trim());
+}
+
+/**
+ * Mail to this address is guaranteed to reach nobody.
+ *
+ * Distinct from a role mailbox and the distinction decides a recipient, so it
+ * is worth stating. A shared mailbox is READ BY PEOPLE: docs@yeschb.com,
+ * info@alnoran.org and dispatch@shippingsolutions4u.com are the ONLY external
+ * attendee on their calls, so dropping them as recipients would not clean up a
+ * draft, it would delete it. They stay on the To line and simply stop being
+ * greeted by name.
+ *
+ * A no-reply is the opposite: an automated sender that appears on an invite
+ * because a calendar service put it there. noreply@sender.zohocalendar.in sat
+ * on the Apexcargo roster beside the real customer. Writing to it is not rude,
+ * it is undeliverable.
+ */
+const NEVER_DELIVERABLE = /^(no-?reply|do-?not-?reply|donotreply|mailer-daemon|postmaster|bounce[sd]?|automated?|notifications?)$/;
+
+export function isNeverDeliverable(email: string): boolean {
+  const local = ((email ?? "").split("@")[0] ?? "").toLowerCase().replace(/[._]/g, "-");
+  return NEVER_DELIVERABLE.test(local);
+}
+
 function isRoleMailbox(email: string, displayName: string): boolean {
   const local = (email.split("@")[0] ?? "").toLowerCase().replace(/[._-]/g, "");
   const shown = displayName.toLowerCase().replace(/[\s._-]/g, "");
